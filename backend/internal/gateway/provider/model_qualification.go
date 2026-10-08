@@ -50,12 +50,21 @@ func (p ModelPolicy) AllowsProtocol(ctx context.Context) bool {
 	return ok
 }
 
-// Schedulable 依次检查协议、提供商状态和模型可用性。
+// AllowsClientClass 使用入口保存的分类，缺少请求身份的管理诊断跳过此项。
+func (p ModelPolicy) AllowsClientClass(ctx context.Context) bool {
+	if p.Record == nil {
+		return false
+	}
+	client := requeststate.ExecutionHintsFromContext(ctx).CodexClient
+	return !client.Set || p.Record.AllowsClientClass(client.Value)
+}
+
+// Schedulable 依次检查请求来源、协议、提供商状态和模型可用性。
 func (p ModelPolicy) Schedulable(ctx context.Context, model string) bool {
 	if p.Record == nil {
 		return false
 	}
-	if !p.AllowsProtocol(ctx) || !p.Record.IsSchedulable() {
+	if !p.AllowsClientClass(ctx) || !p.AllowsProtocol(ctx) || !p.Record.IsSchedulable() {
 		return false
 	}
 	return p.AllowsModel(ctx, model)

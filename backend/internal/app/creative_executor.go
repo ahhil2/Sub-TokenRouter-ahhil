@@ -34,6 +34,9 @@ func provideCreativeExecutor(cfg *config.Config, groups creativeprovider.Executi
 				return group.IsActive() && !group.ClaudeCodeOnly && group.AllowsClientProtocol(creative.OperationProtocol(platform, operation))
 			}}
 			value.ConfigureContext = func(ctx context.Context, platform, operation string) context.Context {
+				hints := requeststate.ExecutionHintsFromContext(ctx)
+				hints.CodexClient = requeststate.Hint[bool]{Set: true, Value: false}
+				ctx = requeststate.WithExecutionHints(ctx, hints)
 				return requeststate.WithClientProtocol(requeststate.WithGroup(apikey.WithForcePlatform(ctx, platform), group), creative.OperationProtocol(platform, operation))
 			}
 			return value, err

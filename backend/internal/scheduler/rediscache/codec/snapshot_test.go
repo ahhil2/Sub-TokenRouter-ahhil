@@ -16,6 +16,22 @@ type geminiQuotaUsageFixture struct {
 	calls  int
 }
 
+func TestSchedulerMetadataKeepsClientClass(t *testing.T) {
+	for _, class := range []string{provider.ClientClassAny, provider.ClientClassCodex, provider.ClientClassNonCodex} {
+		record := &provider.Record{Platform: provider.PlatformOpenAI, Extra: map[string]any{provider.OpenAIClientClassExtraKey: class}}
+		full, metadata, err := (ProviderCodec{}).Encode(WrapRecord(record))
+		require.NoError(t, err)
+		for _, encoded := range [][]byte{full, metadata} {
+			decoded, err := (ProviderCodec{}).Decode(encoded)
+			require.NoError(t, err)
+			restored, err := RecordValue(decoded)
+			require.NoError(t, err)
+			require.Equal(t, class != provider.ClientClassNonCodex, restored.AllowsClientClass(true))
+			require.Equal(t, class != provider.ClientClassCodex, restored.AllowsClientClass(false))
+		}
+	}
+}
+
 func (f *geminiQuotaUsageFixture) GetModelUsage(_ context.Context, _ int64, start, _ time.Time) ([]provider.GeminiModelUsage, error) {
 	f.calls++
 	if start.Equal(f.minute) {

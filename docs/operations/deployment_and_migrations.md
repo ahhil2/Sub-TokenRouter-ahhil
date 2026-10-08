@@ -27,11 +27,12 @@
 | 完整 Compose | `deploy/docker-compose.yml`、`docker-compose.local.yml` | 应用、PostgreSQL、Redis；分别使用命名卷或本地目录 |
 | 独立应用容器 | `deploy/docker-compose.standalone.yml` | PostgreSQL 和 Redis 由部署环境提供 |
 | 源码开发 Compose | `deploy/docker-compose.dev.yml` | 在本地构建应用，并启动配套的依赖 |
+| SuperAHHil 定制部署 | `deploy/superahhil/compose.yaml` | 从本仓库构建应用，配套 PostgreSQL、Redis，黑色页面由宿主机 Caddy 提供 |
 | Apple Container | `deploy/apple-container.sh` | 独立脚本管理容器、卷和健康状态 |
 
 应用至少依赖 PostgreSQL 和 Redis。`/app/data` 或等价的 `DATA_DIR` 保存配置、安装锁和本地的运维产物；数据库、Redis 和对象存储各有自己的生命周期，只备份应用数据目录，不算完成了系统备份。
 
-逐步操作见[中文部署指南](../guides/deployment/index.md)、[Docker 镜像说明](../../deploy/DOCKER.md)和 [Apple Container 指南](../guides/deployment/apple_container.md)。这些是给部署者的手册，本文的工程约束在它们之上。
+逐步操作见[中文部署指南](../guides/deployment/index.md)、[SuperAHHil 部署指南](../guides/deployment/superahhil.md)、[Docker 镜像说明](../../deploy/DOCKER.md)和 [Apple Container 指南](../guides/deployment/apple_container.md)。这些是给部署者的手册，本文的工程约束在它们之上。
 
 旧的 data management 接口已经下线：`backup` 的兼容入口固定返回 `DATA_MANAGEMENT_DEPRECATED`，不会连接 Unix Socket，也不会发起 gRPC 调用。仓库里的旧安装脚本和 [datamanagementd 指南](../guides/deployment/datamanagementd.md) 是历史资料，当前服务没有这个守护进程。备份和恢复使用独立的 backup 模块。
 

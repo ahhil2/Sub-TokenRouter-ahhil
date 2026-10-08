@@ -17,6 +17,33 @@
         </button>
       </div>
     </template>
+    <section
+      v-if="redeemShopUrl && paymentPhase === 'select' && !selectedPlan"
+      data-testid="redeem-shop"
+      :aria-label="t('purchase.buyRedeemCode')"
+      class="mb-6 w-full space-y-4"
+    >
+      <a
+        :href="redeemShopUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="group flex w-full flex-col items-center justify-center gap-4 rounded-surface border border-primary-300 bg-primary-50 px-4 py-8 text-center text-primary-900 transition-colors hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:border-primary-500/40 dark:bg-primary-500/10 dark:text-primary-100 dark:hover:bg-primary-500/20 dark:focus-visible:ring-offset-dark-900 sm:px-8 sm:py-10"
+      >
+        <span class="text-4xl font-bold leading-tight tracking-wide sm:text-5xl lg:text-6xl">
+          {{ t('purchase.buyRedeemCode') }}
+        </span>
+        <span class="inline-flex items-center gap-2 text-sm text-primary-700 dark:text-primary-300">
+          {{ t('purchase.openInNewTab') }}
+          <Icon name="externalLink" size="sm" aria-hidden="true" />
+        </span>
+      </a>
+      <div class="flex flex-col items-center justify-between gap-3 text-center sm:flex-row sm:text-left">
+        <p class="text-sm text-gray-600 dark:text-dark-300">{{ t('purchase.redeemCodeDescription') }}</p>
+        <RouterLink to="/redeem" class="btn btn-secondary shrink-0">
+          {{ t('purchase.redeemPurchasedCode') }}
+        </RouterLink>
+      </div>
+    </section>
     <!-- 不加 mx-auto：app-main 是 flex 列容器，auto 边距会让内容收缩到内容宽度并与页头错位。 -->
     <div
       class="purchase-viewport relative w-full"
@@ -352,7 +379,7 @@ import { vSegmented } from '@/directives/segmented'
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { useAuthStore } from '@/stores/auth'
@@ -362,6 +389,7 @@ import { useAppStore } from '@/stores'
 import { paymentAPI } from '@/api/payment'
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import { isMobileDevice } from '@/utils/device'
+import { sanitizeUrl } from '@/utils/url'
 import type { BillingInfo, SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderType } from '@/types/payment'
 import type { UserSubscription } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -402,6 +430,11 @@ const authStore = useAuthStore()
 const paymentStore = usePaymentStore()
 const subscriptionStore = useSubscriptionStore()
 const appStore = useAppStore()
+const redeemShopUrl = computed(() => {
+  const settings = appStore.cachedPublicSettings
+  if (!settings?.purchase_subscription_enabled) return ''
+  return sanitizeUrl(settings.purchase_subscription_url || '')
+})
 const { balanceUnitName, formatBalanceAmount } = useBalanceDisplay()
 
 marked.setOptions({

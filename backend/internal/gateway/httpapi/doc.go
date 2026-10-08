@@ -7,6 +7,7 @@
 //
 // 文件分组：
 //   - authorization.go、api_key*.go 和 routes*.go：认证、Key 模型改写与协议准入。
+//   - client_class.go：在 Header 改写前记录入站 Codex/non-Codex 分类。
 //   - messages*.go、compatible_text*.go 和 gemini_native*.go：Messages 与 Gemini 的请求处理。
 //   - openai_text*.go 和 openai_protocol_execution*.go：OpenAI 文本入口与协议执行。
 //   - openai_request*.go、codex*.go 和 session_identity.go：出站报文、客户端身份与会话标识。

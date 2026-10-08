@@ -659,6 +659,10 @@
           <div class="py-1">
             <template v-for="user in users" :key="user.id">
               <template v-if="user.id === activeMenuId">
+                <router-link v-if="user.role !== 'admin' && user.status === 'active'" :to="{ path: '/messages', query: { user: user.id } }" class="dropdown-item" @click="closeActionMenu()">
+                  <Icon name="chat" size="sm" class="text-gray-400" />
+                  {{ t('messages.sendPrivate') }}
+                </router-link>
                 <!-- View API Keys -->
                 <button
                   @click="handleViewApiKeys(user); closeActionMenu()"

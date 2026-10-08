@@ -247,6 +247,9 @@ func (s *Generic) shouldClearStickySessionForProviderLayer(ctx context.Context, 
 
 // isProviderEligibleExceptModelSupport 判断提供商除模型白名单/映射外是否具备本次请求资格。
 func (s *Generic) isProviderEligibleExceptModelSupport(ctx context.Context, provider *gatewayprovider.ExecutionProvider, requestedModel string, platform string, excludedIDs map[int64]struct{}, useMixed bool, groupID *int64, schedGroup *routing.Group) bool {
+	if !gatewayprovider.ExecutionModelPolicy(provider).AllowsClientClass(ctx) {
+		return false
+	}
 	if !gatewayprovider.ExecutionModelPolicy(provider).AllowsProtocol(ctx) {
 		return false
 	}

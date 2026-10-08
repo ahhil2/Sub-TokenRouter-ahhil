@@ -16,6 +16,8 @@ var siteAssemblyProviders = wire.NewSet(
 	provideSitePublic,
 	provideSitePages,
 	site.NewAnnouncementService,
+	site.NewMessageService,
+	sitepostgres.NewMessageRepository,
 	sitepostgres.NewAnnouncementRepository,
 	sitepostgres.NewAnnouncementReadRepository,
 	provideAnnouncementUsers,

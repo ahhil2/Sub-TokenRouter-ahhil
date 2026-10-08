@@ -132,3 +132,26 @@ func TestCreativeExecutorKeepsPersistedGroupWhenClientRestricted(t *testing.T) {
 	require.False(t, selected)
 	require.True(t, creativeGroupView(group, "en").ClaudeCodeOnly)
 }
+
+func TestCreativeExecutorUsesNonCodexProviders(t *testing.T) {
+	for _, class := range []string{provider.ClientClassAny, provider.ClientClassCodex, provider.ClientClassNonCodex} {
+		t.Run(class, func(t *testing.T) {
+			group := &routing.Group{ID: 12, Status: "active", AllowedProtocols: []capability.ProtocolID{capability.ProtocolImagesGenerations}}
+			groups := creativePolicyGroups{group}
+			providers := creativePolicyProviders{value: gatewayprovider.NewExecutionProvider(&provider.Record{
+				ID: 55, Platform: creative.PlatformOpenAI, Type: "apikey", Status: "active", Schedulable: true,
+				GroupIDs: []int64{group.ID}, Credentials: map[string]any{"model_whitelist": []string{"gpt-image-2"}},
+				Extra: map[string]any{provider.OpenAIClientClassExtraKey: class},
+			})}
+			choices := selection.NewCompatible(selection.CompatibleDependencies{Reads: selection.Reads{Providers: providers, Groups: groups}}, selection.DefaultOptions())
+			executor := provideCreativeExecutor(nil, groups, &gatewayprovider.CreativeTargets{}, nil, choices)
+			prepared, err := executor.Prepare(context.Background(), creative.CreativeRun{GroupID: group.ID, Platform: creative.PlatformOpenAI, Model: "gpt-image-2", Operation: creative.CreativeOperationGenerate, ImageSize: "1K"})
+			if class == provider.ClientClassCodex {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			prepared.ReleaseFunc()
+		})
+	}
+}

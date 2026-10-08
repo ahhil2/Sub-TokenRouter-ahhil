@@ -31,6 +31,7 @@ type ExecutionHints struct {
 	GroupPrivacyGroupID         int64
 	ProxyQuarantineBypass       bool
 	ClaudeCode                  bool
+	CodexClient                 Hint[bool]
 	ClaudeCodeVersion           string
 	OpenAIImageGenerationIntent bool
 	OpenAIImagesEndpoint        bool

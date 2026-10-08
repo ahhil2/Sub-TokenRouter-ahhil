@@ -4,6 +4,7 @@ import { flushPromises, mount, DOMWrapper } from "@vue/test-utils";
 
 import SettingsView from "../SettingsView.vue";
 import BaseDialog from "@/components/common/BaseDialog.vue";
+import LocalizedEditor from "@/components/common/LocalizedEditor.vue";
 
 const {
   getSettings,
@@ -872,6 +873,37 @@ describe("admin SettingsView payment visible method controls", () => {
     });
     fetchPublicSettings.mockResolvedValue(undefined);
     adminSettingsFetch.mockResolvedValue(undefined);
+  });
+
+  it("loads and saves the external redemption shop settings", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      purchase_subscription_enabled: false,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openPaymentTab(wrapper);
+
+    expect((wrapper.get("#redeem-shop-enabled").element as HTMLInputElement).checked).toBe(false);
+    await wrapper.get("#redeem-shop-enabled").setValue(true);
+
+    const shopEditor = wrapper.findAllComponents(LocalizedEditor)
+      .find(editor => editor.props("label") === "purchase.shopUrl");
+    expect(shopEditor).toBeDefined();
+    await shopEditor!.get("input").setValue("https://shop.example.com/codes");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      purchase_subscription_enabled: true,
+      site_texts: expect.objectContaining({
+        purchase_subscription_url: expect.objectContaining({
+          source: "https://shop.example.com/codes",
+        }),
+      }),
+      purchase_subscription_url: "https://shop.example.com/codes",
+    }));
+    wrapper.unmount();
   });
 
   it("搜索测试默认隐藏，点击测试后以弹窗展示并可关闭", async () => {

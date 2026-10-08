@@ -9,6 +9,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
@@ -22,6 +23,37 @@ import (
 type selectionSnapshotFixture struct {
 	schedulercore.SnapshotCache
 	providersByID map[int64]*gatewayprovider.ExecutionProvider
+}
+
+func TestPreviousResponseRespectsClientClass(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		ctx := requeststate.WithExecutionHints(context.Background(), requeststate.ExecutionHints{CodexClient: requeststate.Hint[bool]{Set: true, Value: false}})
+		groupID := int64(23)
+		record := &gatewayprovider.ExecutionProvider{Record: providercore.Record{
+			ID: 2, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey,
+			Status: billing.StatusActive, Schedulable: true, Concurrency: 2, LoadLocation: time.LoadLocation,
+			Credentials: map[string]any{"model_whitelist": []string{"*"}},
+			Extra:       map[string]any{providercore.OpenAIClientClassExtraKey: providercore.ClientClassCodex},
+		}}
+		cached := *record
+		if stale {
+			cached.Record.Extra = map[string]any{providercore.OpenAIClientClassExtraKey: providercore.ClientClassAny}
+		}
+		cache := &responseCacheFixture{}
+		store := session.NewOpenAIWSStateStore(cache, gatewayprovider.LogOpenAIWSModeInfo)
+		selector := NewCompatible(CompatibleDependencies{
+			Reads: Reads{
+				Providers: selectionProviderFixture{providers: []gatewayprovider.ExecutionProvider{*record}},
+				Snapshot:  schedulerredis.NewSnapshotReader(schedulercore.NewSnapshotService(&selectionSnapshotFixture{providersByID: map[int64]*gatewayprovider.ExecutionProvider{2: &cached}}, nil, nil, nil, nil)),
+			},
+			Shared:    Shared{Cache: cache, Parameters: responseSelectionParameters(), Concurrency: schedulercore.NewConcurrencyService(selectionConcurrencyFixture{}, schedulercore.Diagnostics{})},
+			Responses: store,
+		}, responseSelectionOptions())
+		require.NoError(t, store.BindResponseProvider(ctx, groupID, "resp_class", record.Record.ID, time.Hour))
+		selected, err := selectPreviousResponseForTest(selector, ctx, &groupID, "resp_class", "gpt-5.1", nil, false)
+		require.NoError(t, err)
+		require.Nil(t, selected)
+	}
 }
 
 // selectPreviousResponseForTest 构造上下文和模型输入，调用上一响应的提供商选择方法。

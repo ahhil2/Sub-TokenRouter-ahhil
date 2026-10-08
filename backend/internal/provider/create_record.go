@@ -13,6 +13,9 @@ type CreationOptions struct {
 }
 
 func BuildProviderForCreate(input *CreateProviderInput, providerExtra map[string]any, options CreationOptions) (*Record, error) {
+	if err := ValidateClientClassExtra(providerExtra); err != nil {
+		return nil, err
+	}
 	// 受管会话状态由系统维护，废弃字段不得通过通用提供商接口写入。
 	DiscardDeprecatedProviderExtra(providerExtra)
 	if err := NormalizeUpstreamUsageExtra(providerExtra); err != nil {

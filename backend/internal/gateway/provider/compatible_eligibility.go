@@ -37,6 +37,9 @@ func CompatibleEligibilityReason(ctx context.Context, provider *ExecutionProvide
 	if platform != "" && provider.Record.Platform != platform {
 		return "platform_mismatch"
 	}
+	if !ExecutionModelPolicy(provider).AllowsClientClass(ctx) {
+		return "client_class_mismatch"
+	}
 	if !ExecutionModelPolicy(provider).Schedulable(ctx, requestedModel) {
 		if provider.View().IsSchedulable() {
 			return "model_rate_limited"

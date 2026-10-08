@@ -1,5 +1,7 @@
 # 部署指南
 
+SuperAHHil 定制版使用[专用源码部署指南](superahhil.md)。本文中的上游安装脚本和发布镜像提供 TokenRouter 官方版本。
+
 本文面向部署和日常运维。工程上的生命周期和迁移约束，以 [Project Doc：部署与数据库迁移](../../operations/deployment_and_migrations.md) 为准。其他手册见[指南目录](../index.md)。
 
 仓库提供三种部署方式：脚本安装二进制、Docker Compose 和源码编译。生产环境通常选前两种；Apple container 见单独的 [Apple container 部署指南](apple_container.md)。

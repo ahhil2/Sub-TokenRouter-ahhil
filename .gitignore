@@ -157,3 +157,25 @@ output/
 
 # Python 字节码缓存。
 __pycache__/
+
+.pnpm-store/
+.agents/plans/
+.env.*
+!.env.example
+ADMIN-CREDENTIALS*
+container.env
+data/
+postgres_data/
+redis_data/
+backups/
+backup-*/
+build-cache/
+build-output/
+*.dump
+*.sqlite
+*.sqlite3
+*.db
+*.tar
+*.tar.gz
+*.bak.*
+redeem-shop-*.png

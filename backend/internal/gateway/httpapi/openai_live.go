@@ -268,6 +268,9 @@ func (s *OpenAILiveExecutor) liveSidebandProvider(ctx context.Context, record *s
 	if provider == nil || !provideradapter.SupportsOpenAIEndpoint(gatewayprovider.ExecutionProtocolRecord(provider), providercore.OpenAIEndpointCapabilityLive) {
 		return nil, session.ErrLiveUnavailable
 	}
+	if !gatewayprovider.ExecutionModelPolicy(provider).AllowsClientClass(ctx) {
+		return nil, session.ErrLiveUnavailable
+	}
 	return provider, nil
 }
 

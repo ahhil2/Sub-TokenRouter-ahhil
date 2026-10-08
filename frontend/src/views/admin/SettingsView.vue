@@ -4563,6 +4563,26 @@
         <!-- Tab: Email -->
         <!-- Tab: Payment -->
         <div v-show="activeTab === 'payment'" v-content-reveal="activeTab === 'payment'" class="space-y-4">
+          <SettingsCard :title="t('purchase.buyRedeemCode')">
+            <SettingsSection>
+              <SettingToggleRow
+                id="redeem-shop-enabled"
+                v-model="form.purchase_subscription_enabled"
+                :label="t('purchase.shopEnabled')"
+                :hint="t('purchase.shopHint')"
+              />
+              <Collapse :open="!!form.purchase_subscription_enabled">
+                <SettingsSubpanel>
+                  <LocalizedEditor
+                    v-model="form.site_texts.purchase_subscription_url"
+                    :label="t('purchase.shopUrl')"
+                    :default-source-locale="getLocale()"
+                    input-class="font-mono text-sm"
+                  />
+                </SettingsSubpanel>
+              </Collapse>
+            </SettingsSection>
+          </SettingsCard>
           <!-- 支付系统 -->
           <SettingsCard :title="t('admin.settings.payment.title')">
             <template #description>
@@ -5946,6 +5966,7 @@ type SettingsForm = Omit<
   | "wechat_connect_mp_enabled"
   | "wechat_connect_mobile_enabled"
 > & {
+  purchase_subscription_enabled: boolean;
   smtp_password: string;
   turnstile_secret_key: string;
   tencent_captcha_app_secret_key: string;
@@ -6043,6 +6064,7 @@ const form = reactive<SettingsForm>({
   backend_mode_enabled: false,
   hide_ccs_import_button: false,
   payment_enabled: false,
+  purchase_subscription_enabled: false,
   payment_min_amount: 1,
   payment_max_amount: 10000,
   payment_daily_limit: 50000,
@@ -8452,6 +8474,8 @@ async function saveSettings(): Promise<boolean> {
         normalizeUserPromptReplacementConfigForSave(),
       // Payment configuration
       payment_enabled: form.payment_enabled,
+      purchase_subscription_enabled: form.purchase_subscription_enabled,
+      purchase_subscription_url: form.site_texts.purchase_subscription_url.source.trim(),
       // 页面功能开关
       team_enabled: form.team_enabled,
       creative_enabled: form.creative_enabled,

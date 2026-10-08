@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -189,6 +190,31 @@ func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {
 	require.Len(t, logs, 1)
 	require.Equal(t, "<credential-bearing body omitted>", logs[0].RequestBody)
 	require.NotContains(t, logs[0].RequestBody, "audit-canary")
+}
+
+func TestSiteMessagesOmitPrivateAuditBody(t *testing.T) {
+	repository := &auditCaptureRepository{}
+	service := audit.NewAuditLogService(repository, nil)
+	service.Start()
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(service, audit.NewRedactor(nil))))
+	router.POST("/api/v1/site-messages", func(context *gin.Context) {
+		body, err := io.ReadAll(context.Request.Body)
+		require.NoError(t, err)
+		require.Contains(t, string(body), "private-message-canary")
+		context.JSON(http.StatusOK, gin.H{"recipient_count": 1})
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/site-messages", strings.NewReader(`{"body":"private-message-canary"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	service.Stop()
+	require.Equal(t, http.StatusOK, recorder.Code)
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	require.Len(t, repository.logs, 1)
+	require.NotContains(t, repository.logs[0].RequestBody, "private-message-canary")
+	require.Equal(t, "<credential-bearing body omitted>", repository.logs[0].RequestBody)
 }
 
 func TestPasskeyFinishRoutesOmitAuditBody(t *testing.T) {

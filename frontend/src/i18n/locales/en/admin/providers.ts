@@ -1,6 +1,14 @@
 export default {
 // Providers
     providers: {
+      clientClass: {
+        title: 'Request source (Client Class)',
+        any: 'Unrestricted',
+        codex: 'Codex',
+        nonCodex: 'non-Codex',
+        description: 'Codex accepts requests identified as Codex. non-Codex accepts other clients. Unrestricted accepts both. Scheduling skips providers with a different client class. Other access policies still apply.',
+        securityHint: 'Uses the original User-Agent or Originator headers, with the same rules as this site\'s newapi Client Class. Headers can be imitated. API key authentication is still required.'
+      },
       title: 'Provider Management',
       description: 'Manage upstream AI connections and credentials',
       tabs: {

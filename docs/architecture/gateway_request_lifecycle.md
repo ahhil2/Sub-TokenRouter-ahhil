@@ -18,6 +18,8 @@
 
 ## 入口族与处理器
 
+公开网关路由的共同中间件 `CaptureClientClass` 在认证和 Header 改写前记录入站 Codex/non-Codex 分类。提供商筛选从 `ExecutionHints.CodexClient` 读取该结果，兼容别名、协议转换和 WebSocket 请求采用同一分类规则，见 [OpenAI 请求来源](../domains/gateway_policy_controls.md#openai_client_class)。
+
 `RegisterGatewayRoutes` 在面板 `/api/v1` 之外注册客户端协议入口。主要入口族：
 
 | 入口族 | 主要用途 | 处理器分派 |

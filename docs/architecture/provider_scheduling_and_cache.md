@@ -17,6 +17,8 @@
 
 ## 调度输入
 
+网关在入口保存客户端的 Codex/non-Codex 分类。OpenAI 提供商通过 `extra.openai_client_class` 选择接受的来源，默认不限。分类取自入站 Header，规则见 [OpenAI 请求来源](../domains/gateway_policy_controls.md#openai_client_class)。来源资格在基础和高级调度的排序前检查，粘性复用、故障转移和数据库复核继续检查。请求的来源分类在跨协议执行期间保持不变。
+
 调度使用请求携带的分组、强制平台、客户端模型、映射后的模型、endpoint 和媒体意图、协议 transport、OAuth 和 privacy 要求，以及可选的 session 标识。提供商优先级只有一个来源：`providers.priority`。`provider_groups` 只记录成员关系，分组内没有单独的优先级。
 
 普通请求读取分组内全部提供商的平台无关快照。平台为空的 `single` bucket 包含九类平台的提供商；指定平台的 bucket 用于专用入口或明确的能力选择。`/antigravity/*` 等强制入口额外加上平台过滤，分组成员、模型和协议门禁照常执行。所有请求都限定在请求的分组范围内，没有关联分组的提供商不会进入候选池。
@@ -182,6 +184,8 @@ Anthropic OAuth 和 Setup Token 提供商的 `max_sessions` 限制空闲窗口�
 释放方式由调用方选择。Qoder 已经进入上游的流式请求采用完成后释放：客户端断开时只停止下游写入，仍在预算内收集尾部 usage 后再归还资源；等待中和非流式请求的取消按各自的规则处理。实际业务输出开始后能否重试，由网关执行层判断，scheduler 不维护自己的 failover 循环。
 
 ## 失效与恢复
+
+`openai_client_class` 同时保存在完整快照和 Redis 轻量调度元数据中。管理端保存来源限制后，通过提供商更新的 outbox 和缓存失效流程传播。候选的数据库复核、previous-response 复用和 Live sideband 使用提供商的当前设置。该配置存储在现有的 `extra` 字段中。
 
 以下变化需要让相关的提供商数据或 bucket 失效：提供商启停和删除、凭据刷新、分组关系、优先级、模型映射和白名单、代理可用性、限流和临时不可调度、privacy 和可调度资格。提供商变化时，同时更新它所在分组的平台无关桶和相关平台桶；删除提供商或无法确定原平台时，重建受影响分组的全部桶。
 

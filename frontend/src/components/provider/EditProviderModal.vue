@@ -583,6 +583,17 @@
         </template>
 
         <template #request>
+          <SettingsSection v-if="provider.platform === 'openai'" :title="t('admin.providers.clientClass.title')" data-testid="provider-client-class">
+            <SettingsSegmented
+              v-model="openAIClientClass"
+              block
+              :ariaLabel="t('admin.providers.clientClass.title')"
+              :options="openAIClientClassOptions"
+            />
+            <p class="input-hint">{{ t('admin.providers.clientClass.description') }}</p>
+            <p class="input-hint">{{ t('admin.providers.clientClass.securityHint') }}</p>
+          </SettingsSection>
+
           <ProviderProtocolSelector
             v-if="!provider.parent_provider_id"
             v-model="upstreamProtocols"
@@ -1238,6 +1249,12 @@ const openAIImagesURLToB64JSON = ref(false)
 const responsesWSConnectionMode = ref<ResponsesWSConnectionMode>(RESPONSES_WS_POOLED)
 const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
+const openAIClientClass = ref<'any' | 'codex' | 'non-codex'>('any')
+const openAIClientClassOptions = computed(() => [
+  { value: 'any', label: t('admin.providers.clientClass.any') },
+  { value: 'codex', label: t('admin.providers.clientClass.codex') },
+  { value: 'non-codex', label: t('admin.providers.clientClass.nonCodex') }
+])
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 const anthropicPassthroughEnabled = ref(false)
@@ -1635,6 +1652,7 @@ const syncFormFromProvider = (newProvider: Provider | null) => {
   responsesWSConnectionMode.value = RESPONSES_WS_POOLED
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   openAIOAuthClientPolicy.value = 'any'
+  openAIClientClass.value = extra?.openai_client_class === 'codex' || extra?.openai_client_class === 'non-codex' ? extra.openai_client_class : 'any'
   codexFingerprintMode.value = 'off'
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
@@ -2884,6 +2902,7 @@ const handleSubmit = async () => {
     if (props.provider.platform === 'openai' && (props.provider.type === 'oauth' || props.provider.type === 'setup-token' || props.provider.type === 'apikey')) {
       const currentExtra = (props.provider.extra as Record<string, unknown>) || {}
       const newExtra = normalizeLegacyOpenAIExtra(currentExtra)
+      newExtra.openai_client_class = openAIClientClass.value
       const hadCodexCLIOnlyEnabled = currentExtra.codex_cli_only === true
       newExtra.responses_ws_connection_mode = responsesWSConnectionMode.value
       clearLegacyResponsesWSSettings(newExtra)

@@ -26,6 +26,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/live"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/selection"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	gatewaysession "github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
@@ -897,6 +898,22 @@ func TestLiveCapabilityOnlyAllowsOpenAIOAuth(t *testing.T) {
 			},
 		},
 	}), providercore.OpenAIEndpointCapabilityLive))
+}
+
+func TestLiveSidebandRespectsClientClass(t *testing.T) {
+	record := &gatewayprovider.ExecutionProvider{Record: providercore.Record{ID: 11, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, LoadLocation: time.LoadLocation, Extra: map[string]any{providercore.OpenAIClientClassExtraKey: providercore.ClientClassCodex}}}
+	executor := &OpenAILiveExecutor{Requests: &OpenAIRequests{Providers: &liveTestProviderRepo{provider: record}}}
+	for _, codex := range []bool{false, true} {
+		ctx := requeststate.WithExecutionHints(context.Background(), requeststate.ExecutionHints{CodexClient: requeststate.Hint[bool]{Set: true, Value: codex}})
+		selected, err := executor.liveSidebandProvider(ctx, &gatewaysession.LiveCallRecord{ProviderID: 11})
+		if codex {
+			require.NoError(t, err)
+			require.Same(t, record, selected)
+		} else {
+			require.ErrorIs(t, err, gatewaysession.ErrLiveUnavailable)
+			require.Nil(t, selected)
+		}
+	}
 }
 
 func TestValidateLiveCallRequestDoesNotRequireDelegation(t *testing.T) {

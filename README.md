@@ -1,3 +1,26 @@
+# Sub-TokenRouter-ahhil / SuperAHHil
+
+这是 SuperAHHil 的部署源码，基于 [TokenFlux/TokenRouter](https://github.com/TokenFlux/TokenRouter) `v0.2.7`，上游提交为 `3460848ba293442910b5a292abd6f3e32161189f`。TokenRouter 的前身是 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api)。Git 历史包含该版本的上游提交和本仓库的初始提交。
+
+## SuperAHHil 定制功能
+
+- 黑色首页、登录、注册和使用说明页面，由 Caddy 提供静态文件，控制台和 API 交给应用处理。
+- “充值/订阅”页面的大字“购买兑换码”入口，购买地址和启用状态在管理员设置中配置。
+- 站长私信：管理员向单个、多个或全部活跃普通用户发信，用户可回复，支持未读提醒、已读状态和表情。
+- OpenAI 提供商的 Client Class：不限、Codex、non-Codex，覆盖提供商选择、重试和连接复用。分类依据请求头，伪造请求头可以绕过分类，访问授权仍由 API Key 等认证机制控制。
+
+## 开发与部署入口
+
+- [SuperAHHil 部署、品牌设置和升级](docs/guides/deployment/superahhil.md)
+- [源码构建 Compose](deploy/superahhil/compose.yaml)、[环境变量样例](deploy/superahhil/.env.example)、[Caddy 示例](deploy/superahhil/Caddyfile.example)
+- [黑色页面源码](deploy/superahhil/site/)
+- [站长私信设计](docs/domains/site_messages.md)、[提供商策略](docs/domains/gateway_policy_controls.md)
+- [开发工具链和测试](docs/operations/development_workflow.md)
+
+生产密码、密钥、数据库、用户消息、日志和备份由部署环境单独保存。新环境需要创建管理员，并在后台设置站点名称和兑换码购买地址。定制版通过本仓库构建和更新，使用上游安装脚本、预编译镜像或在线更新会覆盖定制功能。
+
+许可证见 [LICENSE](LICENSE)，上游标注为 LGPL-3.0-or-later。下文是 TokenRouter 的上游介绍，其中的发行版和镜像链接指向上游项目。
+
 <div align="center">
   <img src="assets/logo.svg" alt="TokenRouter" width="112" />
 

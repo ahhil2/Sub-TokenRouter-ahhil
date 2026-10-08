@@ -60,6 +60,7 @@
           <div v-if="user" class="hidden sm:block">
             <AnnouncementBell variant="status" />
           </div>
+          <MessageBell v-if="user" />
 
           <a
             v-if="docUrl"
@@ -254,6 +255,7 @@ import { useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
+import MessageBell from '@/components/messages/MessageBell.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import HeaderContactSupport from '@/components/layout/HeaderContactSupport.vue'
 import Icon from '@/components/icons/Icon.vue'

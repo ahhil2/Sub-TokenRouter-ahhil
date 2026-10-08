@@ -8,6 +8,8 @@ import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
 import type { CheckoutInfoResponse, MethodLimit, SubscriptionPlan } from '@/types/payment'
+import { RouterLink } from 'vue-router'
+import type { PublicSettings } from '@/types'
 
 // 支付测试保留动效容器的内容，浏览器过渡由实际页面验证。
 const motionTransitionStub = { inheritAttrs: false, template: '<slot />' }
@@ -70,6 +72,13 @@ const showWarning = vi.hoisted(() => vi.fn())
 const getCheckoutInfo = vi.hoisted(() => vi.fn())
 const bridgeInvoke = vi.hoisted(() => vi.fn())
 const translate = vi.hoisted(() => vi.fn((key: string) => key))
+const publicSettingsState = vi.hoisted(() => ({
+  value: null as Pick<PublicSettings, 'purchase_subscription_enabled' | 'purchase_subscription_url'> | null,
+}))
+
+beforeEach(() => {
+  publicSettingsState.value = null
+})
 
 vi.mock('vue-router', async () => {
   const actual = await vi.importActual<typeof import('vue-router')>('vue-router')
@@ -116,6 +125,7 @@ vi.mock('@/stores/subscriptions', () => ({
 
 vi.mock('@/stores', () => ({
   useAppStore: () => ({
+    get cachedPublicSettings() { return publicSettingsState.value },
     showError,
     showInfo,
     showWarning,
@@ -391,6 +401,79 @@ async function mountSubscriptionPlanList(planCount: number) {
   await flushPromises()
   return wrapper
 }
+
+describe('PaymentView external redemption code shop', () => {
+  it('opens the configured shop safely and links back to redemption without creating an order', async () => {
+    publicSettingsState.value = {
+      purchase_subscription_enabled: true,
+      purchase_subscription_url: ' https://shop.example.com/codes ',
+    }
+    const wrapper = await mountSubscriptionPlanList(3)
+    const shop = wrapper.get('[data-testid="redeem-shop"]')
+    const purchaseLink = shop.get('a')
+    expect(purchaseLink.attributes('href')).toBe('https://shop.example.com/codes')
+    expect(purchaseLink.attributes('target')).toBe('_blank')
+    expect(purchaseLink.attributes('rel')).toBe('noopener noreferrer')
+    expect(purchaseLink.text()).toContain('purchase.buyRedeemCode')
+    expect(shop.findComponent(RouterLink).props('to')).toBe('/redeem')
+    expect(wrapper.findAllComponents(SubscriptionPlanCard)).toHaveLength(3)
+    const view = wrapper.vm as unknown as { activeTab: string }
+    view.activeTab = 'recharge'
+    await flushPromises()
+    expect(wrapper.findComponent(AmountInput).exists()).toBe(true)
+    purchaseLink.element.addEventListener('click', event => event.preventDefault())
+    await purchaseLink.trigger('click')
+    expect(createOrder).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it.each([
+    null,
+    { purchase_subscription_enabled: false, purchase_subscription_url: 'https://shop.example.com' },
+    { purchase_subscription_enabled: true, purchase_subscription_url: '' },
+    { purchase_subscription_enabled: true, purchase_subscription_url: 'javascript:alert(1)' },
+    { purchase_subscription_enabled: true, purchase_subscription_url: '//shop.example.com' },
+  ])('hides an unavailable or unsafe shop: %j', async settings => {
+    publicSettingsState.value = settings
+    const wrapper = await mountSubscriptionPlanList(0)
+    expect(wrapper.find('[data-testid="redeem-shop"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows the shop with no subscription plans and hides it while paying', async () => {
+    publicSettingsState.value = {
+      purchase_subscription_enabled: true,
+      purchase_subscription_url: 'https://shop.example.com/codes',
+    }
+    const wrapper = await mountSubscriptionPlanList(0)
+    expect(wrapper.find('[data-testid="redeem-shop"]').exists()).toBe(true)
+    const view = wrapper.vm as unknown as { paymentPhase: string }
+    view.paymentPhase = 'paying'
+    await flushPromises()
+    expect(wrapper.find('[data-testid="redeem-shop"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('hides the shop during subscription confirmation', async () => {
+    publicSettingsState.value = {
+      purchase_subscription_enabled: true,
+      purchase_subscription_url: 'https://shop.example.com/codes',
+    }
+    const wrapper = await mountSubscriptionConfirm()
+    expect(wrapper.find('[data-testid="redeem-shop"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('provides purchase and redemption text in both catalogs', () => {
+    expect(zh.purchase.buyRedeemCode).toBe('购买兑换码')
+    expect(en.purchase.buyRedeemCode).toBe('Buy redemption codes')
+    for (const catalog of [en, zh]) {
+      expect(catalog.purchase.redeemCodeDescription).toBeTruthy()
+      expect(catalog.purchase.redeemPurchasedCode).toBeTruthy()
+      expect(catalog.purchase.shopUrl).toBeTruthy()
+    }
+  })
+})
 
 describe('PaymentView 横向切换', () => {
   it('同一页签输入不重建面板，往返切换保留已填金额和账单信息', async () => {

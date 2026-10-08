@@ -1,3 +1,7 @@
+# Sub-TokenRouter-ahhil / SuperAHHil
+
+This repository contains the SuperAHHil deployment and customizations based on TokenFlux/TokenRouter v0.2.7 (`3460848ba293442910b5a292abd6f3e32161189f`), which derives from Wei-Shaw/sub2api. See the [fork README](README.md) and [deployment guide](docs/guides/deployment/superahhil.md). Build this repository to use the custom features; the upstream images and updater replace them with the upstream version. The upstream introduction follows.
+
 <div align="center">
   <img src="assets/logo.svg" alt="TokenRouter" width="112" />
 

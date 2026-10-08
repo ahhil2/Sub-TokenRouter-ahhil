@@ -17,6 +17,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+func TestClientClassFiltersScheduling(t *testing.T) {
+	for _, codex := range []bool{false, true} {
+		ctx := requeststate.WithExecutionHints(context.Background(), requeststate.ExecutionHints{CodexClient: requeststate.Hint[bool]{Value: codex, Set: true}})
+		for _, class := range []string{providercore.ClientClassAny, providercore.ClientClassCodex, providercore.ClientClassNonCodex} {
+			record := &providercore.Record{Platform: providercore.PlatformOpenAI, Type: providercore.ProviderTypeAPIKey, Status: billing.StatusActive, Schedulable: true, Credentials: map[string]any{"model_whitelist": []string{"*"}}, Extra: map[string]any{providercore.OpenAIClientClassExtraKey: class}}
+			policy := ModelPolicy{Record: record}
+			allowed := class == providercore.ClientClassAny || (class == providercore.ClientClassCodex) == codex
+			require.Equal(t, allowed, policy.AllowsClientClass(ctx))
+			require.Equal(t, allowed, policy.Schedulable(ctx, "gpt-5.1"))
+			require.True(t, policy.AllowsClientClass(context.Background()))
+		}
+	}
+}
+
 func TestProviderIsSchedulableForModel_AntigravityRateLimits(t *testing.T) {
 	now := time.Now()
 	future := now.Add(10 * time.Minute)

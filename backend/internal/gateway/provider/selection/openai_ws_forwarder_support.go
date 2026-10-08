@@ -137,6 +137,9 @@ func (s *Compatible) resolveProviderByPreviousResponseIDForCapability(
 		_ = store.DeleteResponseProvider(ctx, derefGroupID(groupID), responseID)
 		return 0, nil, "", nil
 	}
+	if !gatewayprovider.ExecutionModelPolicy(provider).AllowsClientClass(ctx) {
+		return 0, nil, "", nil
+	}
 	if (hasOpenAIProviderGroupMetadata(provider) && !s.openAIProviderMatchesSchedulingGroup(provider, groupID)) || !s.openAIProviderPassesPrivacyRequirement(ctx, groupID, provider) {
 		return 0, nil, "", nil
 	}
@@ -164,6 +167,9 @@ func (s *Compatible) resolveProviderByPreviousResponseIDForCapability(
 		}
 		if shouldClearStickySession(latest, routingModel) || !latest.View().IsOpenAI() || !latest.View().IsSchedulable() {
 			_ = store.DeleteResponseProvider(ctx, derefGroupID(groupID), responseID)
+			return 0, nil, "", nil
+		}
+		if !gatewayprovider.ExecutionModelPolicy(latest).AllowsClientClass(ctx) {
 			return 0, nil, "", nil
 		}
 		if (hasOpenAIProviderGroupMetadata(latest) && !s.openAIProviderMatchesSchedulingGroup(latest, groupID)) || !s.openAIProviderPassesPrivacyRequirement(ctx, groupID, latest) {

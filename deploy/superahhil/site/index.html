@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SuperAHHil_AI - AI API Relay Console</title>
+    <meta
+      name="description"
+      content="SuperAHHil_AI 提供面向开发者的 AI API 中转与统一接入入口。"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      .hero-title-cn {
+        font-family: SimSun, "Songti SC", STSong, serif;
+      }
+
+      .hero-title-en {
+        font-family: "Times New Roman", Times, serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="cursor-glow" aria-hidden="true"></div>
+    <div class="page-shell">
+      <header class="site-header" aria-label="主导航">
+        <a class="brand" href="/" aria-label="SuperAHHil_AI 首页">
+          <span class="brand-mark">A</span>
+          <span>
+            <strong>SuperAHHil_AI</strong>
+            <small>AI API relay console</small>
+          </span>
+        </a>
+
+        <nav class="nav-links">
+          <a href="/login">登录</a>
+          <a href="/register">注册</a>
+          <a href="/available-channels">模型价格</a>
+          <a href="/docs">文档中心</a>
+          <a href="/dashboard">控制台</a>
+          <a href="/purchase">充值</a>
+        </nav>
+
+        <div class="status-pill">
+          <span></span>
+          主线路在线
+        </div>
+      </header>
+
+      <main>
+        <section class="hero-grid" aria-label="欢迎区域">
+          <article class="hero-card glass-card">
+            <div class="card-icon">⌘</div>
+            <div class="orbital" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <h1>
+              <span class="hero-title-cn">欢迎来到</span><br />
+              <span class="hero-title-en" lang="en">SuperAHHil_AI</span>
+            </h1>
+            <p>
+              统一接入 Claude Code、Codex CLI、Gemini CLI 与图像模型。替换一个
+              Base URL，把 AI 编程工作流接到同一套账户、额度与日志里。
+            </p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="/register">创建账户</a>
+              <a class="button button-ghost" href="/docs">查看接入文档</a>
+            </div>
+            <div class="mini-status">
+              <span>relay: ready</span>
+              <span>quota: synced</span>
+              <span>models: online</span>
+            </div>
+          </article>
+
+          <aside id="qq-group" class="benefit-card glass-card" aria-label="新用户福利">
+            <div class="gift-icon">□</div>
+            <h2>新用户福利</h2>
+            <p>
+              注册即可体验统一 API 接入能力，额度、消费与调用日志都可以在控制台集中查看。
+            </p>
+            <div class="benefit-metrics">
+              <div>
+                <strong>$2</strong>
+                <span>体验额度</span>
+              </div>
+              <div>
+                <strong>24h</strong>
+                <span>实时同步</span>
+              </div>
+              <div>
+                <strong>返现</strong>
+                <span>邀请奖励</span>
+              </div>
+            </div>
+            <div class="hero-actions">
+              <a class="button button-primary" href="/landing-assets/qq-group.jpg?v=3" target="_blank" rel="noopener noreferrer">查看群二维码</a>
+              <a class="button button-ghost" href="/dashboard">进入控制台</a>
+            </div>
+          </aside>
+        </section>
+
+        <section class="section-heading">
+          <h2>API 接入</h2>
+          <p>面向 AI 编程工具的统一中转入口</p>
+        </section>
+
+        <section class="api-grid" aria-label="API 接入卡片">
+          <article class="api-card glass-card">
+            <div class="api-visual visual-claude">
+              <span>✳ Claude Code</span>
+            </div>
+            <div class="api-body">
+              <h3>Claude Code</h3>
+              <p>把代码理解、重构和长任务开发接入统一账户额度。</p>
+              <div class="tags">
+                <span>Anthropic 兼容</span>
+                <span>全链路额度</span>
+              </div>
+              <a class="button button-primary button-full" href="/docs">查看接入</a>
+            </div>
+          </article>
+
+          <article class="api-card glass-card">
+            <div class="api-visual visual-codex">
+              <span>◇ Codex</span>
+            </div>
+            <div class="api-body">
+              <h3>Codex CLI</h3>
+              <p>面向复杂工程任务的 AI 编码辅助，统一用量统计。</p>
+              <div class="tags">
+                <span>OpenAI 兼容</span>
+                <span>指令透传</span>
+              </div>
+              <a class="button button-primary button-full" href="/docs">查看接入</a>
+            </div>
+          </article>
+
+          <article class="api-card glass-card">
+            <div class="api-visual visual-gemini">
+              <span>✦ Gemini CLI</span>
+            </div>
+            <div class="api-body">
+              <h3>Gemini CLI</h3>
+              <p>为前端、多模态和上下文任务准备的统一入口。</p>
+              <div class="tags">
+                <span>Google 兼容</span>
+                <span>多模态</span>
+              </div>
+              <a class="button button-primary button-full" href="/docs">查看接入</a>
+            </div>
+          </article>
+
+          <article class="api-card glass-card">
+            <div class="api-visual visual-image">
+              <span>▣ Image API</span>
+            </div>
+            <div class="api-body">
+              <h3>图像模型</h3>
+              <p>接入图像生成与编辑工作流，在平台里查看消耗。</p>
+              <div class="tags">
+                <span>文生图</span>
+                <span>图生图</span>
+              </div>
+              <a class="button button-primary button-full" href="/docs">查看接入</a>
+            </div>
+          </article>
+        </section>
+
+        <section class="feature-strip" aria-label="平台能力">
+          <span>Multi-provider endpoint</span>
+          <span>Realtime quota ledger</span>
+          <span>Streaming relay path</span>
+          <span>Unified tool billing</span>
+        </section>
+
+        <section class="bottom-grid">
+          <article class="terminal-card glass-card" aria-label="命令行示例">
+            <pre><code>$ export SUPERAHHIL_AI_BASE=https://superahhilai.top
+$ export SUPERAHHIL_AI_KEY=sk-your-key
+# OpenAI / Anthropic / Gemini 风格工具共用一套账户体系
+$ codex --model gpt-5.4-mini
+status: relay ready · quota visible · logs synced</code></pre>
+          </article>
+
+          <article class="notice-card glass-card" aria-label="系统公告">
+            <h2>系统公告</h2>
+            <ul>
+              <li>官方文档持续更新，新用户可在控制台查看账户额度。</li>
+              <li>日卡、包周、包月订阅可在商城购买，兑换码支持自助激活。</li>
+              <li>模型价格与可用性请以控制台实时状态为准。</li>
+            </ul>
+          </article>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <span>© 2026 SuperAHHil_AI · Built for AI developers</span>
+        <a href="/dashboard">进入控制台</a>
+      </footer>
+    </div>
+    <script>
+      const cursorGlow = document.querySelector(".cursor-glow");
+
+      window.addEventListener("pointermove", (event) => {
+        cursorGlow.style.setProperty("--x", `${event.clientX}px`);
+        cursorGlow.style.setProperty("--y", `${event.clientY}px`);
+      });
+    </script>
+  </body>
+</html>

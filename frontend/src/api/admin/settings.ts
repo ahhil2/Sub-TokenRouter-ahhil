@@ -494,6 +494,8 @@ export interface SystemSettings {
   // OEM settings
   localized_settings: Record<string, LocalizedUpdate<string>>;
   site_texts: Record<string, LocalizedUpdate<string>>;
+  purchase_subscription_enabled?: boolean;
+  purchase_subscription_url?: string;
   default_locale: string;
   site_name: string;
   site_logo: string;
@@ -827,6 +829,8 @@ export interface UpdateSettingsRequest {
   // ── 平台限额（嵌套 JSON，系统层 + 7 auth-source 层）────────────────────────────────
   localized_settings?: Record<string, LocalizedUpdate<string>>;
   site_texts?: Record<string, LocalizedUpdate<string>>;
+  purchase_subscription_enabled?: boolean;
+  purchase_subscription_url?: string;
   default_locale?: string;
   site_name?: string;
   site_logo?: string;

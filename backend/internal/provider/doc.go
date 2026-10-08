@@ -16,6 +16,7 @@
 //   - oauth_usage*.go、usage*.go、ollama_usage*.go：用量读取、缓存、窗口统计和数据转换。
 //   - health*.go、runtime*.go、retry_cooldown.go：失败观测、运行状态和冷却设置。
 //   - model*.go、protocol*.go、endpoint_rule.go：模型映射、协议选择和端点资格。
+//   - client_class.go：OpenAI 提供商的入站客户端分类限制。
 //   - threshold_settings.go、scheduling_threshold*.go、quota*.go：额度阈值和自动暂停规则。
 //   - snapshot.go、clone.go、capacity_snapshot.go：记录副本和调度容量数据。
 //   - testing.go、scheduled*.go、probe_runtime.go、import_probes.go：连接测试、定时计划和探测任务。

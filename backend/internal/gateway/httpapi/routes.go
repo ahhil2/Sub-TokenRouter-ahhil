@@ -32,7 +32,7 @@ type RouteEndpoints struct {
 // @project-doc docs/architecture/gateway_request_lifecycle.md#gateway_pipeline
 func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options RouteMiddleware, registerBatchImages func(*gin.RouterGroup)) {
 	// 网关协议响应使用英文，网站设置和账户语言由网站路由处理。
-	r := engine.Group("", func(c *gin.Context) {
+	r := engine.Group("", CaptureClientClass, func(c *gin.Context) {
 		ctx := locale.WithLanguage(c.Request.Context(), "en")
 		c.Request = c.Request.WithContext(ctx)
 		c.Header("Content-Language", "en")

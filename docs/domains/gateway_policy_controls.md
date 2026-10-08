@@ -8,6 +8,7 @@
 - [协议与能力准入](#协议与能力准入)：修改 Messages、Live、媒体或客户端限制时读取。
 - [模型路由](#模型路由)：修改模型重定向、映射、白名单或 fallback 时读取。
 - [认证与隐私](#认证与隐私)：修改 OAuth-only、privacy 或会话隔离时读取。
+- [OpenAI 请求来源](#openai_client_class)：修改 Codex 分类、提供商来源限制或客户端兼容设置时读取。
 - [推理与 Header](#推理与-header)：修改 reasoning、beta 或上游 Header 时读取。
 - [重试与降级](#重试与降级)：修改状态码、分组回退或失败分类时读取。
 
@@ -71,7 +72,23 @@ OpenAI 客户端的访问判定直接使用 provider 的检测接口，按需读
 
 提供商的模型白名单缺失或为空时允许任意模型 ID，包含统一目录未收录的型号。非空白名单在提供商映射后检查最终模型，支持末尾通配符和 `*`。Spark、OAuth、站点及端点资格分别检查。OAuth 和 API Key 的透传模式同样执行这些规则。
 
-会话隔离和粘性约束让不同的提供商、团队和用户上下文各自独立，互不复用。OAuth passthrough、Claude Code-only 和客户端白名单策略，要和提供商类型一起校验；客户端伪造 User-Agent 拿不到额外的权限。
+会话隔离和粘性约束让不同的提供商、团队和用户上下文各自独立，互不复用。OAuth passthrough、Claude Code-only 和客户端白名单策略需要结合提供商类型校验。API Key 认证决定账户和分组权限，客户端提交的 User-Agent 用于兼容性检测和来源分类。
+
+<a id="openai_client_class"></a>
+## OpenAI 请求来源
+
+管理员在“编辑提供商”的“请求与协议”中设置请求来源。OpenAI 提供商的 `extra.openai_client_class` 接受 `any`、`codex` 和 `non-codex`，分别对应“不限”、Codex 和 non-Codex。字段缺失、`null` 或空字符串表示不限。创建、编辑、extra 更新和批量更新接口会拒绝其他值，已经存入数据库的无效值会阻止该 OpenAI 提供商接收网关请求。其他平台照常调度。
+
+`gateway/httpapi.CaptureClientClass` 在入口读取客户端提交的 `User-Agent` 和 `Originator`，忽略大小写和首尾空白。满足以下任一条件时分类为 Codex，其余请求分类为 non-Codex：
+
+- `User-Agent` 以前缀 `codex desktop/`、`codex-tui/`、`codex_vscode/`、`codex_cli_rs/`、`codex_sdk_ts/` 或 `codex_exec/` 开头。
+- `Originator` 的完整值为 `codex desktop`、`codex_work_desktop`、`codex-tui`、`codex_vscode` 或 `codex_cli_rs`。
+
+分类结果保存在 `ExecutionHints.CodexClient` 中，协议转换、重试和出站 Header 改写继续使用入站时的结果。`ForceCodexCLI` 和 OAuth 客户端兼容白名单不会改变该结果。客户端可以伪造这些 Header，账户权限仍由 API Key 认证控制。
+
+调度器在候选评分、粘性复用、故障转移和数据库复核时检查来源限制。WebSocket 的 previous-response 复用和 Live sideband 同样检查，模型目录按来源过滤提供商。来源不符时跳过该提供商，候选全部被排除时返回现有的无可用提供商错误。OAuth 客户端访问策略等其他资格要求继续独立检查，因此“不限”表示取消来源限制，能否使用提供商还取决于其他策略。
+
+管理端连接测试和调度诊断使用没有入站分类的内部上下文。Creative Studio 的后台任务将来源设置为 non-Codex。新增公开入口需要经过 `CaptureClientClass`，新增面向用户的后台任务需要携带已确定的来源分类。
 
 ## 推理与 Header
 

@@ -350,6 +350,36 @@ describe('EditProviderModal', () => {
     listTLSProfilesMock.mockResolvedValue([])
   })
 
+  it.each(['any', 'codex', 'non-codex'] as const)('saves and restores OpenAI client class %s', async (mode) => {
+    const provider = { ...buildProvider(), platform: 'openai', extra: { openai_client_class: 'codex', retained: true } }
+    updateProviderMock.mockResolvedValue(provider)
+    const wrapper = mountModal(provider)
+    await flushPromises()
+    const section = wrapper.get('[data-testid="provider-client-class"]')
+    const labels = { any: 'admin.providers.clientClass.any', codex: 'admin.providers.clientClass.codex', 'non-codex': 'admin.providers.clientClass.nonCodex' }
+    const buttons = section.findAll('button')
+    expect(buttons.find(button => button.text() === labels.codex)?.attributes('aria-checked')).toBe('true')
+    await buttons.find(button => button.text() === labels[mode])!.trigger('click')
+    await wrapper.get('form#edit-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateProviderMock).toHaveBeenCalledTimes(1)
+    expect(updateProviderMock.mock.calls[0]?.[1]?.extra).toMatchObject({ openai_client_class: mode, retained: true })
+    wrapper.unmount()
+  })
+
+  it('defaults client class to unrestricted and hides it for other platforms', async () => {
+    const provider = { ...buildProvider(), platform: 'openai', extra: {} }
+    const wrapper = mountModal(provider)
+    await flushPromises()
+    const section = wrapper.get('[data-testid="provider-client-class"]')
+    expect(section.findAll('button').find(button => button.text() === 'admin.providers.clientClass.any')?.attributes('aria-checked')).toBe('true')
+    await wrapper.setProps({ provider: { ...provider, platform: 'anthropic' } })
+    expect(wrapper.find('[data-testid="provider-client-class"]').exists()).toBe(false)
+    await wrapper.setProps({ provider: { ...provider, platform: 'gemini' } })
+    expect(wrapper.find('[data-testid="provider-client-class"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('renders the shared provider model rule copy', async () => {
     const provider = buildProvider()
     provider.credentials.model_whitelist = []

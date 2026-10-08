@@ -279,6 +279,49 @@ func TestMixedGroupRechecksMembershipAfterSnapshot(t *testing.T) {
 	}
 }
 
+func TestClientClassSchedulingStickyRecheckAndFailover(t *testing.T) {
+	for _, mode := range []routing.GroupSchedulerType{routing.GroupSchedulerTypeBasic, routing.GroupSchedulerTypeAdvanced} {
+		for _, codex := range []bool{false, true} {
+			for _, stale := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/codex=%v/stale=%v", mode, codex, stale), func(t *testing.T) {
+					group := &routing.Group{ID: 91, Hydrated: true, Status: routing.StatusActive, SchedulerType: mode}
+					codexProvider := mixedGroupProvider(1, capability.PlatformOpenAI, "*", group.ID)
+					codexProvider.Record.Extra = map[string]any{providercore.OpenAIClientClassExtraKey: providercore.ClientClassCodex}
+					otherProvider := mixedGroupProvider(2, capability.PlatformOpenAI, "*", group.ID)
+					otherProvider.Record.Extra = map[string]any{providercore.OpenAIClientClassExtraKey: providercore.ClientClassNonCodex}
+					pool := []gatewayprovider.ExecutionProvider{codexProvider, otherProvider}
+					cached := append([]gatewayprovider.ExecutionProvider(nil), pool...)
+					if stale {
+						for index := range cached {
+							cached[index].Record.Extra = map[string]any{providercore.OpenAIClientClassExtraKey: providercore.ClientClassAny}
+						}
+					}
+					wanted, wrongSticky := int64(2), int64(1)
+					if codex {
+						wanted, wrongSticky = 1, 2
+					}
+					selector := NewCompatible(CompatibleDependencies{
+						Reads:  Reads{Providers: &mixedGroupProviders{values: pool}, Snapshot: mixedSnapshot{values: cached}},
+						Shared: Shared{Cache: &schedulerTestGatewayCache{sessionBindings: map[string]int64{"sticky": wrongSticky}}},
+					}, DefaultOptions())
+					ctx := requeststate.WithClientProtocol(requeststate.WithGroup(context.Background(), group), protocol.ProtocolOpenAIResponses)
+					ctx = requeststate.WithExecutionHints(ctx, requeststate.ExecutionHints{CodexClient: requeststate.Hint[bool]{Value: codex, Set: true}})
+					selected, _, err := selector.SelectProviderWithSchedulerForCapability(ctx, &group.ID, "", "sticky", "shared", nil, egress.OpenAIUpstreamTransportHTTPSSE, providercore.OpenAIEndpointCapabilityTextGeneration, false, false)
+					require.NoError(t, err)
+					require.NotNil(t, selected)
+					require.Equal(t, wanted, selected.Provider.Record.ID)
+					if selected.ReleaseFunc != nil {
+						selected.ReleaseFunc()
+					}
+					selected, _, err = selector.SelectProviderWithSchedulerForCapability(ctx, &group.ID, "", "sticky", "shared", map[int64]struct{}{wanted: {}}, egress.OpenAIUpstreamTransportHTTPSSE, providercore.OpenAIEndpointCapabilityTextGeneration, false, false)
+					require.Error(t, err)
+					require.Nil(t, selected)
+				})
+			}
+		}
+	}
+}
+
 func TestOpenAISelectProviderWithScheduler_GroupModelUnsupportedError(t *testing.T) {
 	groupID := int64(1)
 	repo := selectionProviderFixture{

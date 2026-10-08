@@ -1,0 +1,1049 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>注册 - SuperAHHilAi</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script>window.react = window.React;</script>
+    <script src="https://unpkg.com/lucide-react@0.468.0/dist/umd/lucide-react.js"></script>
+    <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script>
+      window.__onTurnstileReady = function () {
+        window.dispatchEvent(new Event("turnstile-ready"));
+      };
+    </script>
+    <script
+      src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=__onTurnstileReady"
+      async
+      defer
+    ></script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #020303;
+        --panel: rgba(13, 14, 14, 0.88);
+        --panel-soft: rgba(255, 255, 255, 0.035);
+        --line: rgba(255, 255, 255, 0.14);
+        --line-strong: rgba(255, 255, 255, 0.24);
+        --text: #f7f7f2;
+        --muted: rgba(255, 255, 255, 0.64);
+        --dim: rgba(255, 255, 255, 0.42);
+        --cyan: #8eeaff;
+        --green: #9fffc7;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body,
+      #root {
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body {
+        min-width: 320px;
+        overflow-x: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      .app {
+        position: relative;
+        min-height: 100vh;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 50% -8%, rgba(255, 255, 255, 0.16), transparent 18%),
+          radial-gradient(circle at 18% 75%, rgba(65, 205, 255, 0.08), transparent 22%),
+          radial-gradient(circle at 88% 30%, rgba(145, 255, 200, 0.055), transparent 20%),
+          #020303;
+      }
+
+      .app::before {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        content: "";
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px);
+        background-size: 20px 20px;
+        mask-image: linear-gradient(to bottom, transparent 0%, black 18%, black 66%, transparent 100%);
+        transform: perspective(620px) rotateX(62deg) scale(1.82) translateY(-140px);
+        transform-origin: top center;
+      }
+
+      .app::after {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        content: "";
+        background:
+          radial-gradient(circle, rgba(255, 255, 255, 0.28) 1px, transparent 1.8px),
+          linear-gradient(to bottom, transparent 0 34%, rgba(255, 255, 255, 0.08) 34.1%, transparent 34.3%);
+        background-size: 220px 220px, 100% 1px;
+        opacity: 0.22;
+      }
+
+      .pyramid {
+        position: absolute;
+        top: 38px;
+        left: 50%;
+        z-index: 0;
+        width: min(520px, 42vw);
+        height: min(420px, 45vh);
+        pointer-events: none;
+        opacity: 0.34;
+        transform: translateX(-50%);
+        clip-path: polygon(50% 0, 0 100%, 100% 100%);
+        background:
+          repeating-conic-gradient(from -4deg at 50% 0, rgba(255,255,255,.16) 0deg 0.28deg, transparent 0.3deg 2.2deg);
+        mask-image: linear-gradient(to bottom, black, transparent 86%);
+      }
+
+      .wrap {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        min-height: 100vh;
+        grid-template-columns: minmax(0, 1.28fr) minmax(420px, 516px);
+        gap: clamp(32px, 5vw, 92px);
+        align-items: center;
+        width: min(1488px, calc(100% - 128px));
+        margin: 0 auto;
+        padding: 44px 0 52px;
+      }
+
+      .brand {
+        position: absolute;
+        top: 48px;
+        left: 0;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .brand-mark {
+        display: grid;
+        width: 50px;
+        height: 50px;
+        place-items: center;
+        border: 1px solid var(--line-strong);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.035);
+        font-size: 21px;
+        font-weight: 900;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+      }
+
+      .brand-title {
+        display: block;
+        font-size: 24px;
+        font-weight: 900;
+        letter-spacing: -0.04em;
+      }
+
+      .brand-subtitle {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .home-link {
+        position: absolute;
+        top: 50px;
+        right: 0;
+        display: inline-flex;
+        min-height: 46px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--line-strong);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.055);
+        padding: 0 20px;
+        color: var(--text);
+        font-size: 15px;
+        font-weight: 800;
+        transition: transform .18s ease, background .18s ease, border-color .18s ease;
+      }
+
+      .home-link:hover {
+        border-color: rgba(255,255,255,.4);
+        background: rgba(255,255,255,.09);
+        transform: translateY(-1px);
+      }
+
+      .hero {
+        max-width: 850px;
+        padding-top: 124px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        min-height: 36px;
+        border: 1px solid rgba(142, 234, 255, 0.28);
+        border-radius: 999px;
+        background: rgba(8, 41, 45, 0.68);
+        padding: 0 16px;
+        color: #dffbff;
+        font-size: 13px;
+        font-weight: 800;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 0 28px rgba(44,220,255,.08);
+      }
+
+      .pill-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 99px;
+        background: var(--cyan);
+        box-shadow: 0 0 18px var(--cyan);
+      }
+
+      .hero h1 {
+        max-width: 880px;
+        margin: 28px 0 22px;
+        color: #fff;
+        font-size: clamp(54px, 7vw, 92px);
+        font-weight: 900;
+        letter-spacing: -0.025em;
+        line-height: 1.06;
+      }
+
+      .hero p {
+        max-width: 780px;
+        margin: 0;
+        color: rgba(255,255,255,.78);
+        font-size: clamp(18px, 1.8vw, 24px);
+        font-weight: 500;
+        line-height: 1.62;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        max-width: 748px;
+        margin-top: 34px;
+      }
+
+      .metric {
+        min-height: 88px;
+        border: 1px solid rgba(255,255,255,.13);
+        border-radius: 15px;
+        background: rgba(0,0,0,.36);
+        padding: 16px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+      }
+
+      .metric strong {
+        display: block;
+        font-size: 28px;
+        font-weight: 900;
+        letter-spacing: 0;
+      }
+
+      .metric span {
+        display: block;
+        margin-top: 9px;
+        color: rgba(255,255,255,.72);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .form-card {
+        width: 100%;
+        border: 1px solid var(--line-strong);
+        border-radius: 24px;
+        background:
+          linear-gradient(135deg, rgba(255,255,255,.065), transparent 42%),
+          rgba(12, 13, 13, 0.88);
+        padding: 32px;
+        box-shadow:
+          0 30px 80px rgba(0, 0, 0, 0.48),
+          inset 0 1px 0 rgba(255,255,255,.07);
+        backdrop-filter: blur(18px);
+        transform: translateY(58px);
+      }
+
+      .form-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 28px;
+      }
+
+      .form-head h2 {
+        margin: 0 0 10px;
+        font-size: 34px;
+        font-weight: 900;
+        letter-spacing: -0.055em;
+      }
+
+      .form-head p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 17px;
+        font-weight: 500;
+      }
+
+      .tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0;
+        height: 64px;
+        margin-bottom: 24px;
+        border: 1px solid rgba(255,255,255,.11);
+        border-radius: 15px;
+        background: rgba(0,0,0,.26);
+        padding: 7px;
+      }
+
+      .tab {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        border-radius: 12px;
+        background: transparent;
+        color: rgba(255,255,255,.76);
+        font-size: 18px;
+        font-weight: 900;
+      }
+
+      .tab-active {
+        background: #fff;
+        color: #050505;
+        box-shadow: 0 18px 36px rgba(255,255,255,.12);
+      }
+
+      .form {
+        display: grid;
+        gap: 17px;
+      }
+
+      .field {
+        display: grid;
+        gap: 9px;
+      }
+
+      .field label {
+        color: rgba(255,255,255,.88);
+        font-size: 17px;
+        font-weight: 900;
+      }
+
+      .input-wrap {
+        position: relative;
+      }
+
+      .input {
+        width: 100%;
+        height: 58px;
+        border: 1px solid rgba(255,255,255,.14);
+        border-radius: 14px;
+        outline: none;
+        background: rgba(0, 4, 5, 0.72);
+        padding: 0 18px;
+        color: #fff;
+        font-size: 18px;
+        font-weight: 500;
+        transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+      }
+
+      .input::placeholder {
+        color: rgba(255,255,255,.36);
+      }
+
+      .input:focus {
+        border-color: rgba(255,255,255,.34);
+        background: rgba(0, 6, 7, 0.88);
+        box-shadow: 0 0 0 4px rgba(255,255,255,.055);
+      }
+
+      .input:disabled {
+        cursor: not-allowed;
+        opacity: .55;
+      }
+
+      .password .input {
+        padding-right: 54px;
+      }
+
+      .eye-btn {
+        position: absolute;
+        top: 50%;
+        right: 16px;
+        display: grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+        border: 0;
+        background: transparent;
+        color: rgba(255,255,255,.72);
+        transform: translateY(-50%);
+      }
+
+      .code-row {
+        display: grid;
+        grid-template-columns: 1fr 132px;
+        gap: 12px;
+      }
+
+      .secondary-btn {
+        height: 58px;
+        border: 1px solid rgba(255,255,255,.23);
+        border-radius: 14px;
+        background: rgba(255,255,255,.09);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 900;
+        transition: background .18s ease, transform .18s ease, opacity .18s ease;
+      }
+
+      .secondary-btn:hover {
+        background: rgba(255,255,255,.15);
+        transform: translateY(-1px);
+      }
+
+      .secondary-btn:disabled,
+      .primary-btn:disabled {
+        cursor: not-allowed;
+        opacity: .55;
+        transform: none;
+      }
+
+      .agreement {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        border: 1px solid rgba(255,255,255,.1);
+        border-radius: 13px;
+        background: rgba(255,255,255,.035);
+        padding: 12px;
+        color: rgba(255,255,255,.58);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .agreement a {
+        color: #fff;
+        font-weight: 800;
+      }
+
+      .primary-btn {
+        display: inline-flex;
+        width: 100%;
+        height: 60px;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 4px;
+        border: 0;
+        border-radius: 15px;
+        background: #fff;
+        color: #050505;
+        font-size: 17px;
+        font-weight: 900;
+        box-shadow: 0 22px 46px rgba(255,255,255,.12);
+        transition: transform .18s ease, background .18s ease;
+      }
+
+      .primary-btn:hover {
+        background: rgba(255,255,255,.92);
+        transform: translateY(-1px);
+      }
+
+      .footnote {
+        margin: 17px 0 0;
+        color: var(--dim);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .toast {
+        position: fixed;
+        top: 18px;
+        right: 18px;
+        z-index: 20;
+        max-width: 360px;
+        border: 1px solid rgba(255,255,255,.18);
+        border-radius: 16px;
+        background: #fff;
+        padding: 13px 16px;
+        color: #050505;
+        font-size: 14px;
+        font-weight: 700;
+        box-shadow: 0 24px 58px rgba(0,0,0,.38);
+      }
+
+      .toast-error {
+        border-color: rgba(255, 100, 100, .34);
+        background: #2a0909;
+        color: #fff0f0;
+      }
+
+      .spin {
+        animation: spin 1s linear infinite;
+      }
+
+      .fade-up {
+        animation: fade-up .75s cubic-bezier(.16, 1, .3, 1) both;
+      }
+
+      .delay-1 { animation-delay: .08s; }
+      .delay-2 { animation-delay: .18s; }
+      .delay-3 { animation-delay: .28s; }
+
+      @keyframes fade-up {
+        from { opacity: 0; transform: translateY(14px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      @media (max-width: 1180px) {
+        .wrap {
+          width: min(100% - 48px, 760px);
+          grid-template-columns: 1fr;
+          gap: 34px;
+          padding-top: 128px;
+        }
+
+        .hero {
+          max-width: none;
+          padding-top: 0;
+        }
+
+        .hero h1 {
+          font-size: clamp(42px, 9vw, 68px);
+        }
+
+        .form-card {
+          max-width: 620px;
+          margin: 0 auto;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 640px) {
+        .wrap {
+          width: min(100% - 28px, 760px);
+          padding: 104px 0 28px;
+        }
+
+        .brand {
+          top: 24px;
+        }
+
+        .brand-mark {
+          width: 42px;
+          height: 42px;
+        }
+
+        .brand-title {
+          font-size: 19px;
+        }
+
+        .brand-subtitle {
+          font-size: 12px;
+        }
+
+        .home-link {
+          top: 25px;
+          min-height: 40px;
+          padding: 0 13px;
+          font-size: 13px;
+        }
+
+        .hero {
+          display: none;
+        }
+
+        .form-card {
+          padding: 22px;
+          border-radius: 20px;
+          transform: translateY(0);
+        }
+
+        .form-head {
+          flex-direction: column;
+          margin-bottom: 22px;
+        }
+
+        .form-head h2 {
+          font-size: 29px;
+        }
+
+        .tabs {
+          height: 58px;
+        }
+
+        .tab {
+          font-size: 16px;
+        }
+
+        .code-row {
+          grid-template-columns: 1fr;
+        }
+
+        .secondary-btn,
+        .input {
+          height: 54px;
+          font-size: 16px;
+        }
+
+        .metrics {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="text/babel">
+      const { useEffect, useRef, useState } = React;
+      const { createRoot } = ReactDOM;
+      const {
+        ArrowRight,
+        CheckCircle2,
+        Eye,
+        EyeOff,
+        Loader2,
+      } = LucideReact;
+
+      const defaultStatus = {
+        system_name: "SuperAHHilAi",
+        register_enabled: true,
+        password_register_enabled: true,
+        email_verification: true,
+        turnstile_check: false,
+        turnstile_site_key: "",
+        user_agreement_enabled: false,
+        privacy_policy_enabled: false,
+        agreement_documents: [],
+        invitation_code_enabled: false,
+        promo_code_enabled: false,
+      };
+
+      async function readApiResponse(response) {
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error((payload && payload.message) || `请求失败 (${response.status})`);
+        }
+        if (payload && typeof payload.code === "number") {
+          if (payload.code !== 0) {
+            throw new Error(payload.message || "请求失败");
+          }
+          return payload.data;
+        }
+        return payload;
+      }
+
+      function persistAuthSession(data) {
+        if (!data || !data.access_token || !data.user) {
+          throw new Error("注册响应缺少认证信息");
+        }
+        const { run_mode, ...user } = data.user;
+        localStorage.setItem("auth_token", data.access_token);
+        localStorage.setItem("auth_user", JSON.stringify(user));
+        if (data.refresh_token) {
+          localStorage.setItem("refresh_token", data.refresh_token);
+        } else {
+          localStorage.removeItem("refresh_token");
+        }
+        if (data.expires_in) {
+          localStorage.setItem("token_expires_at", String(Date.now() + data.expires_in * 1000));
+        } else {
+          localStorage.removeItem("token_expires_at");
+        }
+        localStorage.removeItem("pending_auth_session");
+      }
+
+      function App() {
+        const [status, setStatus] = useState(defaultStatus);
+        const [loadingStatus, setLoadingStatus] = useState(true);
+        const [toast, setToast] = useState(null);
+        const [submitting, setSubmitting] = useState(false);
+        const [accepted, setAccepted] = useState(false);
+        const [turnstileToken, setTurnstileToken] = useState("");
+        const [showPassword, setShowPassword] = useState(false);
+        const [showConfirm, setShowConfirm] = useState(false);
+        const [form, setForm] = useState({
+          email: "",
+          password: "",
+          password2: "",
+          aff_code: "",
+          invitation_code: "",
+          promo_code: "",
+        });
+        const turnstileRef = useRef(null);
+        const widgetRef = useRef(null);
+
+        const needsAgreement = status.user_agreement_enabled || status.privacy_policy_enabled;
+
+        useEffect(() => {
+          const aff = new URLSearchParams(window.location.search).get("aff") || localStorage.getItem("aff") || "";
+          if (aff) {
+            localStorage.setItem("aff", aff);
+            setForm((current) => ({ ...current, aff_code: aff }));
+          }
+
+          fetch("/api/v1/settings/public", { credentials: "same-origin" })
+            .then(readApiResponse)
+            .then((settings) => {
+              setStatus({
+                ...defaultStatus,
+                system_name: settings.site_name || defaultStatus.system_name,
+                register_enabled: settings.registration_enabled !== false,
+                email_verification: Boolean(settings.email_verify_enabled),
+                turnstile_check: Boolean(settings.turnstile_enabled),
+                turnstile_site_key: settings.turnstile_site_key || "",
+                user_agreement_enabled: Boolean(settings.login_agreement_enabled),
+                agreement_documents: settings.login_agreement_documents || [],
+                invitation_code_enabled: Boolean(settings.invitation_code_enabled),
+                promo_code_enabled: Boolean(settings.promo_code_enabled),
+              });
+            })
+            .catch((error) => showToast(error.message || "无法读取 Sub2API 站点配置", "error"))
+            .finally(() => setLoadingStatus(false));
+        }, []);
+
+        useEffect(() => {
+          if (!status.turnstile_check || !status.turnstile_site_key) return;
+          const renderTurnstile = () => {
+            if (!window.turnstile || !turnstileRef.current || widgetRef.current) return;
+            widgetRef.current = window.turnstile.render(turnstileRef.current, {
+              sitekey: status.turnstile_site_key,
+              theme: "dark",
+              callback: (token) => setTurnstileToken(token),
+              "expired-callback": () => setTurnstileToken(""),
+              "error-callback": () => setTurnstileToken(""),
+            });
+          };
+          renderTurnstile();
+          window.addEventListener("turnstile-ready", renderTurnstile);
+          return () => window.removeEventListener("turnstile-ready", renderTurnstile);
+        }, [status.turnstile_check, status.turnstile_site_key]);
+
+        function showToast(message, type = "success") {
+          setToast({ message, type });
+          window.clearTimeout(showToast.timer);
+          showToast.timer = window.setTimeout(() => setToast(null), 3600);
+        }
+
+        function updateField(name, value) {
+          setForm((current) => ({ ...current, [name]: value }));
+        }
+
+        function requireTurnstile() {
+          if (status.turnstile_check && !turnstileToken) {
+            showToast("请稍后几秒重试，Turnstile 正在检查用户环境。", "error");
+            return false;
+          }
+          return true;
+        }
+
+        async function submitRegister(event) {
+          event.preventDefault();
+          if (!status.register_enabled || !status.password_register_enabled) {
+            showToast("当前站点未开放账号密码注册。", "error");
+            return;
+          }
+          if (needsAgreement && !accepted) {
+            showToast("请先阅读并同意用户协议和隐私政策。", "error");
+            return;
+          }
+          if (!form.email.trim()) {
+            showToast("请填写邮箱。", "error");
+            return;
+          }
+          if (status.invitation_code_enabled && !form.invitation_code.trim()) {
+            showToast("请输入邀请码。", "error");
+            return;
+          }
+          if (form.password.length < 6) {
+            showToast("密码长度不得小于 6 位。", "error");
+            return;
+          }
+          if (form.password !== form.password2) {
+            showToast("两次输入的密码不一致。", "error");
+            return;
+          }
+          if (!requireTurnstile()) return;
+
+          const affCode =
+            form.aff_code.trim() ||
+            new URLSearchParams(window.location.search).get("aff") ||
+            localStorage.getItem("aff") ||
+            "";
+
+          const registrationData = {
+            email: form.email.trim(),
+            password: form.password,
+            turnstile_token: status.turnstile_check ? turnstileToken : undefined,
+            promo_code: form.promo_code.trim() || undefined,
+            invitation_code: form.invitation_code.trim() || undefined,
+            aff_code: affCode || undefined,
+          };
+
+          if (status.email_verification) {
+            sessionStorage.setItem("register_data", JSON.stringify(registrationData));
+            window.location.href = "/email-verify";
+            return;
+          }
+
+          setSubmitting(true);
+          try {
+            const res = await fetch("/api/v1/auth/register", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "same-origin",
+              body: JSON.stringify(registrationData),
+            });
+            const data = await readApiResponse(res);
+            persistAuthSession(data);
+            localStorage.removeItem("aff");
+            showToast("注册成功，正在进入控制台。");
+            setTimeout(() => { window.location.href = "/dashboard"; }, 500);
+          } catch (error) {
+            showToast(error.message || "注册失败，请重试。", "error");
+          } finally {
+            setSubmitting(false);
+          }
+        }
+
+        return (
+          <main className="app">
+            <div className="pyramid"></div>
+            <div className="wrap">
+              <a className="brand fade-up delay-1" href="/">
+                <span className="brand-mark">I</span>
+                <span>
+                  <span className="brand-title">{status.system_name || "SuperAHHilAi"}</span>
+                  <span className="brand-subtitle">AI API relay console</span>
+                </span>
+              </a>
+              <a className="home-link fade-up delay-1" href="/">返回首页</a>
+
+              <section className="hero fade-up delay-2">
+                <div className="pill">
+                  <span className="pill-dot"></span>
+                  新用户进群发 id 送额度
+                </div>
+                <h1>创建你的 AI 工具中转账户</h1>
+                <p>
+                  一个账户统一接入 Claude Code、Codex、Gemini CLI 与图像模型。注册后在控制台创建密钥，按需查看额度、日志与模型状态。
+                </p>
+                <div className="metrics">
+                  <div className="metric">
+                    <strong>$2</strong>
+                    <span>进群额度</span>
+                  </div>
+                  <div className="metric">
+                    <strong>统一</strong>
+                    <span>密钥与账单</span>
+                  </div>
+                  <div className="metric">
+                    <strong>实时</strong>
+                    <span>额度日志</span>
+                  </div>
+                </div>
+              </section>
+
+              <section className="form-card fade-up delay-3">
+                <div className="form-head">
+                  <div>
+                    <h2>创建新账户</h2>
+                    <p>输入邮箱并设置密码</p>
+                  </div>
+                </div>
+
+                <div className="tabs">
+                  <a className="tab" href="/login">登录</a>
+                  <button className="tab tab-active" type="button">注册</button>
+                </div>
+
+                <form className="form" onSubmit={submitRegister}>
+                  <Field
+                    label="邮箱"
+                    type="email"
+                    placeholder="you@example.com"
+                    value={form.email}
+                    onChange={(value) => updateField("email", value)}
+                    disabled={loadingStatus || !status.register_enabled}
+                  />
+
+                  <PasswordField
+                    label="密码"
+                    placeholder="至少 8 位字符"
+                    value={form.password}
+                    show={showPassword}
+                    onToggle={() => setShowPassword((value) => !value)}
+                    onChange={(value) => updateField("password", value)}
+                  />
+
+                  <PasswordField
+                    label="确认密码"
+                    placeholder="再次输入密码"
+                    value={form.password2}
+                    show={showConfirm}
+                    onToggle={() => setShowConfirm((value) => !value)}
+                    onChange={(value) => updateField("password2", value)}
+                  />
+
+                  {status.invitation_code_enabled && (
+                    <Field
+                      label="邀请码"
+                      placeholder="输入管理员提供的邀请码"
+                      value={form.invitation_code}
+                      onChange={(value) => updateField("invitation_code", value)}
+                    />
+                  )}
+
+                  {status.promo_code_enabled && (
+                    <Field
+                      label="优惠码（选填）"
+                      placeholder="输入优惠码"
+                      value={form.promo_code}
+                      onChange={(value) => updateField("promo_code", value)}
+                    />
+                  )}
+
+                  <Field
+                    label="推荐码（选填）"
+                    placeholder="邀请链接会自动填写"
+                    value={form.aff_code}
+                    onChange={(value) => updateField("aff_code", value)}
+                  />
+
+                  {status.turnstile_check && (
+                    <div className="field">
+                      <label>安全验证</label>
+                      <div ref={turnstileRef}></div>
+                    </div>
+                  )}
+
+                  {needsAgreement && (
+                    <label className="agreement">
+                      <input
+                        type="checkbox"
+                        checked={accepted}
+                        onChange={(event) => setAccepted(event.target.checked)}
+                      />
+                      <span>
+                        我已阅读并同意
+                        {(status.agreement_documents || []).map((document) => (
+                          <a key={document.id} href={`/legal/${encodeURIComponent(document.id)}`} target="_blank"> {document.title} </a>
+                        ))}
+                      </span>
+                    </label>
+                  )}
+
+                  <button
+                    className="primary-btn"
+                    type="submit"
+                    disabled={submitting || loadingStatus || !status.register_enabled}
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="spin" size={20} />
+                        正在创建账户
+                      </>
+                    ) : (
+                      <>
+                        创建账户
+                        <ArrowRight size={20} />
+                      </>
+                    )}
+                  </button>
+                </form>
+
+                <p className="footnote">
+                  注册即表示你同意合理使用平台资源；服务状态与模型可用性以控制台实时显示为准。
+                </p>
+              </section>
+            </div>
+
+            {toast && (
+              <div className={`toast ${toast.type === "error" ? "toast-error" : ""}`}>
+                {toast.message}
+              </div>
+            )}
+          </main>
+        );
+      }
+
+      function Field({ label, placeholder, type = "text", value, onChange, disabled = false }) {
+        return (
+          <div className="field">
+            <label>{label}</label>
+            <input
+              className="input"
+              type={type}
+              placeholder={placeholder}
+              value={value}
+              disabled={disabled}
+              onChange={(event) => onChange(event.target.value)}
+            />
+          </div>
+        );
+      }
+
+      function PasswordField({ label, placeholder, value, show, onToggle, onChange }) {
+        return (
+          <div className="field password">
+            <label>{label}</label>
+            <div className="input-wrap">
+              <input
+                className="input"
+                type={show ? "text" : "password"}
+                placeholder={placeholder}
+                value={value}
+                onChange={(event) => onChange(event.target.value)}
+              />
+              <button className="eye-btn" type="button" onClick={onToggle} aria-label={show ? "隐藏密码" : "显示密码"}>
+                {show ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>

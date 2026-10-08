@@ -1,6 +1,14 @@
 export default {
 // Providers Management
     providers: {
+      clientClass: {
+        title: '请求来源（Client Class）',
+        any: '不限',
+        codex: 'Codex',
+        nonCodex: 'non-Codex',
+        description: 'Codex 仅接收识别为 Codex 的请求，non-Codex 仅接收其他请求，不限则接收两类请求。不匹配的提供商会在调度时跳过，其他访问策略仍然生效。',
+        securityHint: '按入站 User-Agent 或 Originator 请求头识别，与本站 newapi 的 Client Class 规则一致。请求头可以被模拟，此设置不代替 API Key 鉴权。'
+      },
       title: '提供商管理',
       description: '管理上游 AI 服务的接入配置和凭据',
       tabs: {

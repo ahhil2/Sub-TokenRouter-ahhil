@@ -359,6 +359,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/messages',
+    name: 'SiteMessages',
+    component: () => import('@/views/user/SiteMessagesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Site Messages',
+      titleKey: 'messages.title',
+      descriptionKey: 'messages.description'
+    }
+  },
+  {
     path: '/orders',
     name: 'OrderList',
     component: () => import('@/views/user/UserOrdersView.vue'),

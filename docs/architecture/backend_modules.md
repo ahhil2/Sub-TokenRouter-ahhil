@@ -227,7 +227,7 @@ backend/
 │   │   ├── preaggregation/                              Usage/Ops 预聚合设置与运行控制
 │   │   └── testkit/                                     该模块测试所需的替身与夹具
 │   ├── setup/                                           CLI、Web 和自动首次初始化
-│   ├── site/                                            站点展示、公告、菜单和页面权限
+│   ├── site/                                            站点展示、公告、私信、菜单和页面权限
 │   │   ├── content/                                     导航与协议的纯内容类型及解析
 │   │   ├── filesystem/                                  站点 Markdown 和图片的路径及读取限制
 │   │   ├── httpapi/                                     HTTP 路由、鉴权接入与输入输出适配
@@ -424,6 +424,6 @@ app/lifecycle 管理这些组件的启动和关闭。audit 独立记录操作审
 | search、notification | [搜索编排](../domains/search_orchestration.md)、[通知投递](../domains/notification_delivery.md) |
 | usage、audit、ops | [数据生命周期](../operations/observability_and_data_lifecycle.md)、[监控告警](../operations/ops_monitoring_and_alerting.md)、[预聚合](../operations/pre_aggregation.md) |
 | backup | [备份与恢复](../operations/deployment_and_migrations.md#maintenance_execution) |
-| settings、site | [配置](../interfaces/configuration.md)、[HTTP 与页面权限](../interfaces/http_api.md) |
+| settings、site | [配置](../interfaces/configuration.md)、[HTTP 与页面权限](../interfaces/http_api.md)、[站长私信](../domains/site_messages.md) |
 | idempotency | [面板命令幂等](../interfaces/http_api.md#write_idempotency) |
 | infra、pkg、testutil、cmd、ent、migrations、tests、scripts | [系统架构](system_architecture.md)、[开发验证](../operations/development_workflow.md)、[部署迁移](../operations/deployment_and_migrations.md) |

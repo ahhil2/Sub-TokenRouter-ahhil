@@ -1,0 +1,53 @@
+example.com {
+	encode zstd gzip
+	request_body {
+		max_size 100MiB
+	}
+
+	handle / {
+		root * /var/www/superahhil
+		rewrite * /index.html
+		file_server
+	}
+
+	handle /login {
+		header Cache-Control "no-store, max-age=0"
+		root * /var/www/superahhil
+		rewrite * /login.html
+		file_server
+	}
+
+	handle /register {
+		header Cache-Control "no-store, max-age=0"
+		root * /var/www/superahhil
+		rewrite * /register.html
+		file_server
+	}
+
+	handle /styles.css {
+		root * /var/www/superahhil
+		file_server
+	}
+
+	handle /landing-assets/* {
+		root * /var/www/superahhil
+		file_server
+	}
+
+	handle /docs {
+		root * /var/www/superahhil
+		rewrite * /docs.html
+		file_server
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:18080 {
+			transport http {
+				dial_timeout 30s
+				response_header_timeout 300s
+				read_timeout 300s
+				write_timeout 300s
+			}
+		}
+	}
+}

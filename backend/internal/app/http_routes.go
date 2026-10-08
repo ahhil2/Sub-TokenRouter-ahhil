@@ -110,6 +110,7 @@ func provideUserRouteMount(
 	eUserPromotion *promotionhttp.UserHandler,
 	eSubscription *billinghttp.SubscriptionHandler,
 	eAnnouncement *sitehttp.AnnouncementHandler,
+	eMessages *sitehttp.MessageHandler,
 	eCreative *creativehttp.CreativeHandler,
 	ePasskey *identityhttp.PasskeyHandler,
 	eAPIKey *apikeyhttp.APIKeyHandler[dto.Group],
@@ -134,6 +135,7 @@ func provideUserRouteMount(
 		usagehttp.RegisterUserRoutes(authenticated, eUsage, security.Panel.Heavy())
 		creativehttp.RegisterUserRoutes(authenticated, eCreative, security.Panel.Heavy())
 		sitehttp.RegisterUserRoutes(authenticated, eAnnouncement)
+		sitehttp.RegisterMessageRoutes(authenticated, eMessages, security.Admin, security.Panel.Heavy())
 		billinghttp.RegisterUserRoutes(authenticated, eRedeem, eSubscription)
 	}
 }
