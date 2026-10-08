@@ -1,0 +1,11 @@
+.PHONY: build generate
+
+VERSION ?= $(shell ./scripts/resolve-version.sh)
+LDFLAGS ?= -s -w -X main.Version=$(VERSION)
+
+build:
+	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -trimpath -o bin/server ./cmd/server
+
+generate:
+	go generate ./ent
+	go generate ./cmd/server

@@ -1,0 +1,339 @@
+<template>
+  <div class="card p-4">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+        {{ t('admin.dashboard.groupDistribution') }}
+      </h3>
+      <div
+        v-segmented
+        v-if="showMetricToggle"
+        class="segmented"
+      >
+        <button
+          type="button"
+          class="segmented-item px-2.5 py-1 text-xs"
+          :class="{ 'segmented-item-active': metric === 'tokens' }"
+          @click="emit('update:metric', 'tokens')"
+        >
+          {{ t('admin.dashboard.metricTokens') }}
+        </button>
+        <button
+          type="button"
+          class="segmented-item px-2.5 py-1 text-xs"
+          :class="{ 'segmented-item-active': metric === 'actual_cost' }"
+          @click="emit('update:metric', 'actual_cost')"
+        >
+          {{ t('admin.dashboard.metricActualCost') }}
+        </button>
+      </div>
+    </div>
+    <ChartSkeleton v-if="loading" variant="distribution" />
+    <!-- 桌面端表格与圆环图顶部对齐。 -->
+    <div v-else-if="displayGroupStats.length > 0 && chartData" class="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-6">
+      <div class="h-48 w-48 shrink-0">
+        <Bar v-if="chartType === 'bar'" :data="chartData" :options="barOptions" />
+        <Doughnut v-else :data="doughnutChartData" :options="doughnutOptions" />
+      </div>
+      <div class="max-h-48 w-full min-w-0 flex-1 overflow-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-gray-500 dark:text-gray-400">
+              <th class="pb-2 text-left">{{ t('admin.dashboard.group') }}</th>
+              <th class="pb-2 text-right">{{ t('admin.dashboard.requests') }}</th>
+              <th class="pb-2 text-right">{{ t('admin.dashboard.tokens') }}</th>
+              <th class="pb-2 text-right">{{ t('admin.dashboard.actual') }}</th>
+              <th v-if="showProviderCost" class="pb-2 text-right">{{ t('admin.dashboard.providerCost') }}</th>
+              <th v-if="showStandardCost" class="pb-2 text-right">{{ t('admin.dashboard.standard') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="group in displayGroupStats" :key="group.group_id">
+              <tr data-icon-trigger
+                class="group/breakdown border-t border-gray-100 transition-colors dark:border-dark-600"
+                :class="enableBreakdown && group.group_id > 0 ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-700/40' : ''"
+                @click="enableBreakdown && group.group_id > 0 && toggleBreakdown('group', group.group_id)"
+              >
+                <!-- 有明细的分组在悬停整行时着色，未分组项使用普通文字色。 -->
+                <td
+                  class="max-w-[100px] truncate py-1.5 font-medium text-gray-900 dark:text-white"
+                  :class="enableBreakdown && group.group_id > 0 ? 'group-hover/breakdown:text-primary-600 dark:group-hover/breakdown:text-primary-500' : ''"
+                  :title="group.group_name || String(group.group_id)"
+                >
+                  <span class="inline-flex items-center gap-1">
+                    <Icon
+                      v-if="enableBreakdown && group.group_id > 0"
+                      name="chevronRight"
+                      size="xs"
+                      :animate-on-hover="false"
+                      class="h-3 w-3 shrink-0 transition-transform duration-normal"
+                      :class="{ 'rotate-90': expandedKey === `group-${group.group_id}` }"
+                    />
+                    {{ group.group_name || t('admin.dashboard.noGroup') }}
+                  </span>
+                </td>
+                <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
+                  {{ formatNumber(group.requests) }}
+                </td>
+                <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
+                  {{ formatTokens(group.total_tokens) }}
+                </td>
+                <td class="py-1.5 text-right text-green-600 dark:text-green-400">
+                  {{ balanceUnitSymbol }}{{ formatCost(group.actual_cost) }}
+                </td>
+                <td v-if="showProviderCost" class="py-1.5 text-right text-orange-500 dark:text-orange-400">
+                  {{ usdUnitSymbol }}{{ formatCost(group.provider_cost) }}
+                </td>
+                <td v-if="showStandardCost" class="py-1.5 text-right text-gray-400 dark:text-gray-500">
+                  {{ usdUnitSymbol }}{{ formatCost(group.cost) }}
+                </td>
+              </tr>
+              <!-- User breakdown sub-rows -->
+              <ExpandableTableRow :open="expandedKey === `group-${group.group_id}`" :colspan="distributionColspan">
+                  <UserBreakdownSubTable
+                    :items="breakdownItems"
+                    :loading="breakdownLoading"
+                    :show-provider-cost="showProviderCost"
+                    :show-standard-cost="showStandardCost"
+                  />
+                </ExpandableTableRow>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div
+      v-else
+      class="flex h-48 items-center justify-center text-sm text-gray-500 dark:text-gray-400"
+    >
+      {{ t('admin.dashboard.noDataAvailable') }}
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { getLocale } from '@/i18n'
+import { vSegmented } from '@/directives/segmented'
+import ExpandableTableRow from '@/components/common/ExpandableTableRow.vue'
+import Icon from '@/components/icons/Icon.vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { Chart as ChartJS, ArcElement, BarElement, CategoryScale, LinearScale, Tooltip, Legend } from 'chart.js'
+import { Bar, Doughnut } from 'vue-chartjs'
+import ChartSkeleton from '@/components/common/ChartSkeleton.vue'
+import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
+import UserBreakdownSubTable from './UserBreakdownSubTable.vue'
+import { externalTooltipHandler, hideExternalTooltip } from '@/utils/chartExternalTooltip'
+import { CHART_PALETTE, CHART_TICK_FONT_SIZE } from '@/composables/useChartTheme'
+import type { GroupStat, UserBreakdownItem } from '@/types'
+import { getUserBreakdown } from '@/api/admin/dashboard'
+import { formatTokens } from '@/utils/format'
+
+ChartJS.register(ArcElement, BarElement, CategoryScale, LinearScale, Tooltip, Legend)
+
+onBeforeUnmount(hideExternalTooltip)
+
+const { t } = useI18n()
+const { balanceUnitSymbol, usdUnitSymbol } = useBalanceDisplay()
+
+type DistributionMetric = 'tokens' | 'actual_cost'
+// 图表默认为圆环图，用户用量页使用水平条形图。
+type GroupChartType = 'doughnut' | 'bar'
+
+const props = withDefaults(defineProps<{
+  groupStats: GroupStat[]
+  loading?: boolean
+  metric?: DistributionMetric
+  chartType?: GroupChartType
+  showMetricToggle?: boolean
+  enableBreakdown?: boolean
+  showProviderCost?: boolean
+  showStandardCost?: boolean
+  startDate?: string
+  endDate?: string
+  filters?: Record<string, any>
+}>(), {
+  loading: false,
+  metric: 'tokens',
+  chartType: 'doughnut',
+  showMetricToggle: false,
+  enableBreakdown: true,
+  showProviderCost: true,
+  showStandardCost: true,
+})
+
+const emit = defineEmits<{
+  'update:metric': [value: DistributionMetric]
+}>()
+
+const expandedKey = ref<string | null>(null)
+const breakdownItems = ref<UserBreakdownItem[]>([])
+const breakdownLoading = ref(false)
+const showProviderCost = computed(() => props.showProviderCost)
+const showStandardCost = computed(() => props.showStandardCost)
+const distributionColspan = computed(() => 4 + (showProviderCost.value ? 1 : 0) + (showStandardCost.value ? 1 : 0))
+
+const toggleBreakdown = async (type: string, id: number | string) => {
+  const key = `${type}-${id}`
+  if (expandedKey.value === key) {
+    expandedKey.value = null
+    return
+  }
+  expandedKey.value = key
+  breakdownLoading.value = true
+  breakdownItems.value = []
+  try {
+    const res = await getUserBreakdown({
+      ...props.filters,
+      start_date: props.startDate,
+      end_date: props.endDate,
+      group_id: Number(id),
+    })
+    breakdownItems.value = res.users || []
+  } catch {
+    breakdownItems.value = []
+  } finally {
+    breakdownLoading.value = false
+  }
+}
+
+const chartColors = CHART_PALETTE // 原 10 色拷贝前缀逐项一致,补齐 11/12 色
+
+const displayGroupStats = computed(() => {
+  if (!props.groupStats?.length) return []
+
+  const metricKey = props.metric === 'actual_cost' ? 'actual_cost' : 'total_tokens'
+  return [...props.groupStats].sort((a, b) => toFiniteNumber(b[metricKey]) - toFiniteNumber(a[metricKey]))
+})
+
+// 图表标签与表格行保持一致：无分组（group_id=0）显示“No Group”。
+const groupLabel = (g: GroupStat): string =>
+  g.group_name || (g.group_id > 0 ? String(g.group_id) : t('admin.dashboard.noGroup'))
+
+// 圆环扇区与 tooltip 共用原始指标值，保证扇区大小与占比一致。
+const chartValues = computed(() =>
+  displayGroupStats.value.map((g) => toFiniteNumber(props.metric === 'actual_cost' ? g.actual_cost : g.total_tokens))
+)
+
+const chartData = computed(() => {
+  if (!props.groupStats?.length) return null
+
+  return {
+    labels: displayGroupStats.value.map(groupLabel),
+    datasets: [
+      {
+        data: chartValues.value,
+        backgroundColor: chartColors.slice(0, displayGroupStats.value.length),
+        borderWidth: 0
+      }
+    ]
+  }
+})
+
+// 与 chartData 同生命周期（无数据时模板分支不会渲染），保持非空类型以通过图表组件的 data 校验。
+const doughnutChartData = computed(() => ({
+  labels: displayGroupStats.value.map(groupLabel),
+  datasets: [
+    {
+      data: chartValues.value,
+      backgroundColor: chartColors.slice(0, displayGroupStats.value.length),
+      borderWidth: 0
+    }
+  ]
+}))
+
+// 圆环图与条形图共用 tooltip，按原始指标值展示「名称: 数值 (占比)」。
+const tooltipLabel = (context: any) => {
+  const value = chartValues.value[context.dataIndex] ?? 0
+  const total = chartValues.value.reduce((a: number, b: number) => a + b, 0)
+  const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0'
+  const formattedValue = props.metric === 'actual_cost'
+    ? `${balanceUnitSymbol.value}${formatCost(value)}`
+    : formatTokens(value)
+  return `${context.label}: ${formattedValue} (${percentage}%)`
+}
+
+const doughnutOptions = computed(() => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: {
+      display: false
+    },
+    tooltip: {
+      enabled: false,
+      external: externalTooltipHandler,
+      callbacks: {
+        label: tooltipLabel
+      }
+    }
+  }
+}))
+
+const barOptions = computed(() => ({
+  indexAxis: 'y' as const,
+  responsive: true,
+  maintainAspectRatio: false,
+  scales: {
+    // 数值轴从零开始，条形长度与原始用量成正比。
+    x: {
+      type: 'linear' as const,
+      beginAtZero: true,
+      ticks: {
+        display: false
+      },
+      grid: {
+        display: false
+      }
+    },
+    y: {
+      grid: {
+        display: false
+      },
+      ticks: {
+        autoSkip: false,
+        font: {
+          size: CHART_TICK_FONT_SIZE
+        },
+        // 分组名可能较长，y 轴标签截断展示，全名见 tooltip 与表格。
+        callback(this: any, value: any) {
+          const label = String(this.getLabelForValue(value) ?? '')
+          return label.length > 12 ? `${label.slice(0, 12)}…` : label
+        }
+      }
+    }
+  },
+  plugins: {
+    legend: {
+      display: false
+    },
+    tooltip: {
+      enabled: false,
+      external: externalTooltipHandler,
+      callbacks: {
+        label: tooltipLabel
+      }
+    }
+  }
+}))
+
+const formatNumber = (value: number): string => {
+  return toFiniteNumber(value).toLocaleString(getLocale())
+}
+
+const toFiniteNumber = (value: unknown): number => {
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : 0
+}
+
+const formatCost = (value: number | null | undefined): string => {
+  const safeValue = toFiniteNumber(value)
+  if (safeValue >= 1000) {
+    return (safeValue / 1000).toFixed(2) + 'K'
+  } else if (safeValue >= 1) {
+    return safeValue.toFixed(2)
+  } else if (safeValue >= 0.01) {
+    return safeValue.toFixed(3)
+  }
+  return safeValue.toFixed(4)
+}
+</script>
