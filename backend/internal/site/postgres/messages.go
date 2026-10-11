@@ -44,7 +44,7 @@ func (repository *messageRepository) Conversations(ctx context.Context, actor si
 	if err != nil {
 		return result, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var item site.MessageConversation
 		if err := rows.Scan(&item.UserID, &item.Username, &item.Email, &item.LastMessageID, &item.Body, &item.IsAdmin, &item.CreatedAt, &item.UnreadCount); err != nil {
@@ -71,7 +71,7 @@ func (repository *messageRepository) Contacts(ctx context.Context, search string
 	if err != nil {
 		return result, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var contact site.MessageContact
 		if err := rows.Scan(&contact.ID, &contact.Username, &contact.Email); err != nil {
@@ -115,7 +115,7 @@ func (repository *messageRepository) Thread(ctx context.Context, actor site.Mess
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var message site.Message
 		if err := rows.Scan(&message.ID, &message.UserID, &message.SenderID, &message.IsAdmin, &message.Body, &message.CreatedAt); err != nil {
@@ -163,7 +163,7 @@ func (repository *messageRepository) Send(ctx context.Context, actor site.Messag
 	if err != nil {
 		return 0, err
 	}
-	defer transaction.Rollback()
+	defer func() { _ = transaction.Rollback() }()
 	var role string
 	err = transaction.QueryRowContext(ctx, `SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active' FOR SHARE`, actor.ID).Scan(&role)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && (role == "admin") != actor.Admin {
@@ -200,13 +200,11 @@ func (repository *messageRepository) Send(ctx context.Context, actor site.Messag
 	for rows.Next() {
 		var userID int64
 		if err := rows.Scan(&userID); err != nil {
-			rows.Close()
-			return 0, err
+			return 0, errors.Join(err, rows.Close())
 		}
 		recipients = append(recipients, userID)
 	}
-	err = rows.Err()
-	rows.Close()
+	err = errors.Join(rows.Err(), rows.Close())
 	if err != nil {
 		return 0, err
 	}
@@ -228,12 +226,10 @@ func (repository *messageRepository) Send(ctx context.Context, actor site.Messag
 	for locked.Next() {
 		var userID int64
 		if err := locked.Scan(&userID); err != nil {
-			locked.Close()
-			return 0, err
+			return 0, errors.Join(err, locked.Close())
 		}
 	}
-	err = locked.Err()
-	locked.Close()
+	err = errors.Join(locked.Err(), locked.Close())
 	if err != nil {
 		return 0, err
 	}

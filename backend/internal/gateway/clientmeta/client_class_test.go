@@ -14,10 +14,15 @@ func TestIsCodexRoutingClient(t *testing.T) {
 		assert.True(t, IsCodexRoutingClient("Mozilla/5.0", originator), originator)
 	}
 	for _, headers := range [][2]string{
-		{"", ""}, {"curl/8.0", ""}, {"python-openai/1.0", ""},
-		{"Claude-Code/1.0", "claude_code"}, {"Mozilla/5.0 codex_cli_rs/1.0", ""},
-		{"evil-codex_cli_rs/1.0", ""}, {"codex_cli_rs", ""},
-		{"curl/8.0", "codex_cli_rs_evil"}, {"curl/8.0", "codex-tui,third-party"},
+		{"", ""},
+		{"curl/8.0", ""},
+		{"python-openai/1.0", ""},
+		{"Claude-Code/1.0", "claude_code"},
+		{"Mozilla/5.0 codex_cli_rs/1.0", ""},
+		{"evil-codex_cli_rs/1.0", ""},
+		{"codex_cli_rs", ""},
+		{"curl/8.0", "codex_cli_rs_evil"},
+		{"curl/8.0", "codex-tui,third-party"},
 	} {
 		assert.False(t, IsCodexRoutingClient(headers[0], headers[1]), headers)
 	}

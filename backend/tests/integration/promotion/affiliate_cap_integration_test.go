@@ -38,9 +38,9 @@ func (r *affiliateLockBarrier) WithLockedInviter(ctx context.Context, id int64, 
 }
 
 func TestAffiliateCapConcurrentAccrualUsesLockedLatestTotal(t *testing.T) {
+	c := testEntClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	c := testEntClient(t)
 	repo := promotionpostgres.NewAffiliateRepository(c, func(tx *dbent.Tx) promotionpostgres.TransferBalance { return billingpostgres.BalanceInTx(tx) })
 	inviter, e := c.User.Create().SetEmail("test-inviter@example.com").SetPasswordHash("hash").Save(ctx)
 	require.NoError(t, e)
