@@ -68,8 +68,10 @@
               </button>
             </div>
           </div>
+          <!-- 端点条和上方工具栏是一组，-mb-2 把它到表格的间距从布局默认的 16px 收到 8px，上下间距一致。 -->
           <EndpointPopover
             v-if="publicSettings?.api_base_url || (publicSettings?.custom_endpoints?.length ?? 0) > 0"
+            class="-mb-2"
             :api-base-url="publicSettings?.api_base_url || ''"
             :custom-endpoints="publicSettings?.custom_endpoints || []"
           />

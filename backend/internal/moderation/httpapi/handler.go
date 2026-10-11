@@ -178,6 +178,7 @@ func (h *ContentModerationHandler) GetStatus(c *gin.Context) {
 func (h *ContentModerationHandler) ListLogs(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 	filter := moderation.ContentModerationLogFilter{
+		RequestID: strings.TrimSpace(c.Query("request_id")),
 		Pagination: pagination.PaginationParams{
 			Page:      page,
 			PageSize:  pageSize,
@@ -295,7 +296,7 @@ func (h *ContentModerationHandler) GetCyberSummary(c *gin.Context) {
 }
 
 func parseCyberWarningFilter(c *gin.Context, withPagination bool) (moderation.ContentModerationCyberWarningFilter, string, bool) {
-	filter := moderation.ContentModerationCyberWarningFilter{Search: c.Query("search")}
+	filter := moderation.ContentModerationCyberWarningFilter{Search: c.Query("search"), RequestID: strings.TrimSpace(c.Query("request_id"))}
 	if withPagination {
 		page, pageSize := response.ParsePagination(c)
 		filter.Pagination = pagination.PaginationParams{

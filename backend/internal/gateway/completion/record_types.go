@@ -7,6 +7,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
@@ -108,6 +109,8 @@ type GroupSnapshot struct {
 
 // Input 保存异步完成所需的数据，调用方先调用 Snapshot 再提交队列。
 type Input struct {
+	// BillingKey 是资金操作的去重键，使用记录按 RequestID 关联请求。
+	BillingKey                                                               string
 	Result                                                                   *Result
 	APIKey                                                                   *KeySnapshot
 	User                                                                     *PayerSnapshot
@@ -186,6 +189,7 @@ type BillingEvent struct {
 
 // Dependencies 提供完成器所需的读写接口和 billing 计算器。
 type Dependencies struct {
+	RequestRecords func(telemetry.RequestRecord)
 	Emit           func(BillingEvent)
 	CacheInjection CacheInjectionPolicy
 	Calculator     *billing.Calculator
@@ -206,6 +210,7 @@ type RecorderOptions struct {
 	Now               func() time.Time
 }
 type Recorder struct {
+	requestRecords    func(telemetry.RequestRecord)
 	emit              func(BillingEvent)
 	cacheInjection    CacheInjectionPolicy
 	billingService    *billing.Calculator
@@ -237,6 +242,7 @@ func NewRecorder(d Dependencies, o RecorderOptions) *Recorder {
 		o.Now = time.Now
 	}
 	return &Recorder{
+		requestRecords:    d.RequestRecords,
 		emit:              d.Emit,
 		cacheInjection:    d.CacheInjection,
 		billingService:    d.Calculator,

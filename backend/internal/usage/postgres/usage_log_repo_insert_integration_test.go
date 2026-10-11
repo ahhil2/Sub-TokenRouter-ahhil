@@ -50,8 +50,8 @@ func TestResponseModelBatchRoundTrip(t *testing.T) {
 		log, err := scanUsageLog(integrationDB.QueryRowContext(ctx, "SELECT "+usageLogSelectColumns+" FROM usage_logs WHERE id=$1", state.ID))
 		require.NoError(t, err)
 		want := prepared[key].args
-		require.Equal(t, want[len(want)-2], nullString(log.UpstreamResponseModel))
-		require.Equal(t, want[len(want)-1], log.UpstreamModelMismatch)
+		require.Equal(t, want[len(want)-3], nullString(log.UpstreamResponseModel))
+		require.Equal(t, want[len(want)-2], log.UpstreamModelMismatch)
 	}
 	// 尽力批量和单条降级写入都需要传递响应模型的两列。
 	for _, path := range []string{"best-effort", "fallback"} {
@@ -203,5 +203,37 @@ func benchmarkUserActivityWrites(b *testing.B, concurrent bool) {
 				}
 			})
 		}
+	}
+}
+
+// TestUsageLogBillingKeyUpgradeReplay 覆盖旧用量记录与统一 ID 记录之间的双向重放。
+func TestUsageLogBillingKeyUpgradeReplay(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	suffix := uuid.NewString()
+	user := mustCreateUser(t, client, &identity.User{Email: suffix + "@billing-key.test"})
+	key := mustCreateApiKey(t, client, &apikey.APIKey{UserID: user.ID, Key: suffix, Name: "billing-key"})
+	provider := mustCreateProvider(t, client, &providercore.Record{Name: suffix})
+	repo := &Store{sql: integrationDB}
+	for _, oldFirst := range []bool{true, false} {
+		billingKey := "creative_settle:" + uuid.NewString()
+		legacy := &usage.UsageLog{UserID: user.ID, APIKeyID: key.ID, ProviderID: provider.ID, RequestID: billingKey, Model: "model", CreatedAt: time.Now().UTC()}
+		current := *legacy
+		current.RequestID = uuid.NewString()
+		current.BillingKey = billingKey
+		first, second := legacy, &current
+		if !oldFirst {
+			first, second = &current, legacy
+		}
+		inserted, err := repo.createSingle(ctx, integrationDB, first)
+		require.NoError(t, err)
+		require.True(t, inserted)
+		inserted, err = repo.createSingle(ctx, integrationDB, second)
+		require.NoError(t, err)
+		require.False(t, inserted)
+		require.Equal(t, first.ID, second.ID)
+		var count int
+		require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_logs WHERE COALESCE(billing_key, request_id)=$1 AND api_key_id=$2", billingKey, key.ID).Scan(&count))
+		require.Equal(t, 1, count)
 	}
 }

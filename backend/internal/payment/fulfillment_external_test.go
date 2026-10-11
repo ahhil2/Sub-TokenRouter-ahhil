@@ -13,6 +13,39 @@ import (
 	paymenttestkit "github.com/TokenFlux/TokenRouter/internal/payment/testkit"
 )
 
+// TestParseLegacyPaymentOrderID 检查早期订单回调的解析范围。
+func TestParseLegacyPaymentOrderID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		orderID  string
+		notFound bool
+		wantID   int64
+		wantOK   bool
+	}{
+		{name: "早期订单", orderID: "sub2_42", notFound: true, wantID: 42, wantOK: true},
+		{name: "早期订单带空白", orderID: " sub2_42 ", notFound: true, wantID: 42, wantOK: true},
+		{name: "查询错误", orderID: "sub2_42"},
+		{name: "当前前缀", orderID: "tr_42", notFound: true},
+		{name: "当前完整订单号", orderID: "tr_2026100912345678", notFound: true},
+		{name: "历史随机订单号", orderID: "sub2_20261009abcd1234", notFound: true},
+		{name: "缺少前缀", orderID: "42", notFound: true},
+		{name: "空编号", orderID: "sub2_", notFound: true},
+		{name: "零编号", orderID: "sub2_0", notFound: true},
+		{name: "负编号", orderID: "sub2_-42", notFound: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gotID, gotOK := payment.ParseLegacyPaymentOrderID(tt.orderID, tt.notFound)
+			require.Equal(t, tt.wantOK, gotOK)
+			require.Equal(t, tt.wantID, gotID)
+		})
+	}
+}
+
 func TestResolveRedeemAction_CodeNotFound(t *testing.T) {
 	t.Parallel()
 	action := payment.ResolveRedeemAction(nil, nil)

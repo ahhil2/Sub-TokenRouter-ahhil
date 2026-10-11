@@ -48,6 +48,7 @@ func (h *AuditLogHandler) List(c *gin.Context) {
 	}
 
 	filter := &audit.AuditLogFilter{
+		RequestID:  strings.TrimSpace(c.Query("request_id")),
 		Page:       page,
 		PageSize:   pageSize,
 		ActorEmail: strings.TrimSpace(c.Query("actor_email")),

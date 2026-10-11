@@ -942,6 +942,9 @@ func buildContentModerationLogWhere(filter moderation.ContentModerationLogFilter
 	if endpoint := strings.TrimSpace(filter.Endpoint); endpoint != "" {
 		add("l.endpoint = $%d", endpoint)
 	}
+	if id := strings.TrimSpace(filter.RequestID); id != "" {
+		add("l.request_id = ANY(ARRAY(SELECT id FROM request_lookup_ids($%d)))", id)
+	}
 	if search := strings.TrimSpace(filter.Search); search != "" {
 		like := "%" + search + "%"
 		args = append(args, like, like, like, like, like)
@@ -969,6 +972,9 @@ func buildContentModerationCyberWhere(filter moderation.ContentModerationCyberWa
 	}
 	if filter.ProviderID != nil {
 		add("w.provider_id = $%d", *filter.ProviderID)
+	}
+	if id := strings.TrimSpace(filter.RequestID); id != "" {
+		add("w.request_id = ANY(ARRAY(SELECT id FROM request_lookup_ids($%d)))", id)
 	}
 	if search := strings.TrimSpace(filter.Search); search != "" {
 		like := "%" + search + "%"

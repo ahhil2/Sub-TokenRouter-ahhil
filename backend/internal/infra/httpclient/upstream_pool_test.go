@@ -381,13 +381,10 @@ func TestUpstreamDialerRespectsContextCancellation(t *testing.T) {
 func TestEnableOpenAIHTTP2KeepAlive_EnablesPingHealthCheck(t *testing.T) {
 	tr := &http.Transport{}
 
-	h2, err := enableHTTP2KeepAlive(tr)
-	require.NoError(t, err)
-	require.NotNil(t, h2, "必须返回已配置的 *http2.Transport")
-
-	require.Positive(t, h2.ReadIdleTimeout, "必须启用空闲 PING 探测以剔除死连接")
-	require.Equal(t, http2ReadIdleTimeout, h2.ReadIdleTimeout)
-	require.Equal(t, http2PingTimeout, h2.PingTimeout, "PING 无响应必须有超时判定")
+	enableHTTP2KeepAlive(tr)
+	require.NotNil(t, tr.HTTP2)
+	require.Equal(t, http2ReadIdleTimeout, tr.HTTP2.SendPingTimeout)
+	require.Equal(t, http2PingTimeout, tr.HTTP2.PingTimeout)
 	requireHTTP2Configured(t, tr, "http2 必须已挂到底层 http.Transport 上")
 }
 
@@ -788,11 +785,11 @@ func http2KeepAliveTestPoolSettings() UpstreamSettings {
 }
 
 // requireHTTP2Configured 检查传输已启用 HTTP/2。
-// x/net/http2 在 go1.27 且关闭 http2legacy 时调用 RegisterProtocol("http/2") 注册配置并打开 Protocols.HTTP2。
-// ReadIdleTimeout 和 PingTimeout 在建连时映射为 http.HTTP2Config 的 SendPingTimeout 和 PingTimeout。
+// http.Protocols 同时允许 HTTP/1.1 回退和 HTTP/2 协商。
 func requireHTTP2Configured(t *testing.T, tr *http.Transport, msg string) {
 	t.Helper()
 	require.NotNil(t, tr.Protocols, msg)
+	require.True(t, tr.Protocols.HTTP1(), msg)
 	require.True(t, tr.Protocols.HTTP2(), msg)
 }
 

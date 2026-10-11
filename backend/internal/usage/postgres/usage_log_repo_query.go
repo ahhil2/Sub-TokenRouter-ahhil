@@ -136,7 +136,7 @@ func (r *Store) ListWithFilters(ctx context.Context, params pagination.Paginatio
 		conditions = append(conditions, "team_id IS NULL")
 	}
 	if requestID := strings.TrimSpace(filters.RequestID); requestID != "" {
-		conditions = append(conditions, fmt.Sprintf("request_id = $%d", len(args)+1))
+		conditions = append(conditions, usageRequestIDCondition("", len(args)+1))
 		args = append(args, requestID)
 	}
 	conditions, args = appendUsageLogModelWhereCondition(conditions, args, filters.Model, filters.ModelFilterSource)
@@ -175,6 +175,14 @@ func (r *Store) ListWithFilters(ctx context.Context, params pagination.Paginatio
 		return nil, nil, err
 	}
 	return logs, page, nil
+}
+
+// usageRequestIDCondition 将候选 ID 转为数组，使列表和统计能按 ID 索引筛选。
+func usageRequestIDCondition(prefix string, parameter int) string {
+	lookup := fmt.Sprintf("ARRAY(SELECT id FROM request_lookup_ids($%d))", parameter)
+	return fmt.Sprintf("(%srequest_id = ANY(%s) OR (%supstream_request_id = $%d"+
+		" AND NOT EXISTS (SELECT 1 FROM request_records exact_request WHERE exact_request.request_id=$%d)))",
+		prefix, lookup, prefix, parameter, parameter)
 }
 
 // buildUsageLogScopeSource 将用户与 Owner 团队范围拆为两个可索引且去重的分支。

@@ -464,6 +464,18 @@ func TestGrokVideoPendingCreatedAtStampOnStoreShape(t *testing.T) {
 	require.LessOrEqual(t, d, 3*time.Second)
 }
 
+// TestGrokMediaUsageCarriesTerminalState 状态查询的失败结果继续传给媒体完成处理器。
+func TestGrokMediaUsageCarriesTerminalState(t *testing.T) {
+	for _, state := range []string{"failed", "expired", "cancelled", "done", "pending"} {
+		body, err := json.Marshal(map[string]string{"status": state})
+		require.NoError(t, err)
+		meta := grokMediaUsageFromResponse(grok.GrokMediaEndpointVideoStatus, grok.GrokMediaRequestInfo{}, body)
+		require.Equal(t, media.GrokVideoRequestState(body), meta.VideoState)
+		require.NotEmpty(t, meta.VideoState)
+		require.Zero(t, meta.VideoCount)
+	}
+}
+
 func TestIsGrokVideoStatusBillable(t *testing.T) {
 	t.Parallel()
 	// 官方成功条件为 status=done 且存在 video.url。

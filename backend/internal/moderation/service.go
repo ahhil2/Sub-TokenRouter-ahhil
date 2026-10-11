@@ -517,6 +517,7 @@ type ContentModerationCyberWarningInput struct {
 }
 
 type ContentModerationLogFilter struct {
+	RequestID  string
 	Pagination pagination.PaginationParams
 	Result     string
 	GroupID    *int64
@@ -528,6 +529,7 @@ type ContentModerationLogFilter struct {
 
 // ContentModerationCyberWarningFilter 描述 cyber 警告列表和统计的筛选条件。
 type ContentModerationCyberWarningFilter struct {
+	RequestID  string
 	Pagination pagination.PaginationParams
 	UserID     *int64
 	ProviderID *int64

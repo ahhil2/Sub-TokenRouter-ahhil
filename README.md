@@ -1,6 +1,6 @@
 # Sub-TokenRouter-ahhil / SuperAHHil
 
-这是 SuperAHHil 的部署源码，基于 [TokenFlux/TokenRouter](https://github.com/TokenFlux/TokenRouter) `v0.2.7`，上游提交为 `3460848ba293442910b5a292abd6f3e32161189f`。TokenRouter 的前身是 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api)。Git 历史包含该版本的上游提交和本仓库的初始提交。
+这是 SuperAHHil 的部署源码，基于 [TokenFlux/TokenRouter](https://github.com/TokenFlux/TokenRouter) `v0.3.0`，上游提交为 `974fd8165880f273c580aeb60e10206c0e0e1bc1`。TokenRouter 的前身是 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api)。Git 历史包含该版本的上游提交和本仓库的初始提交。
 
 ## SuperAHHil 定制功能
 

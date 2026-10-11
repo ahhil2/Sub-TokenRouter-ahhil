@@ -1002,7 +1002,7 @@ rate_limit:
 pricing:
   # URL for the unified models.dev catalog
   # 模型价格与展示属性共用的 models.dev 目录地址
-  remote_url: "https://models.dev/catalog.json"
+  remote_url: "https://models.dev/catalog.json?type=all"
   # Local data directory for caching
   # 本地数据缓存目录
   data_dir: "./data"
@@ -1130,3 +1130,7 @@ update:
   # Leave empty for direct connection (recommended for overseas servers)
   # 留空表示直连（适用于海外服务器）
   proxy_url: ""
+
+# 请求摘要独立于 Ops 采样保存，通过内存缓冲批量写入数据库。
+request_log:
+  retention_days: 30

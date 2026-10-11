@@ -7,8 +7,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -173,6 +176,39 @@ func TestResolveRedeemCodeExpiresAt_RejectsConflictingInputs(t *testing.T) {
 	require.Nil(t, expiresAt)
 }
 
+// TestGenerate_CustomCodeLength 检查接口接受 32 个字符，并拒绝超长输入。
+func TestGenerate_CustomCodeLength(t *testing.T) {
+	for _, char := range []string{"兑", "a", "𠮷"} {
+		for _, length := range []int{32, 33} {
+			code := strings.Repeat(char, length)
+			t.Run(code, func(t *testing.T) {
+				router, fixture := setupRedeemAdminContractRouter()
+				body, err := json.Marshal(map[string]any{
+					"code":  code,
+					"count": 1,
+					"type":  "balance",
+					"value": 10,
+				})
+				require.NoError(t, err)
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/redeem-codes/generate", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+
+				router.ServeHTTP(w, req)
+
+				if length > 32 {
+					require.Equal(t, http.StatusBadRequest, w.Code)
+					require.Nil(t, fixture.lastGenerateRedeemCodes)
+					return
+				}
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				require.NotNil(t, fixture.lastGenerateRedeemCodes)
+				require.Equal(t, code, fixture.lastGenerateRedeemCodes.Code)
+			})
+		}
+	}
+}
+
 func TestGenerate_AcceptsInvitationExpiry(t *testing.T) {
 	adminSvc := newRedeemAdminFixture()
 	h := NewAdminRedeemHandler(adminSvc, nil)
@@ -321,6 +357,40 @@ func TestRedeemPaymentRequirementHTTP(t *testing.T) {
 		}
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
 		require.Equal(t, enabled, updated.Data.RequiresPayment)
+	}
+}
+
+// TestRedeemSearchUnicode 检查列表和导出完整传递兑换码，并按字符截断超长搜索词。
+func TestRedeemSearchUnicode(t *testing.T) {
+	code := "兑" + strings.Repeat("𠮷", 31)
+	limit := strings.Repeat("兑𠮷", 50)
+	tests := []struct {
+		name   string
+		search string
+		want   string
+	}{
+		{name: "完整兑换码", search: code, want: code},
+		{name: "首尾空白", search: " \t" + code + "\n ", want: code},
+		{name: "恰好一百字符", search: limit, want: limit},
+		{name: "超过一百字符", search: limit + "尾", want: limit},
+		{name: "英文超过上限", search: strings.Repeat("a", 101), want: strings.Repeat("a", 100)},
+		{name: "空白搜索", search: " \t\n ", want: ""},
+	}
+	for _, route := range []string{"/api/v1/admin/redeem-codes", "/api/v1/admin/redeem-codes/export"} {
+		for _, tt := range tests {
+			t.Run(route+"/"+tt.name, func(t *testing.T) {
+				router, fixture := setupRedeemAdminContractRouter()
+				rec := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, route+"?search="+url.QueryEscape(tt.search), nil)
+
+				router.ServeHTTP(rec, req)
+
+				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				require.Equal(t, 1, fixture.lastListRedeemCodes.calls)
+				require.True(t, utf8.ValidString(fixture.lastListRedeemCodes.search))
+				require.Equal(t, tt.want, fixture.lastListRedeemCodes.search)
+			})
+		}
 	}
 }
 

@@ -25,7 +25,7 @@ func TestCacheOverrideProjection(t *testing.T) {
 // TestNormalizeResultUsesDecodedImageDimensions 验证实际输出尺寸覆盖请求尺寸，并进入生产完成处理使用的计费元数据。
 func TestNormalizeResultUsesDecodedImageDimensions(t *testing.T) {
 	result := &Result{ImageCount: 1, ImageInputSize: "3840x2160", ImageOutputSizes: []string{"1672x941"}}
-	(&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: true}, true, nil)
+	(&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: true}, true, nil, "local-request")
 	require.Equal(t, pricing.ImageBillingSize2K, result.ImageSize)
 	require.Equal(t, "1672x941", result.ImageOutputSize)
 	require.Equal(t, pricing.ImageSizeSourceOutput, result.ImageSizeSource)
@@ -69,7 +69,7 @@ func TestApplyServiceTierBillingResolutionOnlyRewritesDowngrades(t *testing.T) {
 	t.Run("openai downgrade rewrites tier", func(t *testing.T) {
 		requested := "priority"
 		result := &Result{ServiceTier: &requested, UpstreamResponseServiceTier: "default"}
-		resolution := (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: false}, true, nil)
+		resolution := (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: false}, true, nil, "local-request")
 		require.True(t, resolution.Downgraded)
 		require.NotNil(t, result.ServiceTier)
 		require.Equal(t, "default", *result.ServiceTier)
@@ -78,13 +78,13 @@ func TestApplyServiceTierBillingResolutionOnlyRewritesDowngrades(t *testing.T) {
 	t.Run("openai honoured tier keeps pointer", func(t *testing.T) {
 		requested := "priority"
 		result := &Result{ServiceTier: &requested, UpstreamResponseServiceTier: "priority"}
-		require.False(t, (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: false}, true, nil).Downgraded)
+		require.False(t, (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: false}, true, nil, "local-request").Downgraded)
 		require.Same(t, &requested, result.ServiceTier)
 	})
 
 	t.Run("openai untiered request stays nil", func(t *testing.T) {
 		result := &Result{UpstreamResponseServiceTier: "priority"}
-		require.False(t, (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: false}, true, nil).Downgraded)
+		require.False(t, (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: false}, true, nil, "local-request").Downgraded)
 		require.Nil(t, result.ServiceTier)
 	})
 
@@ -92,7 +92,7 @@ func TestApplyServiceTierBillingResolutionOnlyRewritesDowngrades(t *testing.T) {
 		t.Run("codex "+providerType+" keeps outbound priority despite default echo", func(t *testing.T) {
 			requested := "priority"
 			result := &Result{ServiceTier: &requested, UpstreamResponseServiceTier: "default"}
-			resolution := (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: true}, true, nil)
+			resolution := (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: true}, true, nil, "local-request")
 			require.False(t, resolution.Downgraded)
 			require.Equal(t, "priority", resolution.Requested)
 			require.Equal(t, "default", resolution.Observed)
@@ -103,7 +103,7 @@ func TestApplyServiceTierBillingResolutionOnlyRewritesDowngrades(t *testing.T) {
 		t.Run("codex "+providerType+" still accepts an explicit flex downgrade", func(t *testing.T) {
 			requested := "priority"
 			result := &Result{ServiceTier: &requested, UpstreamResponseServiceTier: "flex"}
-			resolution := (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: true}, true, nil)
+			resolution := (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: true}, true, nil, "local-request")
 			require.True(t, resolution.Downgraded)
 			require.Equal(t, "flex", resolution.Billing)
 			require.Equal(t, "flex", *result.ServiceTier)
@@ -111,7 +111,7 @@ func TestApplyServiceTierBillingResolutionOnlyRewritesDowngrades(t *testing.T) {
 
 		t.Run("codex "+providerType+" response never promotes an untiered request", func(t *testing.T) {
 			result := &Result{UpstreamResponseServiceTier: "priority"}
-			resolution := (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: true}, true, nil)
+			resolution := (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: true}, true, nil, "local-request")
 			require.False(t, resolution.Downgraded)
 			require.Empty(t, resolution.Billing)
 			require.Nil(t, result.ServiceTier)
@@ -121,7 +121,7 @@ func TestApplyServiceTierBillingResolutionOnlyRewritesDowngrades(t *testing.T) {
 	t.Run("non-openai oauth still uses the generic response contract", func(t *testing.T) {
 		requested := "priority"
 		result := &Result{ServiceTier: &requested, UpstreamResponseServiceTier: "default"}
-		resolution := (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: false}, true, nil)
+		resolution := (&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: false}, true, nil, "local-request")
 		require.True(t, resolution.Downgraded)
 		require.Equal(t, "default", resolution.Billing)
 		require.Equal(t, "default", *result.ServiceTier)
@@ -130,12 +130,12 @@ func TestApplyServiceTierBillingResolutionOnlyRewritesDowngrades(t *testing.T) {
 	t.Run("anthropic standard speed rewrites fast", func(t *testing.T) {
 		requested := "fast"
 		result := &Result{ServiceTier: &requested, UpstreamResponseServiceTier: "standard"}
-		require.True(t, (&Recorder{}).normalizeResult(result, nil, false, nil).Downgraded)
+		require.True(t, (&Recorder{}).normalizeResult(result, nil, false, nil, "local-request").Downgraded)
 		require.Equal(t, "standard", *result.ServiceTier)
 	})
 
 	t.Run("nil results are ignored", func(t *testing.T) {
-		require.False(t, (&Recorder{}).normalizeResult(nil, nil, true, nil).Downgraded)
-		require.False(t, (&Recorder{}).normalizeResult(nil, nil, false, nil).Downgraded)
+		require.False(t, (&Recorder{}).normalizeResult(nil, nil, true, nil, "local-request").Downgraded)
+		require.False(t, (&Recorder{}).normalizeResult(nil, nil, false, nil, "local-request").Downgraded)
 	})
 }

@@ -656,7 +656,7 @@
             <textarea
               v-model="promptDraft"
               rows="3"
-              class="h-[76px] w-full resize-y rounded-control border border-primary-900/10 px-3 py-2 text-sm leading-5 outline-none focus:border-primary-900/10 focus:ring-2 focus:ring-black/10 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-100 dark:focus:border-primary-500 dark:focus:ring-primary-900/40"
+              class="input h-[76px] resize-y px-3 py-2 leading-5"
               :placeholder="t('batchImage.create.promptPlaceholder')"
             />
             <div class="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_112px_132px_112px] md:items-center">

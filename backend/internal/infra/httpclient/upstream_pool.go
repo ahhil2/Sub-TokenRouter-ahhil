@@ -449,11 +449,8 @@ func buildUpstreamTransport(settings UpstreamSettings, proxyURL *url.URL, protoc
 	switch {
 	case protocol.HTTP2:
 		transport.ForceAttemptHTTP2 = true
-		// 显式配置 http2 并启用 PING 健康探测，剔除代理/NAT 静默掐断的死连接，
-		// 避免请求挂在死连接上直到 TCP 重传超时（分钟级）。
-		if _, err := enableHTTP2KeepAlive(transport); err != nil {
-			return nil, err
-		}
+		// 空闲 PING 用于发现代理或 NAT 已断开、客户端仍认为可用的连接。
+		enableHTTP2KeepAlive(transport)
 	case protocol.DisableHTTP2:
 		transport.ForceAttemptHTTP2 = false
 		transport.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
@@ -464,16 +461,21 @@ func buildUpstreamTransport(settings UpstreamSettings, proxyURL *url.URL, protoc
 	return transport, nil
 }
 
-func enableHTTP2KeepAlive(transport *http.Transport) (*http2.Transport, error) {
-	h2, err := http2.ConfigureTransports(transport)
-	if err != nil {
-		return nil, err
+// enableHTTP2KeepAlive 配置标准库的 HTTP/2 协商和空闲 PING。
+func enableHTTP2KeepAlive(transport *http.Transport) {
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = new(tls.Config)
 	}
-	if h2 != nil {
-		h2.ReadIdleTimeout = http2ReadIdleTimeout
-		h2.PingTimeout = http2PingTimeout
+	if transport.Protocols == nil {
+		transport.Protocols = new(http.Protocols)
+		transport.Protocols.SetHTTP1(true)
 	}
-	return h2, nil
+	transport.Protocols.SetHTTP2(true)
+	if transport.HTTP2 == nil {
+		transport.HTTP2 = new(http.HTTP2Config)
+	}
+	transport.HTTP2.SendPingTimeout = http2ReadIdleTimeout
+	transport.HTTP2.PingTimeout = http2PingTimeout
 }
 
 // buildUpstreamTransportWithTLSFingerprint 构建带 TLS 指纹伪装的 RoundTripper
@@ -539,6 +541,7 @@ func buildUpstreamTransportWithTLSFingerprint(settings UpstreamSettings, proxyUR
 	transport.DialTLSContext = dialTLSContext
 
 	if useHTTP2 && dialTLSContext != nil {
+		//nolint:staticcheck // uTLS 返回独立的 ConnectionState 类型，通过 x/net 的裸连接拨号接口传给 HTTP/2。
 		h2Transport := &http2.Transport{
 			IdleConnTimeout: settings.IdleConnTimeout,
 			ReadIdleTimeout: http2ReadIdleTimeout,

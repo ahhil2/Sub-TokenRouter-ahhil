@@ -8,8 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// OrderIDPrefix 是商户订单号的前缀。
-const OrderIDPrefix = "sub2_"
+const (
+	// OrderIDPrefix 是新建商户订单号的前缀。
+	OrderIDPrefix = "tr_"
+)
 
 type Order struct {
 	ID                   int64                            `json:"id,omitempty"`
@@ -216,7 +218,7 @@ func cloneOrderValue(value any) any {
 	}
 }
 
-// GenerateOutTradeNo 生成渠道使用的商户订单号，格式为 sub2_、当前日期和 8 位随机字符。
+// GenerateOutTradeNo 生成渠道使用的商户订单号，格式为 tr_、当前日期和 8 位随机字符。
 func GenerateOutTradeNo() string {
 	date := time.Now().Format("20060102")
 	rnd := GenerateMerchantRandomString(8)

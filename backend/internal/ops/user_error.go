@@ -9,6 +9,7 @@ import "time"
 // error_body 在详情接口 GetUserErrorRequestDetail 校验记录归属后返回。
 // provider、api_key_prefix、upstream_endpoint 和 user_email 属于内部敏感字段，输出时需要移除。
 type UserErrorRequest struct {
+	RequestID       string    `json:"request_id"`
 	ID              int64     `json:"id"`
 	CreatedAt       time.Time `json:"created_at"`
 	Model           string    `json:"model"`
@@ -109,6 +110,7 @@ func ToUserErrorRequest(e *OpsErrorLog) *UserErrorRequest {
 	}
 	return &UserErrorRequest{
 		ID:              e.ID,
+		RequestID:       e.RequestID,
 		CreatedAt:       e.CreatedAt,
 		Model:           model,
 		InboundEndpoint: e.InboundEndpoint,

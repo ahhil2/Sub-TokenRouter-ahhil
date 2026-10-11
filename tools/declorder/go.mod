@@ -1,6 +1,6 @@
 module github.com/TokenFlux/TokenRouter/tools/declorder
 
-go 1.27.1
+go 1.27.2
 
 require github.com/dave/dst v0.28.0
 

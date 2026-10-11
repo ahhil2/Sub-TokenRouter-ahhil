@@ -8,6 +8,7 @@ import (
 // usageStatsCacheKeyData 包含 /admin/usage/stats 查询缓存的筛选条件，缓存 TTL 为 30 秒。
 
 type usageStatsCacheKeyData struct {
+	RequestID          string `json:"request_id"`
 	EndpointSource     string `json:"endpoint_source"`
 	StartTime          string `json:"start_time"`
 	EndTime            string `json:"end_time"`
@@ -34,6 +35,7 @@ func usageStatsCacheKey(filters UsageLogFilters) string {
 		end = filters.EndTime.UTC().Format(time.RFC3339)
 	}
 	return mustMarshalDashboardCacheKey(usageStatsCacheKeyData{
+		RequestID:          filters.RequestID,
 		EndpointSource:     filters.EndpointSource,
 		StartTime:          start,
 		EndTime:            end,

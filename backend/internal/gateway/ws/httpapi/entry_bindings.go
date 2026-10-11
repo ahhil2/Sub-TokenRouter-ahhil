@@ -27,6 +27,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -502,8 +503,13 @@ func (t *openAIWSEntryTarget) UpdateUsage(ctx context.Context, headers map[strin
 func (t *openAIWSEntryTarget) PrepareCompletion(ctx context.Context, result *gatewayws.ForwardResult, capture gatewayws.TurnCapture, model string, mapping routing.GroupMappingResult, body []byte, cyber bool) *completion.Input {
 	p := t.root
 	legacy := gatewayprovider.ForwardResultFromWS(result)
-	// 这里只转换已有资金/用量字段；复制发生在提交前，回调不捕获 Gin。
-	return gatewayprovider.CaptureOpenAI(gatewayhttp.PropagateAPIKeyModelRedirectTrace(gatewayhttp.CompletionContext(p.c), ctx), &gatewayprovider.OpenAICapture{
+	// 完成快照携带本轮请求 ID 和模型映射，后台任务通过本轮记录器补充诊断信息。
+	captureContext := gatewayhttp.PropagateAPIKeyModelRedirectTrace(gatewayhttp.CompletionContext(p.c), ctx)
+	if id := telemetry.RequestIDValue(ctx); id != "" {
+		captureContext = context.WithValue(captureContext, telemetry.RequestID, id)
+	}
+	captureContext = telemetry.CopyRequestCapture(captureContext, ctx)
+	return gatewayprovider.CaptureOpenAI(captureContext, &gatewayprovider.OpenAICapture{
 		Result: legacy, APIKey: p.key, User: p.key.User, Provider: gatewayprovider.ExecutionCompletionRecord(t.provider), Subscription: p.subscription,
 		InboundEndpoint: gatewayhttp.GetInboundEndpoint(p.c), UpstreamEndpoint: openaiattempt.ResolveOpenAIUpstreamEndpoint(p.c, t.provider, legacy), UserAgent: p.call.UserAgent, IPAddress: p.call.ClientIP,
 		RequestPayloadHash: billing.HashUsageRequestPayload(body), RequestBody: append([]byte(nil), body...), PricingAt: capture.StartedAt, APIKeyService: p.bindings.Common.Support.Quota,

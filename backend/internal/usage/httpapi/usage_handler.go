@@ -275,7 +275,7 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 		endPtr = &endTime
 	}
 
-	if requireRange {
+	if requireRange && strings.TrimSpace(c.Query("request_id")) == "" {
 		if startPtr == nil {
 			switch c.DefaultQuery("period", "") {
 			case "today":
@@ -299,8 +299,21 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 		}
 	}
 
+	if strings.TrimSpace(c.Query("request_id")) != "" {
+		if startPtr == nil {
+			startTime = time.Unix(0, 0).UTC()
+		} else {
+			startTime = *startPtr
+		}
+		if endPtr == nil {
+			endTime = time.Now().UTC()
+		} else {
+			endTime = *endPtr
+		}
+	}
 	return &userUsageFilters{
 		Filters: usage.UsageLogFilters{
+			RequestID:          strings.TrimSpace(c.Query("request_id")),
 			UserID:             subject.UserID,
 			APIKeyID:           apiKeyID,
 			GroupID:            groupID,
@@ -315,16 +328,9 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 			StartTime:          startPtr,
 			EndTime:            endPtr,
 		},
-		StartTime: derefTime(startPtr),
-		EndTime:   derefTime(endPtr),
+		StartTime: startTime,
+		EndTime:   endTime,
 	}, true
-}
-
-func derefTime(value *time.Time) time.Time {
-	if value == nil {
-		return time.Time{}
-	}
-	return *value
 }
 
 // List 分页列出当前用户的用量记录。
@@ -380,7 +386,7 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 		pageSize = 100
 	}
 
-	filter := &ops.OpsErrorLogFilter{Page: page, PageSize: pageSize}
+	filter := &ops.OpsErrorLogFilter{Page: page, PageSize: pageSize, RequestID: strings.TrimSpace(c.Query("request_id"))}
 
 	// 日期范围使用半开区间 [start, end)，与用量列表语义一致。
 	userTZ := c.Query("timezone")

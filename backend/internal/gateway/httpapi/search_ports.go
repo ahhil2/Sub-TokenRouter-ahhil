@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
@@ -171,12 +170,9 @@ func (r *gatewayStandaloneSearchRun) Complete(c *gin.Context, req searchtools.St
 	upstreamEndpoint := GetUpstreamEndpoint(c, provider.Platform)
 	requestPayloadHash := billing.HashUsageRequestPayload([]byte(req.Query))
 
-	// request ID 是每次调用独立的结算幂等键，查询、IP 或 UA 哈希会合并重复搜索。
-	searchRequestID := searchLabel + ":" + uuid.NewString()
 	// 入队前捕获资金和报文数据，worker 使用这份快照。
 	completionInput := gatewaycapture.CaptureMessages(CompletionContext(c), &gatewaycapture.MessagesCapture{
 		Result: &forwardcore.MessagesResult{
-			RequestID:   searchRequestID,
 			Model:       "grok-" + strings.ReplaceAll(searchLabel, "_", "-"),
 			SearchCount: 1,
 			Duration:    0,

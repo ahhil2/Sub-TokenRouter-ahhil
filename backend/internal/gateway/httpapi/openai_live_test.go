@@ -444,7 +444,8 @@ func TestFinalizeLiveCallIsIdempotentAndWritesZeroUsage(t *testing.T) {
 	log := usageRepo.logs[0]
 	usageRepo.mu.Unlock()
 	require.Equal(t, usage.RequestTypeLive, log.RequestType)
-	require.Equal(t, record.CallHash, log.RequestID)
+	require.Equal(t, record.CallHash, log.BillingKey)
+	require.Len(t, log.RequestID, 36)
 	require.NotEqual(t, record.CallID, log.RequestID)
 	require.NotNil(t, log.DurationMs)
 	require.Zero(t, log.InputTokens)
@@ -782,7 +783,8 @@ func TestFinalizeLiveCallUsageLogFallsBackToSyncCreate(t *testing.T) {
 	defer usageRepo.mu.Unlock()
 	require.Equal(t, 1, usageRepo.bestEffortCalls)
 	require.Len(t, usageRepo.logs, 1, "best-effort 失败后必须同步兜底落库")
-	require.Equal(t, record.CallHash, usageRepo.logs[0].RequestID)
+	require.Equal(t, record.CallHash, usageRepo.logs[0].BillingKey)
+	require.Len(t, usageRepo.logs[0].RequestID, 36)
 }
 
 // TestStopLiveObserversPreservesRemoteCall 验证停止本地观察后，远端会话和租约继续有效，结算等待远端结束。

@@ -102,7 +102,7 @@ func TestLogger_AccessLogSeparatesParentAndInternalRequestIDs(t *testing.T) {
 		if event == nil || event.Message != "http request completed" {
 			continue
 		}
-		internalID, ok := event.Fields["client_request_id"].(string)
+		internalID, ok := event.Fields["request_id"].(string)
 		if !ok || internalID == "" || internalID == "tokenrouter-request-123" {
 			t.Fatalf("internal client request ID is not isolated: %+v", event.Fields)
 		}

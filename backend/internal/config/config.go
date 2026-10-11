@@ -75,7 +75,13 @@ var (
 	ErrDingTalkV4InvalidAppKind = authconfig.ErrDingTalkV4InvalidAppKind
 )
 
+// RequestLogConfig 配置独立请求摘要的保留天数。
+type RequestLogConfig struct {
+	RetentionDays int `mapstructure:"retention_days"`
+}
+
 type Config struct {
+	RequestLog        RequestLogConfig           `mapstructure:"request_log"`
 	Server            ServerConfig               `mapstructure:"server"`
 	Log               LogConfig                  `mapstructure:"log"`
 	CORS              CORSConfig                 `mapstructure:"cors"`
@@ -603,7 +609,7 @@ type GatewayConfig struct {
 
 	// UserGroupRateCacheTTLSeconds: 用户分组倍率热路径缓存 TTL（秒）
 	UserGroupRateCacheTTLSeconds int `mapstructure:"user_group_rate_cache_ttl_seconds"`
-	// ModelsListCacheTTLSeconds: /v1/models 模型列表短缓存 TTL（秒）
+	// ModelsListCacheTTLSeconds 兼容历史配置，当前目录查询已停用候选短缓存。
 	ModelsListCacheTTLSeconds int `mapstructure:"models_list_cache_ttl_seconds"`
 
 	// UserMessageQueue: 用户消息串行队列配置
@@ -1733,6 +1739,7 @@ func setDefaults() {
 		"open.bigmodel.cn",
 		"api.z.ai",
 		"api.deepseek.com",
+		"api.typesafe.ai",
 		"api.minimaxi.com",
 		"generativelanguage.googleapis.com",
 		"cloudcode-pa.googleapis.com",
@@ -1943,6 +1950,7 @@ func setDefaults() {
 	viper.SetDefault("ops.cleanup.batch_size", 1000)
 	viper.SetDefault("ops.cleanup.batch_pause_ms", 200)
 	// Retention days: vNext defaults to 30 days across ops datasets.
+	viper.SetDefault("request_log.retention_days", 30)
 	viper.SetDefault("ops.cleanup.error_log_retention_days", 30)
 	viper.SetDefault("ops.cleanup.system_log_retention_days", 30)
 	viper.SetDefault("ops.cleanup.minute_metrics_retention_days", 30)
@@ -1977,7 +1985,7 @@ func setDefaults() {
 	viper.SetDefault("rate_limit.oauth_401_cooldown_minutes", 10)
 
 	// Pricing 从 models.dev 同步统一目录，本地文件补充专用计费维度。
-	viper.SetDefault("pricing.remote_url", "https://models.dev/catalog.json")
+	viper.SetDefault("pricing.remote_url", "https://models.dev/catalog.json?type=all")
 	viper.SetDefault("pricing.data_dir", "./data")
 	viper.SetDefault("pricing.fallback_file", "")
 	viper.SetDefault("pricing.check_interval_minutes", 10)
@@ -2292,6 +2300,9 @@ func setEnvReachableDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if c.RequestLog.RetentionDays < 0 {
+		return fmt.Errorf("request_log.retention_days must be non-negative")
+	}
 	c.normalizePricingCatalogSource()
 
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
@@ -3459,12 +3470,16 @@ func warnIfInsecureURL(field, raw string) {
 
 // normalizePricingCatalogSource 迁移已知公共旧源及缺失的旧打包资源，不改写部署文件。
 func (c *Config) normalizePricingCatalogSource() {
+	if strings.TrimSpace(c.Pricing.RemoteURL) == "https://models.dev/catalog.json" {
+		c.Pricing.RemoteURL = "https://models.dev/catalog.json?type=all"
+	}
+
 	source, err := url.Parse(c.Pricing.RemoteURL)
 	if err == nil && strings.EqualFold(source.Host, "raw.githubusercontent.com") && source.User == nil && (source.Scheme == "https" || source.Scheme == "http") {
 		sourcePath := strings.ToLower(path.Clean(source.Path))
 		knownRepository := strings.HasPrefix(sourcePath, "/wei-shaw/model-price-repo/") || strings.HasPrefix(sourcePath, "/berriai/litellm/")
 		if knownRepository && strings.HasSuffix(sourcePath, "/model_prices_and_context_window.json") {
-			c.Pricing.RemoteURL = "https://models.dev/catalog.json"
+			c.Pricing.RemoteURL = "https://models.dev/catalog.json?type=all"
 			if !slices.Contains(c.Security.URLAllowlist.PricingHosts, "models.dev") {
 				c.Security.URLAllowlist.PricingHosts = append(c.Security.URLAllowlist.PricingHosts, "models.dev")
 			}

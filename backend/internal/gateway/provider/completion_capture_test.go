@@ -45,7 +45,8 @@ func TestCompletionCaptureKeepsTurnTimeAndIndependentInputs(t *testing.T) {
 	result.ImageOutputSizes[0] = "4K"
 	result.ImageSizeBreakdown["1K"] = 20
 	in.RequestBody[0] = '!'
-	require.Equal(t, "local:local", out.RequestID)
+	require.Equal(t, "local", out.RequestID)
+	require.Equal(t, "client:local", out.BillingKey)
 	require.Equal(t, turnAt, out.PricingAt)
 	require.Equal(t, 10.0, out.User.Balance)
 	require.Equal(t, int64(17), *out.APIKey.GroupID)
@@ -104,14 +105,14 @@ func TestCompletionCyberInputFreezesLegacyProjection(t *testing.T) {
 func TestResolveUsageBillingRequestID_ForcedWebSearchBeatsClientID(t *testing.T) {
 	t.Parallel()
 	ctx := context.WithValue(context.Background(), telemetry.ClientRequestID, "client-shared-id")
-	got := CompletionRequestID(ctx, "web_search:uuid-1")
+	got := CompletionBillingKey(ctx, "web_search:uuid-1")
 	require.Equal(t, "web_search:uuid-1", got)
 }
 
 func TestResolveUsageBillingRequestID_ClientWinsOverPlainUpstream(t *testing.T) {
 	t.Parallel()
 	ctx := context.WithValue(context.Background(), telemetry.ClientRequestID, "client-shared-id")
-	got := CompletionRequestID(ctx, "resp_abc")
+	got := CompletionBillingKey(ctx, "resp_abc")
 	require.Equal(t, "client:client-shared-id", got)
 }
 
@@ -144,6 +145,6 @@ func TestStableGrokRealtimeBillingRequestID(t *testing.T) {
 func TestResolveUsageBillingRequestID_ForcedGrokAudioBeatsClientID(t *testing.T) {
 	t.Parallel()
 	ctx := context.WithValue(context.Background(), telemetry.ClientRequestID, "client-shared-id")
-	got := CompletionRequestID(ctx, StableAudioBillingRequestID("up-9"))
+	got := CompletionBillingKey(ctx, StableAudioBillingRequestID("up-9"))
 	require.Equal(t, "grok_audio:up-9", got)
 }

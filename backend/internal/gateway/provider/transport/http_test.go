@@ -641,6 +641,7 @@ func (s *HTTPUpstreamSuite) TestOpenAIProfileTLSFingerprintDoesNotInheritGeneric
 	require.Equal(s.T(), upstreamProtocolModeOpenAIH1, entry.protocolMode, "未声明 h2 的 TLS 模板应保持 HTTP/1.1")
 }
 
+//nolint:staticcheck // 此测试检查 uTLS 裸连接适配所需的 x/net/http2 Transport 和 PING 设置。
 func (s *HTTPUpstreamSuite) TestOpenAIProfileTLSFingerprintUsesHTTP2WhenALPNAllowsH2() {
 	*s.cfg = Options{
 		OpenAIHTTP2: HTTP2Options{

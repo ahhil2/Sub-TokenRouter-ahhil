@@ -708,3 +708,21 @@ func TestUsageRankingProjectsHiddenFieldsAndUsesConfiguredSort(t *testing.T) {
 	require.NotContains(t, rows[0], "cache_read_tokens")
 	require.NotContains(t, rows[0], "actual_cost")
 }
+
+// TestRequestIDFiltersKeepScopeAndUseFullHistory 按 ID 查询时保留主体限制，并忽略缺省时间窗口。
+func TestRequestIDFiltersKeepScopeAndUseFullHistory(t *testing.T) {
+	repo := &userUsageRepoCapture{}
+	router := newUserUsageRequestTypeTestRouter(repo)
+	for _, path := range []string{"/usage", "/usage/stats"} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path+"?request_id=%20client%3Ahistory%20&user_id=999", nil))
+		require.Equal(t, http.StatusOK, response.Code)
+	}
+	require.Equal(t, "client:history", repo.listFilters.RequestID)
+	require.Equal(t, "client:history", repo.statsFilters.RequestID)
+	require.Equal(t, int64(42), repo.listFilters.UserID)
+	require.Equal(t, int64(42), repo.statsFilters.UserID)
+	require.Nil(t, repo.listFilters.StartTime)
+	require.Nil(t, repo.statsFilters.StartTime)
+	require.Nil(t, repo.statsFilters.EndTime)
+}

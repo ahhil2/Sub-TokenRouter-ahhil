@@ -9,6 +9,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
@@ -326,6 +327,10 @@ func StableGrokVideoBillingRequestID(taskRequestID string) string {
 
 // TrackCreated 保留创建后的尽力绑定与一次快照重试；失败不能把已提交响应改成失败。
 func (s *VideoTasks) TrackCreated(ctx context.Context, groupID *int64, taskID string, userID, keyID, providerID int64, pending GrokVideoPendingBilling, observer VideoObserver) {
+	billingKey := StableGrokVideoBillingRequestID(taskID)
+	createdAt, _ := time.Parse(time.RFC3339Nano, pending.CreatedAt)
+	telemetry.RecordRelatedRequest(ctx, telemetry.RequestRecord{RequestID: telemetry.StableRequestID(fmt.Sprintf("%d/%s", keyID, billingKey)), StartedAt: createdAt, State: "running", UserID: userID, APIKeyID: keyID, ProviderID: providerID, Model: pending.Model, Aliases: []telemetry.RequestAlias{{Kind: "task", Value: taskID}, {Kind: "billing", Value: billingKey}}})
+
 	if err := s.BindGrokMediaVideoRequestProvider(ctx, groupID, taskID, userID, keyID, providerID); err != nil {
 		videoNotice(observer, VideoNotice{Kind: "bind_failed", TaskID: taskID, ProviderID: providerID, Err: err})
 	}

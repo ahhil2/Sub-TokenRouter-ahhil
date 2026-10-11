@@ -223,6 +223,9 @@ func markOpsStreamError(c *gin.Context, streamErr OpsStreamError) {
 	if c == nil {
 		return
 	}
+	if streamErr.CountTowardsSLA && c.Request != nil {
+		telemetry.UpdateRequest(c.Request.Context(), func(record *telemetry.RequestRecord) { record.State = "failed"; record.ErrorCode = "stream_error" })
+	}
 	streamErr.ErrType = strings.TrimSpace(streamErr.ErrType)
 	streamErr.Code = strings.TrimSpace(streamErr.Code)
 	streamErr.Message = strings.TrimSpace(streamErr.Message)
@@ -391,6 +394,18 @@ func AppendOpsUpstreamError(c *gin.Context, ev ops.OpsUpstreamErrorEvent) {
 		}
 	}
 
+	if c.Request != nil {
+		telemetry.UpdateRequest(c.Request.Context(), func(record *telemetry.RequestRecord) {
+			if len(record.Attempts) < 256 {
+				outcome := "failed"
+				if ev.Kind == "usage_invalid" {
+					outcome = "usage_unknown"
+				}
+				record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: len(record.Attempts) + 1, ProviderID: ev.ProviderID, RequestID: ev.UpstreamRequestID, Status: ev.UpstreamStatusCode, Outcome: outcome})
+			}
+		})
+		telemetry.AddRequestAlias(c.Request.Context(), "upstream", ev.UpstreamRequestID)
+	}
 	evCopy := ev
 	existing = append(existing, &evCopy)
 	c.Set(OpsUpstreamErrorsKey, existing)

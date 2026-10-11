@@ -2,12 +2,20 @@ package billing
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
+
+// redeemCreateRecorder 记录管理服务实际提交的兑换码。
+type redeemCreateRecorder struct {
+	RedeemCodeRepository
+	created []RedeemCode
+}
 
 type redeemRepoStubForAdminList struct {
 	RedeemCodeRepository
@@ -20,6 +28,56 @@ type redeemRepoStubForAdminList struct {
 	listWithFiltersCodes  []RedeemCode
 	listWithFiltersResult *pagination.PaginationResult
 	listWithFiltersErr    error
+}
+
+// TestRedeemAdmin_GenerateRedeemCodes_CustomCodeLength 覆盖中文、混合文本和补充平面字符的长度限制。
+func TestRedeemAdmin_GenerateRedeemCodes_CustomCodeLength(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    string
+		tooLong bool
+	}{
+		{name: "中文未满上限", code: strings.Repeat("兑", 11)},
+		{name: "中文达到上限", code: strings.Repeat("兑", 32)},
+		{name: "英文达到上限", code: strings.Repeat("a", 32)},
+		{name: "中英混合达到上限", code: strings.Repeat("兑a", 16)},
+		{name: "补充平面汉字达到上限", code: strings.Repeat("𠮷", 32)},
+		{name: "首尾空白", code: " \t" + strings.Repeat("兑", 32) + "\n "},
+		{name: "中文超过上限", code: strings.Repeat("兑", 33), tooLong: true},
+		{name: "英文超过上限", code: strings.Repeat("a", 33), tooLong: true},
+		{name: "补充平面汉字超过上限", code: strings.Repeat("𠮷", 33), tooLong: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &redeemCreateRecorder{}
+			svc := NewRedeemAdmin(repo, nil, nil)
+
+			codes, err := svc.GenerateRedeemCodes(context.Background(), &GenerateRedeemCodesInput{
+				Code:  tt.code,
+				Count: 1,
+				Type:  RedeemTypeBalance,
+				Value: 10,
+			})
+
+			if tt.tooLong {
+				require.Error(t, err)
+				require.Equal(t, "REDEEM_CODE_TOO_LONG", apperror.Reason(err))
+				require.Empty(t, codes)
+				require.Empty(t, repo.created)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, codes, 1)
+			require.Equal(t, strings.TrimSpace(tt.code), codes[0].Code)
+			require.Equal(t, codes, repo.created)
+		})
+	}
+}
+
+// Create 保存兑换码副本，供测试检查传入仓储的内容。
+func (r *redeemCreateRecorder) Create(_ context.Context, code *RedeemCode) error {
+	r.created = append(r.created, *code)
+	return nil
 }
 
 func TestAdminService_ListRedeemCodes_WithSearch(t *testing.T) {

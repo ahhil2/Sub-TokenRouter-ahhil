@@ -119,6 +119,7 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	filter.Phase = strings.TrimSpace(c.Query("phase"))
 	filter.Owner = strings.TrimSpace(c.Query("error_owner"))
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
+	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
 	// Model 过滤：admin 走精确匹配（ModelFuzzy 默认 false，保持管理端语义）。
@@ -246,6 +247,7 @@ func (h *OpsHandler) ListRequestErrors(c *gin.Context) {
 	filter.Phase = strings.TrimSpace(c.Query("phase"))
 	filter.Owner = strings.TrimSpace(c.Query("error_owner"))
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
+	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
 	// Model 过滤：admin 走精确匹配（ModelFuzzy 默认 false，保持管理端语义）。
@@ -391,6 +393,7 @@ func (h *OpsHandler) ListRequestErrorUpstreamErrors(c *gin.Context) {
 	filter.IncludeRecoveredUpstream = true
 	filter.Owner = "provider"
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
+	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 
 	if platform := strings.TrimSpace(c.Query("platform")); platform != "" {
@@ -475,6 +478,7 @@ func (h *OpsHandler) ListUpstreamErrors(c *gin.Context) {
 	filter.IncludeRecoveredUpstream = true
 	filter.Owner = "provider"
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
+	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 
 	if platform := strings.TrimSpace(c.Query("platform")); platform != "" {
@@ -583,6 +587,7 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 	filter.Kind = strings.TrimSpace(c.Query("kind"))
 	filter.Platform = strings.TrimSpace(c.Query("platform"))
 	filter.Model = strings.TrimSpace(c.Query("model"))
+	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.Sort = strings.TrimSpace(c.Query("sort"))
@@ -733,6 +738,10 @@ func parseOpsTimeRange(c *gin.Context, defaultRange string) (time.Time, time.Tim
 		return start, end, nil
 	}
 
+	// 按 ID 查询时，省略时间参数表示查询当前仍保留的全部明细。
+	if strings.TrimSpace(c.Query("request_id")) != "" && c.Query("time_range") == "" {
+		return time.Unix(0, 0).UTC(), time.Now().UTC(), nil
+	}
 	// time_range fallback
 	tr := strings.TrimSpace(c.Query("time_range"))
 	if tr == "" {

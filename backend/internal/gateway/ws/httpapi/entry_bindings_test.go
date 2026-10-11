@@ -17,10 +17,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	"github.com/TokenFlux/TokenRouter/internal/billing/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/admission"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/httpapi/openaiattempt"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -233,4 +235,23 @@ func TestWSTurnPricing(t *testing.T) {
 	target.root.key.GroupID = &otherGroup
 	_, err := target.ResolveRouting(context.Background(), "priced-review", false)
 	require.ErrorIs(t, err, pricing.ErrModelPricingUnavailable)
+}
+
+// TestPrepareCompletionKeepsTurnIdentity 覆盖 HTTP 适配器把连接上下文误传给轮次结算的情形。
+func TestPrepareCompletionKeepsTurnIdentity(t *testing.T) {
+	root := telemetry.WithRequestCapture(context.WithValue(context.Background(), telemetry.RequestID, "connection"), telemetry.RequestRecord{RequestID: "connection", UserID: 2, APIKeyID: 1, StartedAt: time.Now(), State: "running"}, nil)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil).WithContext(root)
+	target := &openAIWSEntryTarget{
+		root:     &openAIWSEntryAdapter{bindings: Bindings{Common: openaiattempt.Bindings{Support: &openaiattempt.Support{}}}, c: c, key: &apikey.APIKey{ID: 1, UserID: 2, User: &identity.User{ID: 2}}},
+		provider: &gatewayprovider.ExecutionProvider{Record: provider.Record{ID: 3, Platform: "openai"}},
+	}
+	for _, id := range []string{"first-turn", "second-turn"} {
+		ctx := telemetry.WithChildRequest(root, telemetry.RequestRecord{RequestID: id, State: "running", StartedAt: time.Now()})
+		result := &gatewayws.ForwardResult{RequestID: "response-" + id, Model: "model", OpenAIWSMode: true}
+		input := target.PrepareCompletion(ctx, result, gatewayws.TurnCapture{Turn: 1, StartedAt: time.Now()}, "model", routing.GroupMappingResult{}, nil, false)
+		require.Equal(t, id, input.RequestID)
+		require.Equal(t, "response-"+id, input.BillingKey)
+	}
+	require.Equal(t, "connection", telemetry.RequestIDValue(c.Request.Context()))
 }

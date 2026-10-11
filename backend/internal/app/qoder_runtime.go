@@ -119,11 +119,11 @@ func (b *qoderRuntime) Select(ctx context.Context, request gateway.Request, excl
 				RequestPayloadHash: billing.HashUsageRequestPayload(request.Body), RequestBody: request.Body,
 				APIKeyService: b.Keys, PricingUsageFields: mapping.ToUsageFields(request.Model, result.UpstreamModel),
 			})
-			task := func(workerCtx context.Context) {
+			task := completion.WrapTaskContext(callCtx, func(workerCtx context.Context) {
 				if err := b.Recorder.Record(workerCtx, snapshot, false); err != nil {
 					logging.LegacyPrintf("handler.qoder_gateway", "record usage failed provider=%d: %v", snapshot.Provider.ID, err)
 				}
-			}
+			})
 			if b.Completions != nil {
 				b.Completions.Submit(task)
 				return

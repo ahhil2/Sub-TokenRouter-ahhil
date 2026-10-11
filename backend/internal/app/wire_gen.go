@@ -68,6 +68,11 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	if err != nil {
 		return nil, err
 	}
+	db, err := provideSQLDB(client)
+	if err != nil {
+		return nil, err
+	}
+	service := provideRequestLog(db, cfg, manager)
 	store := provideSettingsStore(client)
 	oAuthSettings := provideOAuthSettings(store, cfg)
 	calendar := provideCalendar(client)
@@ -79,19 +84,9 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	if err != nil {
 		return nil, err
 	}
-	db, err := provideSQLDB(client)
-	if err != nil {
-		return nil, err
-	}
 	groupStore := provideRoutingGroupStore(client, db)
-	remoteClient := provideModelCatalogRemoteClient(cfg)
-	service, err := provideModelCatalogService(cfg, remoteClient)
-	if err != nil {
-		return nil, err
-	}
 	snapshotCache := provideSchedulerCache(redisClient, cfg)
 	providerStore := provideProviderStore(client, db, snapshotCache)
-	modelList := provideRoutingModelList(service, providerStore, cfg)
 	pricingConfigStore := postgres.NewPricingConfigStore(db)
 	preAggregationSettingsService := providePreAggregationSettings(store, cfg)
 	keyStore := provideKeyStore(client, db, preAggregationSettingsService)
@@ -109,8 +104,13 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	apiKeyService := provideKeys(keyStore, userStore, groupStore, subscriptionStore, groupRateStore, apiKeyCache, cfg, eligibility, concurrencyService, teamRepository, calendar)
 	apiKeyAuthCacheInvalidator := provideKeyInvalidator(apiKeyService)
 	pricingConfigService := providePricingConfigService(pricingConfigStore, groupStore, apiKeyAuthCacheInvalidator)
-	requestableCatalogue := provideRequestableCatalogue(service, modelList, providerStore, pricingConfigService)
-	calculator := provideBillingCalculator(service, calendar)
+	requestableCatalogue := provideRequestableCatalogue(providerStore, pricingConfigService)
+	remoteClient := provideModelCatalogRemoteClient(cfg)
+	providerService, err := provideModelCatalogService(cfg, remoteClient)
+	if err != nil {
+		return nil, err
+	}
+	calculator := provideBillingCalculator(providerService, calendar)
 	priceResolver := provideBillingPriceResolver(pricingConfigService, calculator)
 	sessionLimitCache := provideSessionCache(redisClient, cfg)
 	rpmCache := rediscache3.NewRPMCache(redisClient)
@@ -118,7 +118,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	capacityService := provideGroupCapacity(providerStore, groupStore, concurrencyService, sessionLimitCache, rpmCache, quotaSettingsCache)
 	groupAvailabilityProbeRepository := postgres.NewGroupAvailabilityProbeRepository(db)
 	modelAttributeStore := postgres.NewModelAttributeStore(db)
-	modelAttributeService := provideModelAttributes(modelAttributeStore, service, apiKeyAuthCacheInvalidator)
+	modelAttributeService := provideModelAttributes(modelAttributeStore, providerService, apiKeyAuthCacheInvalidator)
 	marketplace := provideMarketplace(groupStore, store, requestableCatalogue, priceResolver, calculator, capacityService, groupAvailabilityProbeRepository, cfg, modelAttributeService)
 	dashboardAggregationRepository := provideUsageAggregationRepository(db, calendar)
 	dashboardStatsCache := provideUsageDashboardCache(redisClient, cfg)
@@ -317,7 +317,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	tlsFingerprintProfileHandler := provideEgressProfileHTTP(tlsFingerprintProfileService, tlsFingerprintCollectorService)
 	privacyService := provideProviderPrivacy(providerStore, proxyStore, privacyClientFactory, manager)
 	admin := provideProviderAdmin(providerStore, providerUsageStore, runtimeBlockState, privacyService, groupStore, proxyStore, tasks, transportClient, tlsProfiles)
-	groupAdmin := provideRoutingGroupAdmin(service, groupStore, providerStore, keyStore, apiKeyAuthCacheInvalidator, pricingConfigService, store, adminDefaults)
+	groupAdmin := provideRoutingGroupAdmin(providerService, groupStore, providerStore, keyStore, apiKeyAuthCacheInvalidator, pricingConfigService, store, adminDefaults)
 	diagnostics := provideProviderDiagnostics(admin, groupAdmin, concurrencyService, generic, compatible, appSchedulerSharedState)
 	diagnosticsHandler := provideSchedulerDiagnosticsHTTP(diagnostics)
 	tlsFingerprintRouterHandler := httpapi5.NewTLSFingerprintRouterHandler(tlsFingerprintRouterService)
@@ -348,7 +348,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	managedRefreshService := provideManagedRefresh(admin, privacyService, oAuthRefreshAPI, transportClient, tlsProfiles, claudeAuthorization, openAIAuthorization, geminiAuthorization, antigravityAuthorization, grokAuthorization, tokenCacheInvalidator)
 	recoveryService := provideProviderRecovery(appProviderHealthRuntime)
 	managementList := provideProviderManagementList(admin, ollamaCloudUsageService, concurrencyService, postgresStore, sessionLimitCache, rpmCache, quotaSettingsCache, appSchedulerSharedState, store, cfg)
-	adminCatalog := provideAdminModelCatalog(service)
+	adminCatalog := provideAdminModelCatalog(providerService)
 	tierManagement := provideProviderTier(admin, geminiAuthorization, manager)
 	claudeTokenSource := provideClaudeTokens(providerStore, accessTokenCache, claudeAuthorization, oAuthRefreshAPI)
 	antigravityTokenSource := provideAntigravityTokens(providerStore, accessTokenCache, antigravityAuthorization, oAuthRefreshAPI, tempUnschedCache)
@@ -401,7 +401,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	redactor := provideAuditRedactor()
 	auditLogService := provideAuditService(auditLogRepository, retentionSettings, redactor)
 	auditLogHandler := provideAuditHTTP(auditLogService, totpService)
-	pricingCatalog := providePricingCatalog(calculator, service)
+	pricingCatalog := providePricingCatalog(calculator, providerService)
 	pricingHandler := httpapi8.NewPricingHandler(pricingConfigService, pricingCatalog)
 	modelAttributeHandler := httpapi8.NewModelAttributeHandler(modelAttributeService)
 	settingsRegistry, err := provideSettingsParticipants(paymentRuntime, grantSettings, adminDefaults, adminSettingsRules, runtime)
@@ -464,7 +464,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	appGatewayBillingRates := provideGatewayBillingRates(groupRateStore, cfg)
 	alertDelivery := provideAlertDelivery(mailer, notificationEmailService)
 	balanceNotifyService := provideBalanceNotifications(alertDelivery, store, providerStore, tasks)
-	gatewayCompletionRecorders := ProvideGatewayCompletionRecorders(appGatewayBillingRates, calculator, priceResolver, settlementStore, usageLogRepository, pricingConfigService, eligibility, deferredService, balanceNotifyService, apiKeyService, providerStore, appProviderHealthRuntime, gatewayRuntimeSettings, tasks, cfg)
+	gatewayCompletionRecorders := ProvideGatewayCompletionRecorders(service, appGatewayBillingRates, calculator, priceResolver, settlementStore, usageLogRepository, pricingConfigService, eligibility, deferredService, balanceNotifyService, apiKeyService, providerStore, appProviderHealthRuntime, gatewayRuntimeSettings, tasks, cfg)
 	appQoderRequestActivity := provideQoderRequestActivity(manager, providerQoderRuntime)
 	qoderCompatibleHandler := provideQoderCompatibleHTTP(routePlanner, providerQoderRuntime, qoderRequestRefresh, concurrencyService, fundingAdmission, apiKeyService, errorPassthroughService, usageRecordWorkerPool, gatewayCompletionRecorders, appGatewayRequestActivity, appQoderRequestActivity, generic)
 	digestSessionStore := session.NewDigestSessionStore()
@@ -473,7 +473,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	antigravityExecutor := provideAntigravityExecutor(antigravity)
 	userMsgQueueCache := rediscache3.NewUserMsgQueueCache(redisClient)
 	userMessageQueueService := provideMessageQueue(userMsgQueueCache, rpmCache, cfg)
-	textattemptRuntime := provideMessageAttemptRuntime(retryCooldown, digestSessionStore, messagesExecutor, antigravityExecutor, geminiExecutor, fundingAdmission, apiKeyService, gatewayCompletionRecorders, appMessageHTTPBindings, errorPassthroughService, usageRecordWorkerPool, userMessageQueueService, cfg, appGatewayModelAvailability, generic, subscriptionService, gatewayCache)
+	textattemptRuntime := provideMessageAttemptRuntime(retryCooldown, digestSessionStore, messagesExecutor, antigravityExecutor, geminiExecutor, fundingAdmission, apiKeyService, gatewayCompletionRecorders, appMessageHTTPBindings, errorPassthroughService, usageRecordWorkerPool, userMessageQueueService, cfg, appGatewayModelAvailability, generic, subscriptionService, gatewayCache, priceResolver)
 	compatibleTextHandler := provideCompatibleTextHTTP(appMessageHTTPBindings, textattemptRuntime, appGatewayRequestActivity)
 	geminiNativeHandler := provideGeminiNativeHTTP(appMessageHTTPBindings, digestSessionStore, textattemptRuntime, appGatewayRequestActivity, generic)
 	openAIEncryptedLineage := provideOpenAIEncryptedLineage(openAIWSStateStore, compatible)
@@ -491,11 +491,12 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	openAIWebSocketExecutor := provideOpenAIWebSockets(runtime, cfg, openAIWSConnections, openAITextExecutor, promptpolicyService, compatible, openAIEncryptedLineage, responseImagePolicy, gatewayCache)
 	requestCredentialExecutor := provideRequestCredentialExecutor(requestCredentials)
 	responsesWSHandler := provideResponsesWSHTTP(openAIWebSocketExecutor, requestCredentialExecutor, fundingAdmission, apiKeyService, bindings, promptpolicyService, cyberBlocks, cfg, appGatewayRequestActivity, compatible, routePlanner, subscriptionService, priceResolver)
-	modelsHandler := provideModelsHTTP(service, requestableCatalogue, googleforwardGemini, appGatewayRequestActivity, gemini)
+	modelsHandler := provideModelsHTTP(providerService, requestableCatalogue, googleforwardGemini, appGatewayRequestActivity, gemini)
 	messagesHandler := provideMessagesHTTP(appMessageHTTPBindings, textattemptRuntime, appGatewayRequestActivity)
+	systemOneExecutor := provideSystemOneExecutor(cfg, transportClient, compiledHeaderFilter, upstreamHealth, priceResolver, appGatewayRequestActivity)
 	videoTasks := provideGrokVideoTasks(gatewayCache, cfg)
 	openAIImagesExecutor := provideOpenAIImages(openAITextExecutor, appGatewayRequestActivity)
-	mediaentryRuntime := provideMediaRuntime(openAIResponsesExecutor, requestCredentialExecutor, apiKeyService, fundingAdmission, bindings, openAIHTTPResources, grokQuotaService, cfg, grokExecutor, videoTasks, openAIAuxiliary, openAIImagesExecutor, routePlanner, gatewayCache)
+	mediaentryRuntime := provideMediaRuntime(openAIResponsesExecutor, requestCredentialExecutor, apiKeyService, fundingAdmission, systemOneExecutor, bindings, openAIHTTPResources, grokQuotaService, cfg, grokExecutor, videoTasks, openAIAuxiliary, openAIImagesExecutor, routePlanner, gatewayCache)
 	mediaHandler := provideMediaHTTP(mediaentryRuntime, appGatewayRequestActivity)
 	auxiliaryHandler := provideAuxiliaryHTTP(mediaentryRuntime, appGatewayRequestActivity)
 	openAILiveExecutor := provideLiveExecution(cfg, openAIAuxiliary, gatewayCache, concurrencyService, compatible, routePlanner, gatewayCompletionRecorders, tasks, manager, grokExecutor)
@@ -508,7 +509,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	batchImageQueue := provideBatchQueue(redisClient, cfg)
 	pricing := provideBatchPricing(priceResolver, groupRepository, pricingConfigService)
 	batchimageRegistry := provideBatchRegistry(cfg)
-	batchimagePublic := provideBatchPublic(service, batchImageRepository, providerStore, pricingConfigService, groupRepository, groupRateStore, batchImageQueue, pricing, funds, settlementStore, apiKeyAuthCacheInvalidator, cfg, batchimageRegistry)
+	batchimagePublic := provideBatchPublic(providerService, batchImageRepository, providerStore, pricingConfigService, groupRepository, groupRateStore, batchImageQueue, pricing, funds, settlementStore, apiKeyAuthCacheInvalidator, cfg, batchimageRegistry)
 	batchImageDownloadLimiter := provideBatchDownloadLimiter(redisClient, cfg)
 	download := provideBatchDownload(batchImageRepository, providerStore, batchImageDownloadLimiter, cfg, batchimageRegistry)
 	cleanup := provideBatchCleanup(batchImageRepository, providerStore, cfg, batchimageRegistry)
@@ -529,13 +530,13 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	adminAuthMiddleware := provideAdminAuth(appIdentityAuthGraph, userService, runtimeSettings, auditLogService)
 	v := provideAuditMiddleware(auditLogService, redactor)
 	stepUpAuthMiddleware := provideStepUpAuth(totpService, userService, runtimeSettings)
-	routerRuntime, err := provideRouterRuntime(publicService, pageHandler, backendMode, store, redisClient, manager, cfg, appHttpRouteMount, panelSettings, opsService, jwtAuthMiddleware, adminAuthMiddleware, v, stepUpAuthMiddleware)
+	routerRuntime, err := provideRouterRuntime(service, publicService, pageHandler, backendMode, store, redisClient, manager, cfg, appHttpRouteMount, panelSettings, opsService, jwtAuthMiddleware, adminAuthMiddleware, v, stepUpAuthMiddleware)
 	if err != nil {
 		return nil, err
 	}
 	engine := server.ProvideRouter(options, routerRuntime)
 	httpServer := server.ProvideHTTPServer(options, engine)
-	appModelCatalogRuntimeReady := provideModelCatalogRuntime(service, manager)
+	appModelCatalogRuntimeReady := provideModelCatalogRuntime(providerService, manager)
 	appSettingsRuntimeReady := provideSettingsRuntime(manager, gatewayRuntimeSettings, forwardedSettings)
 	appAuthRuntimeReady := provideAuthRuntime(apiKeyService, errorPassthroughService, claudeAuthorization, openAIAuthorization, geminiAuthorization, antigravityAuthorization, qoderAuthorization, qoderTokenProvider, grokAuthorization, tlsFingerprintProfileService, tlsFingerprintRouterService, manager)
 	expiryService := provideProviderExpiry(providerStore)
@@ -553,11 +554,11 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	appOpsRuntimeReady := provideOpsRuntime(opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, manager, dashboardAggregationService)
 	appQueuesRuntimeReady := provideQueuesRuntime(emailQueueService, eligibility, usageRecordWorkerPool, ollamaCloudUsageService, auditLogService, grokQuotaService, openAIQuotaService, manager, deferredService, contentModerationService)
 	appBatchCleanupRuntime := provideBatchCleanupRuntime(cleanup, cfg)
-	batchimageRuntime := provideBatchRuntime(batchImageRepository, providerStore, batchImageQueue, funds, usageLogRepository, pricing, apiKeyAuthCacheInvalidator, cfg, batchimageRegistry)
+	batchimageRuntime := provideBatchRuntime(service, batchImageRepository, providerStore, batchImageQueue, funds, usageLogRepository, pricing, apiKeyAuthCacheInvalidator, cfg, batchimageRegistry)
 	cnUsageMonitor := provideCNUsageMonitor(providerStore, upstreamUsageService, cfg, leaderLock, db)
 	appJobsRuntimeReady := provideJobsRuntime(appBatchCleanupRuntime, batchimageRuntime, creativeWorkerRuntime, cnUsageMonitor, manager)
 	orderExpiry := providePaymentExpiry(paymentRuntime, leaderLock, db)
-	appCoreRuntimeReady := provideCoreRuntime(runtimeBlockState, cfg, authCacheInvalidationWorker, snapshotService, modelList, appSchedulerSharedState, usageCleanupService, idempotencyCleanupService, orderExpiry, tlsFingerprintCollectorService, manager, wheel, digestSessionStore, usageLogRepository, tasks, transportClient, appGatewayRequestActivity, appGatewayBillingRates)
+	appCoreRuntimeReady := provideCoreRuntime(authCacheInvalidationWorker, snapshotService, usageCleanupService, idempotencyCleanupService, orderExpiry, tlsFingerprintCollectorService, manager, wheel, digestSessionStore, usageLogRepository, tasks, transportClient, appGatewayBillingRates)
 	appIdempotencyHTTPReady := provideIdempotencyHTTP(idempotencyCoordinator, managementHandler, archiveHandler, codexImportHandler, apiKeyHandler, adminRedeemHandler, adminSubscriptionHandler, proxyHandler, adminUserHandler, groupHandler, systemHandler, adminUsageHandler)
 	appRuntimeReady := provideRuntime(appModelCatalogRuntimeReady, appSettingsRuntimeReady, appAuthRuntimeReady, appMaintenanceRuntimeReady, appOpsRuntimeReady, appQueuesRuntimeReady, appJobsRuntimeReady, appCoreRuntimeReady, appIdempotencyHTTPReady, promptpolicyService)
 	application := provideApplication(httpServer, manager, appRuntimeReady, opsService, errorLogQueue)

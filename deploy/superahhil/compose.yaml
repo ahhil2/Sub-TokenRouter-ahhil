@@ -2,12 +2,12 @@ name: superahhil
 
 services:
   tokenrouter:
-    image: local/superahhil:${IMAGE_TAG:-0.2.7-custom}
+    image: local/superahhil:${IMAGE_TAG:-0.3.0-custom}
     build:
       context: ../..
       dockerfile: Dockerfile
       args:
-        VERSION: ${APP_VERSION:-0.2.7-superahhil}
+        VERSION: ${APP_VERSION:-0.3.0-superahhil}
         COMMIT: ${APP_COMMIT:-local}
         DATE: ${BUILD_DATE:-}
     restart: unless-stopped

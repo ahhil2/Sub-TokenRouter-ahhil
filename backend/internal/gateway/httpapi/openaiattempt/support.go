@@ -17,6 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/moderationflow"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	gatewaysession "github.com/TokenFlux/TokenRouter/internal/gateway/session"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
@@ -256,7 +257,7 @@ func (h *Support) RecordCyberPolicyIfMarked(c *gin.Context, apiKey *apikey.APIKe
 		APIKey:             apiKey,
 		Provider:           gatewayprovider.ExecutionCompletionRecord(provider),
 		Subscription:       subscription,
-		RequestID:          c.Writer.Header().Get("X-Request-Id"),
+		RequestID:          telemetry.RequestIDValue(c.Request.Context()),
 		Model:              model,
 		Stream:             requestIsStream(c),
 		InputTokens:        mark.UpstreamInTok,

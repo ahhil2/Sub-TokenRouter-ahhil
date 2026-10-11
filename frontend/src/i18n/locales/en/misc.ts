@@ -95,6 +95,7 @@ marketplace: {
       openai_responses: 'Responses',
       openai_chat_completions: 'Chat Completions',
       gemini_generate_content: 'GenerateContent',
+      systemone: 'SystemOne',
       openai_embeddings: 'Embeddings',
       openai_images_generations: 'Image generation',
       openai_images_edits: 'Image editing',
@@ -287,8 +288,6 @@ marketplace: {
     title: 'My Subscriptions',
     description: 'View your subscription plans and usage',
     noActiveSubscriptions: 'No Active Subscriptions',
-    noActiveSubscriptionsDesc:
-      "You don't have any active subscriptions. Contact administrator to get one.",
     failedToLoad: 'Failed to load subscriptions',
     status: {
       active: 'Active',

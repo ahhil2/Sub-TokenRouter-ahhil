@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
@@ -41,14 +40,14 @@ func ClientRequestID() gin.HandlerFunc {
 		// 已存在的 context 值来自受信任的内部调用，优先用作内部 ID。
 		internalID, valid := normalizeCorrelationIDFromContext(ctx, telemetry.ClientRequestID)
 		if !valid {
-			internalID = uuid.NewString()
+			internalID = telemetry.NewRequestID()
 		}
 		parentID, _ := normalizeCorrelationID(c.GetHeader(clientRequestIDHeader))
 		ctx = context.WithValue(ctx, telemetry.ClientRequestID, internalID)
 		if parentID != "" {
 			ctx = context.WithValue(ctx, telemetry.ParentClientRequestID, parentID)
 		}
-		requestLogger := logging.FromContext(ctx).With(zap.String("client_request_id", internalID))
+		requestLogger := logging.FromContext(ctx).With(zap.String("request_id", internalID))
 		if parentID != "" {
 			requestLogger = requestLogger.With(zap.String("parent_client_request_id", parentID))
 		}

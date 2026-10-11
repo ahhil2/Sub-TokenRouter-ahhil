@@ -9,6 +9,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
@@ -79,7 +80,8 @@ func (p livePorts) RecordZeroUsage(ctx context.Context, record *session.LiveCall
 		TeamID:            liveOptionalID(record.TeamID),
 		APIKeyID:          record.APIKeyID,
 		ProviderID:        record.ProviderID,
-		RequestID:         record.CallHash,
+		RequestID:         telemetry.StableRequestID("live/" + record.CallHash),
+		BillingKey:        record.CallHash,
 		Model:             record.Model,
 		RequestedModel:    requeststate.FirstNonEmpty(record.RequestedModel, record.Model),
 		UpstreamModel:     liveOptionalString(record.UpstreamModel),

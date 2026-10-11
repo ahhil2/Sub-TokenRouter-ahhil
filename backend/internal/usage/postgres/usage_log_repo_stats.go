@@ -744,6 +744,10 @@ func (r *Store) getStatsWithFilters(ctx context.Context, filters UsageLogFilters
 	if filters.PersonalOnly {
 		conditions = append(conditions, "team_id IS NULL")
 	}
+	if id := strings.TrimSpace(filters.RequestID); id != "" {
+		conditions = append(conditions, usageRequestIDCondition("", len(args)+1))
+		args = append(args, id)
+	}
 	conditions, args = appendUsageLogModelWhereCondition(conditions, args, filters.Model, filters.ModelFilterSource)
 	conditions, args = appendRequestTypeOrStreamWhereCondition(conditions, args, filters.RequestType, filters.Stream)
 	conditions, args = appendNativeCompactionV2WhereCondition(conditions, args, filters.NativeCompactionV2, "")
@@ -823,7 +827,7 @@ func (r *Store) getStatsWithFilters(ctx context.Context, filters UsageLogFilters
 		if filters.EndpointSource != "" && filters.EndpointSource != "inbound" {
 			return
 		}
-		res, err := r.getEndpointStatsByColumnWithFilters(c, "inbound_endpoint", start, end, filters.UserID, filters.APIKeyID, filters.ProviderID, filters.GroupID, filters.TeamID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.PersonalOnly, filters.IncludeOwnedTeam, filters.NativeCompactionV2)
+		res, err := r.getEndpointStatsByColumnWithFilters(c, "inbound_endpoint", start, end, filters.UserID, filters.APIKeyID, filters.ProviderID, filters.GroupID, filters.TeamID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.PersonalOnly, filters.IncludeOwnedTeam, filters.NativeCompactionV2, filters.RequestID)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				logger.LegacyPrintf("repository.usage_log", "GetEndpointStatsWithFilters failed in GetStatsWithFilters: %v", err)
@@ -836,7 +840,7 @@ func (r *Store) getStatsWithFilters(ctx context.Context, filters UsageLogFilters
 		if filters.EndpointSource != "" && filters.EndpointSource != "upstream" {
 			return
 		}
-		res, err := r.getEndpointStatsByColumnWithFilters(c, "upstream_endpoint", start, end, filters.UserID, filters.APIKeyID, filters.ProviderID, filters.GroupID, filters.TeamID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.PersonalOnly, filters.IncludeOwnedTeam, filters.NativeCompactionV2)
+		res, err := r.getEndpointStatsByColumnWithFilters(c, "upstream_endpoint", start, end, filters.UserID, filters.APIKeyID, filters.ProviderID, filters.GroupID, filters.TeamID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.PersonalOnly, filters.IncludeOwnedTeam, filters.NativeCompactionV2, filters.RequestID)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				logger.LegacyPrintf("repository.usage_log", "GetUpstreamEndpointStatsWithFilters failed in GetStatsWithFilters: %v", err)
@@ -849,7 +853,7 @@ func (r *Store) getStatsWithFilters(ctx context.Context, filters UsageLogFilters
 		if filters.EndpointSource != "" && filters.EndpointSource != "path" {
 			return
 		}
-		res, err := r.getEndpointPathStatsWithFilters(c, start, end, filters.UserID, filters.APIKeyID, filters.ProviderID, filters.GroupID, filters.TeamID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.PersonalOnly, filters.IncludeOwnedTeam, filters.NativeCompactionV2)
+		res, err := r.getEndpointPathStatsWithFilters(c, start, end, filters.UserID, filters.APIKeyID, filters.ProviderID, filters.GroupID, filters.TeamID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.PersonalOnly, filters.IncludeOwnedTeam, filters.NativeCompactionV2, filters.RequestID)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				logger.LegacyPrintf("repository.usage_log", "getEndpointPathStatsWithFilters failed in GetStatsWithFilters: %v", err)
@@ -892,10 +896,16 @@ func (r *Store) getStatsWithFilters(ctx context.Context, filters UsageLogFilters
 	return stats, nil
 }
 
-func (r *Store) getEndpointStatsByColumnWithFilters(ctx context.Context, endpointColumn string, startTime, endTime time.Time, userID, apiKeyID, providerID, groupID, teamID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string, personalOnly bool, includeOwnedTeam bool, nativeCompactionV2 *bool) (results []EndpointStat, err error) {
+func (r *Store) getEndpointStatsByColumnWithFilters(ctx context.Context, endpointColumn string, startTime, endTime time.Time, userID, apiKeyID, providerID, groupID, teamID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string, personalOnly bool, includeOwnedTeam bool, nativeCompactionV2 *bool, requestIDs ...string) (results []EndpointStat, err error) {
+	requestID := ""
+	if len(requestIDs) > 0 {
+		requestID = strings.TrimSpace(requestIDs[0])
+	}
+
 	if endpointColumn == "inbound_endpoint" {
 		analyticsFilters := UsageLogFilters{
-			UserID: userID, APIKeyID: apiKeyID, ProviderID: providerID, GroupID: groupID,
+			RequestID: requestID,
+			UserID:    userID, APIKeyID: apiKeyID, ProviderID: providerID, GroupID: groupID,
 			TeamID: teamID, Model: model, ModelFilterSource: modelSource,
 			RequestType: requestType, Stream: stream, BillingType: billingType,
 			BillingMode: billingMode, PersonalOnly: personalOnly, IncludeOwnedTeam: includeOwnedTeam,
@@ -923,6 +933,11 @@ func (r *Store) getEndpointStatsByColumnWithFilters(ctx context.Context, endpoin
 		FROM %s
 		WHERE created_at >= $1 AND created_at < $2
 	`, endpointColumn, source)
+
+	if requestID != "" {
+		query += " AND " + usageRequestIDCondition("", len(args)+1)
+		args = append(args, requestID)
+	}
 
 	if scopeCondition != "" {
 		query += " AND " + scopeCondition
@@ -981,7 +996,12 @@ func (r *Store) getEndpointStatsByColumnWithFilters(ctx context.Context, endpoin
 	return results, nil
 }
 
-func (r *Store) getEndpointPathStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, providerID, groupID, teamID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string, personalOnly bool, includeOwnedTeam bool, nativeCompactionV2 *bool) (results []EndpointStat, err error) {
+func (r *Store) getEndpointPathStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, providerID, groupID, teamID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string, personalOnly bool, includeOwnedTeam bool, nativeCompactionV2 *bool, requestIDs ...string) (results []EndpointStat, err error) {
+	requestID := ""
+	if len(requestIDs) > 0 {
+		requestID = strings.TrimSpace(requestIDs[0])
+	}
+
 	// 路径统计与单端点统计保持同一费用口径。
 	args := []any{startTime, endTime}
 	source, scopeCondition, args, scopeErr := r.buildUsageLogScopeSource(ctx, args, userID, includeOwnedTeam, "")
@@ -1002,6 +1022,11 @@ func (r *Store) getEndpointPathStatsWithFilters(ctx context.Context, startTime, 
 		FROM %s
 		WHERE created_at >= $1 AND created_at < $2
 	`, source)
+
+	if requestID != "" {
+		query += " AND " + usageRequestIDCondition("", len(args)+1)
+		args = append(args, requestID)
+	}
 
 	if scopeCondition != "" {
 		query += " AND " + scopeCondition

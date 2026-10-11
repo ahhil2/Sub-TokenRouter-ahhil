@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
@@ -281,7 +282,8 @@ func (s *Settlement) RecordUsageLog(ctx context.Context, job *BatchImageJob, act
 		APIKeyID:               *job.APIKeyID,
 		ProviderID:             *job.ProviderID,
 		Platform:               BatchImageProviderPlatform(job.Platform),
-		RequestID:              strings.TrimSpace(requestID),
+		RequestID:              telemetry.StableRequestID(BatchImageCaptureRequestID(job.BatchID)),
+		BillingKey:             strings.TrimSpace(requestID),
 		Model:                  internalModel,
 		RequestedModel:         requestedModel,
 		UpstreamModel:          optionalTrimmedStringPtr(job.Model),

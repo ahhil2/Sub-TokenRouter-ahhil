@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -18,6 +19,84 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
+
+// TestUsageRequestIDConditionUsesIndexes 在稀疏命中和外部 ID 冲突下检查结果与执行计划。
+func TestUsageRequestIDConditionUsesIndexes(t *testing.T) {
+	ctx := t.Context()
+	tx, err := integrationDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	// 临时表使用生产索引，各测试的历史记录不会进入候选集合。
+	_, err = tx.ExecContext(ctx, `
+CREATE TEMP TABLE usage_logs (LIKE public.usage_logs INCLUDING ALL) ON COMMIT DROP;
+CREATE TEMP TABLE request_records (LIKE public.request_records INCLUDING ALL) ON COMMIT DROP;
+CREATE TEMP TABLE ops_error_logs (LIKE public.ops_error_logs INCLUDING ALL) ON COMMIT DROP;
+CREATE TEMP TABLE ops_system_logs (LIKE public.ops_system_logs INCLUDING ALL) ON COMMIT DROP;
+INSERT INTO usage_logs(user_id,billing_user_id,api_key_id,provider_id,request_id,upstream_request_id,model)
+SELECT 1,1,1,1,'request-'||g,'upstream-'||g,'model' FROM generate_series(1,20000) g;
+UPDATE usage_logs SET upstream_request_id='request-1' WHERE request_id='request-2';
+INSERT INTO usage_logs(user_id,billing_user_id,api_key_id,provider_id,request_id,upstream_request_id,model)
+VALUES(1,1,1,1,NULL,'legacy-upstream','model');
+INSERT INTO request_records(request_id,started_at,updated_at,revision,record)
+VALUES('request-1',now(),now(),1,'{"request_id":"request-1","state":"completed"}');
+ANALYZE usage_logs;
+ANALYZE request_records;
+ANALYZE ops_error_logs;
+ANALYZE ops_system_logs;`)
+	require.NoError(t, err)
+	for _, test := range []struct {
+		search string
+		want   string
+	}{
+		{"request-1", "request-1"},
+		{"upstream-3", "request-3"},
+		{"legacy-upstream", "legacy"},
+		{"missing", ""},
+	} {
+		t.Run(test.search, func(t *testing.T) {
+			query := "SELECT COALESCE(ul.request_id,'legacy') FROM usage_logs ul WHERE ul.api_key_id=$1 AND " + usageRequestIDCondition("ul.", 2)
+			rows, err := tx.QueryContext(ctx, query, 1, test.search)
+			require.NoError(t, err)
+			var got []string
+			for rows.Next() {
+				var id string
+				require.NoError(t, rows.Scan(&id))
+				got = append(got, id)
+			}
+			require.NoError(t, rows.Err())
+			require.NoError(t, rows.Close())
+			if test.want == "" {
+				require.Empty(t, got)
+			} else {
+				require.Equal(t, []string{test.want}, got)
+			}
+			var raw []byte
+			require.NoError(t, tx.QueryRowContext(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+query, 1, test.search).Scan(&raw))
+			type planNode struct {
+				Type     string     `json:"Node Type"`
+				Relation string     `json:"Relation Name"`
+				Plans    []planNode `json:"Plans"`
+			}
+			var plans []struct {
+				Plan planNode `json:"Plan"`
+			}
+			require.NoError(t, json.Unmarshal(raw, &plans))
+			seen := false
+			var inspect func(planNode)
+			inspect = func(node planNode) {
+				if node.Relation == "usage_logs" {
+					seen = true
+					require.NotEqual(t, "Seq Scan", node.Type, "%s", raw)
+				}
+				for _, child := range node.Plans {
+					inspect(child)
+				}
+			}
+			inspect(plans[0].Plan)
+			require.True(t, seen)
+		})
+	}
+}
 
 // TestResponseModelMigrationPreservesHistory 在事务内还原旧列结构，确认增量迁移保留历史空值。
 func (s *UsageLogRepoSuite) TestResponseModelMigrationPreservesHistory() {

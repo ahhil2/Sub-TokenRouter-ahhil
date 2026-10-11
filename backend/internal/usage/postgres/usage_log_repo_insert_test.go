@@ -154,7 +154,7 @@ func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 
-	idx := len(prepared.args) - 8
+	idx := len(prepared.args) - 9
 	arg, ok := prepared.args[idx].(sql.NullString)
 	require.True(t, ok, "upstream_request_id arg should be sql.NullString, got %T", prepared.args[idx])
 	require.True(t, arg.Valid)
@@ -262,6 +262,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			"unknown",        // 平台快照
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
+			nil, // billing_key
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
 
@@ -363,6 +364,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			"unknown",        // 平台快照
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
+			nil, // billing_key
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
 
@@ -390,6 +392,73 @@ func TestBuildUsageLogBestEffortInsertQuery_IncludesRequestedModelColumn(t *test
 	require.Contains(t, query, "\n\t\t\trequest_id,\n\t\t\tmodel,\n\t\t\trequested_model,\n\t\t\tupstream_model,")
 	require.Len(t, args, len(prepared.args))
 	require.Equal(t, prepared.args[5], args[5])
+}
+
+func TestUsageLogBatchInsertShape_ColumnsAndArguments(t *testing.T) {
+	prepared := make([]usageLogInsertPrepared, 2)
+	keys := []string{"first", "second"}
+	preparedByKey := make(map[string]usageLogInsertPrepared, len(keys))
+	for i, key := range keys {
+		prepared[i] = prepareUsageLogInsert(&usage.UsageLog{
+			UserID:    int64(i + 1),
+			APIKeyID:  int64(i + 2),
+			RequestID: key,
+			Model:     "gpt-5",
+			CreatedAt: time.Date(2026, 10, 11, 0, i, 0, 0, time.UTC),
+		})
+		preparedByKey[key] = prepared[i]
+	}
+	batchQuery, batchArgs := buildUsageLogBatchInsertQuery(keys, preparedByKey)
+	bestEffortQuery, bestEffortArgs := buildUsageLogBestEffortInsertQuery(prepared)
+	inputShape := regexp.MustCompile(`(?s)WITH input \((.*?)\) AS \(VALUES (.*?)\n\s*\)`)
+	insertShape := regexp.MustCompile(`(?s)INSERT INTO usage_logs \((.*?)\)\s*SELECT(.*?)FROM input`)
+	placeholderShape := regexp.MustCompile(`\$(\d+)(?:::(\w+))?`)
+	normalizeColumns := func(columns string) string {
+		return strings.Join(strings.Fields(columns), "")
+	}
+	wantColumns := normalizeColumns(usageLogInsertColumns)
+
+	for _, tt := range []struct {
+		name       string
+		query      string
+		args       []any
+		inputIndex bool
+	}{
+		{name: "batch", query: batchQuery, args: batchArgs, inputIndex: true},
+		{name: "best-effort", query: bestEffortQuery, args: bestEffortArgs},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			input := inputShape.FindStringSubmatch(tt.query)
+			require.Len(t, input, 3)
+			inputColumns := wantColumns
+			if tt.inputIndex {
+				inputColumns = "input_idx," + inputColumns
+			}
+			require.Equal(t, inputColumns, normalizeColumns(input[1]))
+			insert := insertShape.FindStringSubmatch(tt.query)
+			require.Len(t, insert, 3)
+			require.Equal(t, wantColumns, normalizeColumns(insert[1]))
+			require.Equal(t, wantColumns, normalizeColumns(insert[2]))
+
+			var wantArgs []any
+			var wantTypes []string
+			for i, row := range prepared {
+				if tt.inputIndex {
+					wantArgs = append(wantArgs, i)
+					wantTypes = append(wantTypes, "")
+				}
+				wantArgs = append(wantArgs, row.args...)
+				wantTypes = append(wantTypes, usageLogInsertArgTypes[:]...)
+			}
+			require.Equal(t, wantArgs, tt.args)
+			placeholders := placeholderShape.FindAllStringSubmatch(input[2], -1)
+			require.Len(t, placeholders, len(wantArgs))
+			for i, placeholder := range placeholders {
+				require.Equal(t, strconv.Itoa(i+1), placeholder[1])
+				require.Equal(t, wantTypes[i], placeholder[2])
+			}
+		})
+	}
 }
 
 func TestExecUsageLogInsertNoResult_PersistsRequestedModel(t *testing.T) {
@@ -476,14 +545,14 @@ func TestBuildUsageLogBatchInsertQuery_UsesConflictDoNothing(t *testing.T) {
 		usageLogBatchKey(log.RequestID, log.APIKeyID): prepared,
 	})
 
-	require.Contains(t, query, "ON CONFLICT (request_id, api_key_id) DO NOTHING")
+	require.Contains(t, query, "ON CONFLICT DO NOTHING")
 	require.NotContains(t, strings.ToUpper(query), "DO UPDATE")
 }
 
 // TestPrepareUsageLogInsert_SessionIDArgWiring 检查 session_id 在参数切片、类型表
 // 和 INSERT 列表中的位置。字段扩展时追加在末尾。
 func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
-	require.Len(t, usageLogInsertArgTypes, 68, "arg-type table must include upstream request ID and compaction flag")
+	require.Len(t, usageLogInsertArgTypes, 69, "arg-type table must include billing key")
 
 	sessionID := "sess-persisted-123"
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(&sessionID))
@@ -492,19 +561,19 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 		"prepared args must match the arg-type table length")
 
 	// session_id 位于 created_at 之前，字段扩展时按顺序追加在末尾。
-	sessionArg := prepared.args[len(prepared.args)-7]
+	sessionArg := prepared.args[len(prepared.args)-8]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
 	require.True(t, ns.Valid)
 	require.Equal(t, sessionID, ns.String)
 
-	require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-7],
+	require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-8],
 		"session_id arg type must be text")
-	require.Equal(t, "timestamptz", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-6],
+	require.Equal(t, "timestamptz", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-7],
 		"created_at arg type must remain timestamptz")
-	require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-5],
+	require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-6],
 		"requested reasoning effort arg type must be text")
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-4],
+	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-5],
 		"native compaction arg type must be boolean")
 }
 
@@ -512,14 +581,14 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 // SQL NULL。
 func TestPrepareUsageLogInsert_SessionIDNullWhenAbsent(t *testing.T) {
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(nil))
-	sessionArg := prepared.args[len(prepared.args)-7]
+	sessionArg := prepared.args[len(prepared.args)-8]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
 	require.False(t, ns.Valid, "absent session id must be NULL, not empty string")
 
 	empty := ""
 	preparedEmpty := prepareUsageLogInsert(newSessionIDUsageLog(&empty))
-	nsEmpty := testassert.MustType[sql.NullString](preparedEmpty.args[len(preparedEmpty.args)-7])
+	nsEmpty := testassert.MustType[sql.NullString](preparedEmpty.args[len(preparedEmpty.args)-8])
 	require.False(t, nsEmpty.Valid, "empty session id must also be NULL")
 }
 
@@ -558,7 +627,7 @@ func TestPrepareUsageLogInsert_RequestedReasoningEffortArgWiring(t *testing.T) {
 		UserID: 1, APIKeyID: 2, ProviderID: 3, RequestID: "req-effort", Model: "gpt-5",
 		RequestedReasoningEffort: &requested,
 	})
-	value, ok := prepared.args[len(prepared.args)-5].(sql.NullString)
+	value, ok := prepared.args[len(prepared.args)-6].(sql.NullString)
 	require.True(t, ok)
 	require.True(t, value.Valid)
 	require.Equal(t, requested, value.String)

@@ -56,8 +56,9 @@ type AuditLog struct {
 
 // AuditLogFilter 审计日志列表查询条件。
 type AuditLogFilter struct {
-	Page     int
-	PageSize int
+	RequestID string
+	Page      int
+	PageSize  int
 
 	StartTime   *time.Time
 	EndTime     *time.Time

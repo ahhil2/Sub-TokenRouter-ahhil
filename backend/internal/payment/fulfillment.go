@@ -86,15 +86,17 @@ func (s *Fulfillment) FindPaymentNotificationOrder(ctx context.Context, orderID 
 	return nil, fmt.Errorf("%w: out_trade_no=%s", ErrOrderNotFound, orderID)
 }
 
+// ParseLegacyPaymentOrderID 在商户订单号查询未命中时，从早期 sub2_ 载荷中解析本地订单 ID。
 func ParseLegacyPaymentOrderID(orderID string, notFound bool) (int64, bool) {
+	const legacyOrderIDPrefix = "sub2_"
 	if !notFound {
 		return 0, false
 	}
 	orderID = strings.TrimSpace(orderID)
-	if !strings.HasPrefix(orderID, OrderIDPrefix) {
+	if !strings.HasPrefix(orderID, legacyOrderIDPrefix) {
 		return 0, false
 	}
-	trimmed := strings.TrimPrefix(orderID, OrderIDPrefix)
+	trimmed := strings.TrimPrefix(orderID, legacyOrderIDPrefix)
 	if trimmed == "" || trimmed == orderID {
 		return 0, false
 	}

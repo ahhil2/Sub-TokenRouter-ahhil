@@ -59,7 +59,8 @@ func TestCreativeSucceedRunIdempotentSettlement(t *testing.T) {
 	require.Equal(t, 1, billing.captureN)
 	require.Equal(t, []string{"creative_capture:" + runID}, billing.captureIDs)
 	require.Len(t, usageRepo.logs, 1)
-	require.Equal(t, "creative_settle:"+runID, usageRepo.logs[0].RequestID)
+	require.Len(t, usageRepo.logs[0].RequestID, 36)
+	require.Equal(t, "creative_settle:"+runID, usageRepo.logs[0].BillingKey)
 	require.Equal(t, "image", stringValue(usageRepo.logs[0].BillingMode))
 	require.Equal(t, 1, usageRepo.logs[0].ImageCount)
 	// 输出行保持一条 succeeded，重复结算不产生重复输出。

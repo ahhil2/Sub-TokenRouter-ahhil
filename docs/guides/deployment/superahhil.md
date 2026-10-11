@@ -4,7 +4,7 @@
 
 ## 来源与定制
 
-上游是 [TokenFlux/TokenRouter](https://github.com/TokenFlux/TokenRouter) `v0.2.7`，提交 `3460848ba293442910b5a292abd6f3e32161189f`。TokenRouter 基于 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) 开发。上游提交历史和 `LICENSE` 随源码保存。
+上游是 [TokenFlux/TokenRouter](https://github.com/TokenFlux/TokenRouter) `v0.3.0`，提交 `974fd8165880f273c580aeb60e10206c0e0e1bc1`。TokenRouter 基于 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) 开发。上游提交历史和 `LICENSE` 随源码保存。
 
 二次开发包含兑换码购买入口、站长私信和 OpenAI Client Class，后两项分别见[私信领域文档](../../domains/site_messages.md)和[网关策略](../../domains/gateway_policy_controls.md)。私信迁移是 `backend/migrations/293_site_messages.sql`，启动时由应用执行。已执行的迁移文件和编号需要保持稳定，后续结构变更使用新的迁移文件。
 
@@ -64,6 +64,8 @@ sudo systemctl reload caddy
 
 ## 已有部署升级
 
+`v0.3.0` 的四个上游迁移在本 fork 中编号为 294 到 297。已上线的 `293_site_messages.sql` 保持文件名和内容，迁移执行器及集成测试使用本 fork 的编号。升级时使用本仓库构建的镜像，让同一实例持续使用这一组迁移文件。
+
 新环境模板会创建自己的数据目录。已有生产服务应继续使用当前 Compose 项目、挂载目录、数据库凭据和安全密钥。直接启动新模板会得到一个新实例。
 
 升级前先在源码目录构建带独立版本标签的镜像，再对生产数据库和应用数据做备份。核对[数据库迁移和恢复要求](../../operations/deployment_and_migrations.md)后，在生产 Compose 中更新应用的 `image`，重建应用服务。PostgreSQL、Redis 和 Caddy 按各自的升级计划维护。回退镜像前先判断数据库迁移是否兼容，必要时恢复配套备份。
@@ -75,10 +77,10 @@ sudo systemctl reload caddy
 ```bash
 git remote add upstream https://github.com/TokenFlux/TokenRouter.git
 git fetch upstream
-git diff v0.2.7 -- backend frontend
+git diff v0.3.0 -- backend frontend
 make hooks
 ```
 
-本地已有 `upstream` 时跳过添加。服务器整理的检出带有本地 `v0.2.7` 标签，其他检出可执行 `git fetch upstream tag v0.2.7` 获取基线。先阅读根目录 `AGENTS.md` 和[开发流程](../../operations/development_workflow.md)，再按改动范围运行测试。合并新上游前检查迁移编号、调度策略和前端设置是否冲突。CI 配置随仓库保存，推送后在 Actions 中查看实际检查结果。
+本地已有 `upstream` 时跳过添加。服务器整理的检出带有本地 `v0.3.0` 标签，其他检出可执行 `git fetch upstream tag v0.3.0` 获取基线。先阅读根目录 `AGENTS.md` 和[开发流程](../../operations/development_workflow.md)，再按改动范围运行测试。合并新上游前检查迁移编号、调度策略和前端设置是否冲突。CI 配置随仓库保存，推送后在 Actions 中查看实际检查结果。
 
 数据库、用户内容、管理员凭据和服务密钥通过独立备份恢复。Git 仓库用于保存源码和配置样例。

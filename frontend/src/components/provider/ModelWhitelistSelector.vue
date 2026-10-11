@@ -19,7 +19,7 @@
             <button
               type="button"
               @click.stop="removeModel(model)"
-              class="shrink-0 rounded-full hover:bg-gray-200 dark:hover:bg-dark-500"
+              class="shrink-0 rounded-full hover:bg-gray-200 dark:hover:bg-dark-700"
             >
               <Icon name="x" size="xs" class="h-3.5 w-3.5" :stroke-width="2" />
             </button>
@@ -50,7 +50,7 @@
               v-for="model in filteredModels"
               :key="model.value"
               data-testid="model-option"
-              class="group flex items-center hover:bg-gray-100 dark:hover:bg-dark-600"
+              class="group flex items-center hover:bg-gray-100 dark:hover:bg-dark-800"
             >
               <button
                 type="button"
@@ -62,7 +62,7 @@
                   :class="[
                     'flex h-4 w-4 shrink-0 items-center justify-center rounded-compact border',
                     modelValue.includes(model.value)
-                      ? 'border-primary-500 bg-primary-500 text-white'
+                      ? 'border-primary-700 bg-primary-700 text-white dark:border-primary-600 dark:bg-primary-600'
                       : 'border-gray-300 dark:border-dark-500'
                   ]"
                 >
@@ -80,7 +80,7 @@
               <button
                 type="button"
                 data-testid="copy-model-id"
-                class="mr-2 shrink-0 rounded-compact p-1.5 text-gray-400 opacity-70 transition-colors hover:bg-gray-200 hover:text-primary-600 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/10 group-hover:opacity-100 dark:text-gray-500 dark:hover:bg-dark-500 dark:hover:text-primary-400 dark:focus-visible:ring-primary-500"
+                class="mr-2 shrink-0 rounded-compact p-1.5 text-gray-400 opacity-70 transition-colors hover:bg-gray-200 hover:text-primary-600 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/10 group-hover:opacity-100 dark:text-gray-500 dark:hover:bg-dark-700 dark:hover:text-primary-400 dark:focus-visible:ring-primary-500"
                 :title="`${t('common.copy')} ${model.value}`"
                 :aria-label="`${t('common.copy')} ${model.value}`"
                 @click="copyModelId(model.value)"
@@ -212,7 +212,8 @@ const upstreamSyncPlatforms = new Set([
   'grok',
   'kimi',
   'zhipu',
-  'deepseek'
+  'deepseek',
+  'jev'
 ])
 const canSyncUpstream = computed(() => {
   if (props.providerId) {

@@ -1008,7 +1008,7 @@ func buildOpsErrorLogsWhere(filter *ops.OpsErrorLogFilter) (string, []any) {
 	// Exact correlation keys (preferred for request↔upstream linkage).
 	if rid := strings.TrimSpace(filter.RequestID); rid != "" {
 		args = append(args, rid)
-		clauses = append(clauses, "COALESCE(e.request_id,'') = $"+itoa(len(args)))
+		clauses = append(clauses, opsRequestIDCondition("e", len(args)))
 	}
 	if crid := strings.TrimSpace(filter.ClientRequestID); crid != "" {
 		args = append(args, crid)
@@ -1088,6 +1088,14 @@ func opsFilterIncludesRecoveredProviderRows(filter *ops.OpsErrorLogFilter, phase
 	return sawProviderPhase
 }
 
+// opsRequestIDCondition 用候选数组筛选两列，精确命中本地 ID 时关闭外部别名展开。
+func opsRequestIDCondition(alias string, parameter int) string {
+	lookup := fmt.Sprintf("ARRAY(SELECT id FROM request_lookup_ids($%d))", parameter)
+	return fmt.Sprintf("(%s.request_id = ANY(%s) OR (%s.client_request_id = ANY(%s)"+
+		" AND NOT EXISTS (SELECT 1 FROM request_records exact_request WHERE exact_request.request_id=$%d)))",
+		alias, lookup, alias, lookup, parameter)
+}
+
 func buildOpsSystemLogsWhere(filter *ops.OpsSystemLogFilter) (string, []any, bool) {
 	clauses := make([]string, 0, 10)
 	args := make([]any, 0, 10)
@@ -1122,7 +1130,7 @@ func buildOpsSystemLogsWhere(filter *ops.OpsSystemLogFilter) (string, []any, boo
 		}
 		if v := strings.TrimSpace(filter.RequestID); v != "" {
 			args = append(args, v)
-			clauses = append(clauses, "COALESCE(l.request_id,'') = $"+itoa(len(args)))
+			clauses = append(clauses, opsRequestIDCondition("l", len(args)))
 			hasConstraint = true
 		}
 		if v := strings.TrimSpace(filter.ClientRequestID); v != "" {

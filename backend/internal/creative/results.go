@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
@@ -508,7 +509,7 @@ func (s *Results) MarkResultLost(ctx context.Context, runID string, providerSucc
 	return s.ReleaseRun(ctx, runID)
 }
 
-// RecordCreativeUsageLog 按成功输出数写图片用量日志（request_id = creative_settle:{runID}）。
+// RecordCreativeUsageLog 按成功输出数写入任务用量，并保存计费关联。
 func (s *Results) RecordCreativeUsageLog(ctx context.Context, run *CreativeRun, actualCost float64, successCount int, billingResult *billing.TaskFundsResult, createdAt time.Time) {
 	if s == nil || s.RecordUsage == nil || run == nil || run.ProviderID == nil || successCount <= 0 {
 		return
@@ -542,7 +543,8 @@ func (s *Results) RecordCreativeUsageLog(ctx context.Context, run *CreativeRun, 
 		APIKeyID:              run.APIKeyID,
 		ProviderID:            *run.ProviderID,
 		Platform:              run.Platform,
-		RequestID:             CreativeSettlementRequestID(run.RunID),
+		RequestID:             telemetry.StableRequestID(CreativeSettlementRequestID(run.RunID)),
+		BillingKey:            CreativeSettlementRequestID(run.RunID),
 		Model:                 run.Model,
 		RequestedModel:        run.RequestedModel,
 		InboundEndpoint:       &inboundEndpoint,

@@ -682,7 +682,8 @@ func TestBackupService_ContentConfigDefaultsExcludeLargeHistory(t *testing.T) {
 	require.Contains(t, cfg.ExcludedTableData, "public.usage_analytics_aggregation_state")
 	require.Contains(t, cfg.ExcludedTableData, "public.pending_auth_sessions")
 	require.Contains(t, cfg.ExcludedTableData, "public.identity_adoption_decisions")
-	require.Len(t, cfg.ExcludedTableData, 34)
+	require.Len(t, cfg.ExcludedTableData, 35)
+	require.Contains(t, cfg.ExcludedTableData, "public.request_records")
 
 	_, err = svc.CreateBackup(context.Background(), "manual", 14)
 	require.NoError(t, err)

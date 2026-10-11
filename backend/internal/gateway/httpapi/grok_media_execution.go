@@ -39,6 +39,7 @@ type grokMediaUsageMetadata struct {
 	VideoCount           int
 	VideoResolution      string
 	VideoDurationSeconds int
+	VideoState           string
 }
 
 // xAI 异步视频状态的官方成功结构如下（docs.x.ai Video Generation）：
@@ -235,6 +236,7 @@ func (s *GrokExecutor) ForwardGrokMedia(
 		ImageOutputSizes: usage.ImageOutputSizes,
 
 		VideoCount: usage.VideoCount,
+		VideoState: usage.VideoState,
 
 		VideoResolution: usage.VideoResolution,
 
@@ -317,7 +319,8 @@ func (s *GrokExecutor) forwardGrokMediaVideoContent(
 	// 内容下载也是完成观测入口：状态体满足官方 done 和 video.url 条件时附加计费单位，
 	// 使处理器能够按与状态轮询相同的路径领取一次计费；待计费快照由处理器合并。
 	result := &forwardcore.OpenAIResult{
-		RequestID: contentRequestID,
+		RequestID:  contentRequestID,
+		VideoState: gatewaymedia.GrokVideoRequestState(statusBody),
 
 		UpstreamHeaders: contentResp.Header,
 
@@ -368,6 +371,7 @@ func grokMediaUsageFromResponse(endpoint grok.GrokMediaEndpoint, requestInfo gro
 		meta.VideoResolution = requestInfo.Resolution
 		meta.VideoDurationSeconds = requestInfo.DurationSeconds
 	case grok.GrokMediaEndpointVideoStatus:
+		meta.VideoState = gatewaymedia.GrokVideoRequestState(responseBody)
 		// 只有官方完成状态且返回视频地址时，才生成待结算的视频用量。
 		if billed := ExtractGrokVideoBillingFromStatusBody(responseBody, nil, ""); billed != nil {
 			meta.ResponseID = billed.ResponseID

@@ -264,7 +264,7 @@ func (h *UsageHandler) enrichDetailedTimings(ctx context.Context, records []usag
 func usageLogClientRequestID(requestID string) string {
 	id := strings.TrimSpace(requestID)
 	if !strings.HasPrefix(id, "client:") {
-		return ""
+		return id
 	}
 	return strings.TrimSpace(strings.TrimPrefix(id, "client:"))
 }
@@ -412,6 +412,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 	}
 	filters := usage.UsageLogFilters{
 		EndpointSource:     endpointSource,
+		RequestID:          strings.TrimSpace(c.Query("request_id")),
 		UserID:             userID,
 		APIKeyID:           apiKeyID,
 		ProviderID:         providerID,
@@ -426,6 +427,11 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		BillingMode:        billingMode,
 		StartTime:          &startTime,
 		EndTime:            &endTime,
+	}
+
+	if filters.RequestID != "" && startDateStr == "" && endDateStr == "" && c.Query("period") == "" {
+		filters.StartTime = nil
+		filters.EndTime = nil
 	}
 
 	var stats *usage.UsageStats

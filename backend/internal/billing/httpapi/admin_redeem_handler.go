@@ -114,14 +114,9 @@ func (h *AdminRedeemHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 	codeType := c.Query("type")
 	status := c.Query("status")
-	search := c.Query("search")
+	search := normalizeRedeemSearch(c.Query("search"))
 	sortBy := c.DefaultQuery("sort_by", "id")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
-	// 标准化和验证 search 参数
-	search = strings.TrimSpace(search)
-	if len(search) > 100 {
-		search = search[:100]
-	}
 
 	codes, total, err := h.adminService.ListRedeemCodes(c.Request.Context(), page, pageSize, codeType, status, search, sortBy, sortOrder)
 	if err != nil {
@@ -134,6 +129,19 @@ func (h *AdminRedeemHandler) List(c *gin.Context) {
 		out = append(out, *RedeemCodeFromServiceAdmin(&codes[i]))
 	}
 	response.Paginated(c, out, total, page, pageSize)
+}
+
+// normalizeRedeemSearch 去掉搜索词首尾空白，并截取前 100 个 Unicode 字符。
+func normalizeRedeemSearch(search string) string {
+	search = strings.TrimSpace(search)
+	count := 0
+	for index := range search {
+		if count == 100 {
+			return search[:index]
+		}
+		count++
+	}
+	return search
 }
 
 // GetByID handles getting a redeem code by ID
@@ -438,12 +446,9 @@ func (h *AdminRedeemHandler) Expire(c *gin.Context) {
 func (h *AdminRedeemHandler) Export(c *gin.Context) {
 	codeType := c.Query("type")
 	status := c.Query("status")
-	search := strings.TrimSpace(c.Query("search"))
+	search := normalizeRedeemSearch(c.Query("search"))
 	sortBy := c.DefaultQuery("sort_by", "id")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
-	if len(search) > 100 {
-		search = search[:100]
-	}
 
 	// Get all codes without pagination (use large page size)
 	codes, _, err := h.adminService.ListRedeemCodes(c.Request.Context(), 1, 10000, codeType, status, search, sortBy, sortOrder)

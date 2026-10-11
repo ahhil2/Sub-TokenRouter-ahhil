@@ -17,6 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
+	"github.com/TokenFlux/TokenRouter/internal/requestlog"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
@@ -33,6 +34,7 @@ type completionHealth struct{ core *provider.HealthService }
 
 // ProvideGatewayCompletionRecorders 为完成记录器组合价格、资金、统计和提交后操作。
 func ProvideGatewayCompletionRecorders(
+	requests *requestlog.Service,
 	rates *gatewayBillingRates,
 	calculator *billing.Calculator,
 	prices *billing.PriceResolver,
@@ -66,17 +68,18 @@ func ProvideGatewayCompletionRecorders(
 	}
 	common := func(rate completion.RateReader) completion.Dependencies {
 		return completion.Dependencies{
-			Emit:          gatewaytelemetry.CompletionBillingEvent,
-			Calculator:    calculator,
-			Prices:        prices,
-			ProviderStats: stats(),
-			Funds:         funds,
-			Subscriptions: subscriptions,
-			Rates:         rate,
-			Models:        gatewayprovider.CompletionModels{},
-			Logs:          completion.SnapshotLogWriter(logs),
-			Effects:       effects(),
-			Observe:       gatewaytelemetry.ObserveCompletion,
+			RequestRecords: requests.Observe,
+			Emit:           gatewaytelemetry.CompletionBillingEvent,
+			Calculator:     calculator,
+			Prices:         prices,
+			ProviderStats:  stats(),
+			Funds:          funds,
+			Subscriptions:  subscriptions,
+			Rates:          rate,
+			Models:         gatewayprovider.CompletionModels{},
+			Logs:           completion.SnapshotLogWriter(logs),
+			Effects:        effects(),
+			Observe:        gatewaytelemetry.ObserveCompletion,
 		}
 	}
 	forward := common(rates.Forward)

@@ -24,4 +24,5 @@ var httpAssemblyProviders = wire.NewSet(
 	providePanelSettings,
 	serverhttp.NewPanelSettingsHandler,
 	provideRouterRuntime,
+	provideRequestLog,
 )

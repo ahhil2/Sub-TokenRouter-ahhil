@@ -12,6 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/completion"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/moderationflow"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
@@ -145,7 +146,7 @@ func (h *CyberHandler) RecordPolicy(c *gin.Context, in CyberPolicyCall) bool {
 }
 
 func (h *CyberHandler) Meta(c *gin.Context, key *apikey.APIKey, provider *moderationflow.Provider, model, platform string, stream bool, blockKey string) moderationflow.OpsMeta {
-	meta := moderationflow.OpsMeta{RequestID: c.Writer.Header().Get("X-Request-Id"), ClientRequestID: c.GetHeader("X-Request-Id"), Platform: platform, Model: strings.TrimSpace(model), Stream: stream, InboundEndpoint: h.endpoints.Inbound(c), UpstreamEndpoint: h.backend.UpstreamEndpoint(c, platform), UserAgent: c.GetHeader("User-Agent"), ClientIP: clientip.GetClientIP(c), CreatedAt: time.Now(), SessionBlockKey: blockKey}
+	meta := moderationflow.OpsMeta{RequestID: telemetry.RequestIDValue(c.Request.Context()), ClientRequestID: telemetry.RequestIDValue(c.Request.Context()), Platform: platform, Model: strings.TrimSpace(model), Stream: stream, InboundEndpoint: h.endpoints.Inbound(c), UpstreamEndpoint: h.backend.UpstreamEndpoint(c, platform), UserAgent: c.GetHeader("User-Agent"), ClientIP: clientip.GetClientIP(c), CreatedAt: time.Now(), SessionBlockKey: blockKey}
 	if c.Request != nil && c.Request.URL != nil {
 		meta.RequestPath = c.Request.URL.Path
 	}

@@ -36,13 +36,16 @@ func TestRequestLogger_GenerateAndPropagateRequestID(t *testing.T) {
 	}
 }
 
-func TestRequestLogger_KeepIncomingRequestID(t *testing.T) {
+func TestRequestLogger_SeparatesIncomingRequestID(t *testing.T) {
 	r := gin.New()
 	r.Use(RequestLogger())
 	r.GET("/t", func(c *gin.Context) {
 		reqID, _ := c.Request.Context().Value(telemetry.RequestID).(string)
-		if reqID != "rid-fixed" {
-			t.Fatalf("request_id=%q, want rid-fixed", reqID)
+		if reqID == "rid-fixed" || reqID == "" {
+			t.Fatalf("unexpected local ID: %q", reqID)
+		}
+		if c.Request.Context().Value(telemetry.ParentRequestID) != "rid-fixed" {
+			t.Fatal("caller ID missing")
 		}
 		c.Status(http.StatusOK)
 	})
@@ -54,8 +57,8 @@ func TestRequestLogger_KeepIncomingRequestID(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d", w.Code)
 	}
-	if got := w.Header().Get(requestIDHeader); got != "rid-fixed" {
-		t.Fatalf("header=%q, want rid-fixed", got)
+	if got := w.Header().Get(requestIDHeader); got == "rid-fixed" || got == "" {
+		t.Fatalf("unexpected response ID: %q", got)
 	}
 }
 
@@ -75,5 +78,61 @@ func TestRequestLoggerBoundsIncomingRequestID(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if got := len(w.Header().Get(requestIDHeader)); got != 36 {
 		t.Fatalf("response request_id length=%d", got)
+	}
+}
+
+// TestRequestLoggerPreservesIDAcrossStreaming 覆盖上游响应头覆盖、流式提交和请求拒绝。
+func TestRequestLoggerPreservesIDAcrossStreaming(t *testing.T) {
+	for _, status := range []int{200, 401, 403, 429, 500} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			r := gin.New()
+			var records []telemetry.RequestRecord
+			r.Use(RequestLogger(func(record telemetry.RequestRecord) { records = append(records, record) }), ClientRequestID())
+			r.GET("/stream", func(c *gin.Context) {
+				id := telemetry.RequestIDValue(c.Request.Context())
+				if c.Writer.Header().Get(internalRequestIDHeader) != id {
+					t.Fatal("gateway generated another ID")
+				}
+				c.Header(requestIDHeader, "upstream-id")
+				c.Header(internalRequestIDHeader, "spoofed-id")
+				c.Status(status)
+				_, _ = c.Writer.WriteString("data: hello\n\n")
+				c.Writer.Flush()
+			})
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/stream", nil))
+			if len(records) < 2 {
+				t.Fatal("missing lifecycle records")
+			}
+			id := records[0].RequestID
+			for _, name := range []string{requestIDHeader, internalRequestIDHeader, legacyInternalRequestIDHeader} {
+				if w.Result().Header.Get(name) != id {
+					t.Fatalf("committed %s does not match request", name)
+				}
+			}
+			last := records[len(records)-1]
+			if last.Status != status || last.FinishedAt == nil {
+				t.Fatalf("unexpected completion: %+v", last)
+			}
+		})
+	}
+}
+
+// TestRequestLoggerUnknownPathCanBeStored 覆盖 URL 解码后含空字符的未知路由。
+func TestRequestLoggerUnknownPathCanBeStored(t *testing.T) {
+	var records []telemetry.RequestRecord
+	router := gin.New()
+	router.Use(RequestLogger(func(record telemetry.RequestRecord) {
+		records = append(records, telemetry.NormalizeRequestRecord(record))
+	}))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/invalid%00path", nil))
+	if response.Code != http.StatusNotFound || len(records) < 2 {
+		t.Fatalf("unexpected response: status=%d records=%d", response.Code, len(records))
+	}
+	for _, record := range records {
+		if record.Path != "/invalidpath" {
+			t.Fatalf("unstorable path: %q", record.Path)
+		}
 	}
 }

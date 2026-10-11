@@ -15,6 +15,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/billing"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
@@ -96,8 +97,6 @@ type PublicOptions struct {
 	DefaultResponseMimeType, DefaultImageSize                                                                                                                                     string
 }
 type Public struct {
-	// ModelIDs 提供展开通配映射所需的完整目录。
-	ModelIDs func() []string
 	// ModelOutputModalities 按最终型号查询输出模态，nil 表示未知。
 	ModelOutputModalities  func(string) *[]string
 	Now                    func() time.Time
@@ -259,6 +258,7 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 	if err != nil {
 		return nil, err
 	}
+	telemetry.RecordRelatedRequest(ctx, telemetry.RequestRecord{RequestID: telemetry.StableRequestID(BatchImageCaptureRequestID(job.BatchID)), State: "running", Model: job.Model, StartedAt: job.CreatedAt, Aliases: []telemetry.RequestAlias{{Kind: "task", Value: job.BatchID}, {Kind: "billing", Value: BatchImageCaptureRequestID(job.BatchID)}}})
 	if err := s.Funding.Reserve(ctx, job, owner.GroupID, requestHash); err != nil {
 		code := BatchImageBillingHoldFailureCode(err)
 		_ = s.Repo.RecordBatchImageJobSubmitFailure(ctx, job.BatchID, code, SanitizeBatchImagePublicMessage(err.Error()), true)
@@ -608,9 +608,6 @@ func (s *Public) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchI
 	}
 
 	var candidates []string
-	if s.ModelIDs != nil {
-		candidates = s.ModelIDs()
-	}
 	var policy *routing.GroupPolicyView
 	billingMapping := GroupMappingResult{BillingModelSource: routing.BillingModelSourceGroupMapped}
 	if s.PricingConfigService != nil && owner.GroupID != nil {
@@ -626,8 +623,9 @@ func (s *Public) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchI
 	}
 	if policy != nil {
 		candidates = append(candidates, policy.AllowedModels...)
-		for id := range policy.ModelMapping {
-			candidates = append(candidates, id)
+		candidates = append(candidates, policy.ModelsList...)
+		for source, target := range policy.ModelMapping {
+			candidates = append(candidates, source, target)
 		}
 	}
 	// 多个来源可以映射到同一上游型号，每次查询复用它的模态结果。
@@ -648,6 +646,9 @@ func (s *Public) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchI
 			}
 			configured := batchImageConfiguredModels(&provider, policy)
 			for _, model := range BatchImageModelsFromProviderMapping(&provider, candidates...) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				routingModel := strings.TrimSpace(policy.ResolveModel(model))
 				if routingModel == "" {
 					routingModel = model
@@ -1300,6 +1301,9 @@ func batchImageConfiguredModels(provider *Candidate, policy *routing.GroupPolicy
 		add(target)
 	}
 	if policy != nil {
+		for _, id := range policy.ModelsList {
+			add(id)
+		}
 		for _, id := range policy.AllowedModels {
 			add(id)
 		}
@@ -1311,7 +1315,7 @@ func batchImageConfiguredModels(provider *Candidate, policy *routing.GroupPolicy
 	return ids
 }
 
-// BatchImageModelsFromProviderMapping 合并完整目录与具体配置，通配映射在解析候选时执行。
+// BatchImageModelsFromProviderMapping 合并提供商及分组配置中的具体型号。
 func BatchImageModelsFromProviderMapping(provider *Candidate, candidates ...string) []string {
 	if provider == nil {
 		return nil

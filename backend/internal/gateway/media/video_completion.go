@@ -123,6 +123,25 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 	return &merged
 }
 
+// GrokVideoRequestState 将上游视频状态转为请求摘要的状态。
+func GrokVideoRequestState(statusBody []byte) string {
+	if !gjson.ValidBytes(statusBody) {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(statusBody, "status").String())) {
+	case "done":
+		return "completed"
+	case "failed", "expired":
+		return "failed"
+	case "cancelled", "canceled":
+		return "canceled"
+	case "pending", "queued", "running", "in_progress":
+		return "running"
+	default:
+		return ""
+	}
+}
+
 // IsGrokVideoStatusBillable 匹配官方成功条件：status 为 done 且 video.url 非空。
 // pending、expired、failed 或缺少视频地址的 done 状态均不可计费。
 func IsGrokVideoStatusBillable(statusBody []byte) bool {

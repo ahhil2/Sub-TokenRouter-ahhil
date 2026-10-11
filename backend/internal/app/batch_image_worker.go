@@ -13,6 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/querycache"
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
+	"github.com/TokenFlux/TokenRouter/internal/requestlog"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
@@ -55,7 +56,7 @@ func batchVertexOptions(cfg *config.Config) batchprovider.VertexBatchImageProvid
 }
 
 // provideBatchRuntime 绑定批量图片的资金、处理和恢复实例及后台运行循环。
-func provideBatchRuntime(repo batchimage.BatchImageRepository, providers *providerpostgres.ProviderStore, queue batchimage.BatchImageQueue, funds *billing.Funds, logs usage.UsageLogRepository, pricing *batchimage.Pricing, auth apikey.APIKeyAuthCacheInvalidator, cfg *config.Config, registry *batchimage.Registry[batchprovider.BatchImageProvider]) *batchimage.Runtime {
+func provideBatchRuntime(requests *requestlog.Service, repo batchimage.BatchImageRepository, providers *providerpostgres.ProviderStore, queue batchimage.BatchImageQueue, funds *billing.Funds, logs usage.UsageLogRepository, pricing *batchimage.Pricing, auth apikey.APIKeyAuthCacheInvalidator, cfg *config.Config, registry *batchimage.Registry[batchprovider.BatchImageProvider]) *batchimage.Runtime {
 	funding := batchimage.Funding{Store: funds, Observe: creativeObserve}
 	processor := &batchimage.ProviderProcessor{Repo: repo, Funding: funding, Observe: creativeObserve, ResolveProvider: (batchprovider.ResultAccess{Registry: registry, Providers: providers}).Process}
 	settlement := &batchimage.Settlement{Repo: repo, Funding: funding, Observe: creativeObserve}
@@ -68,7 +69,7 @@ func provideBatchRuntime(repo batchimage.BatchImageRepository, providers *provid
 		}
 	}
 	if logs != nil {
-		recorder := completion.NewRecorder(completion.Dependencies{Logs: completion.SnapshotLogWriter(logs), Observe: func(component, message string) { logging.LegacyPrintf(component, "%s", message) }}, completion.RecorderOptions{})
+		recorder := completion.NewRecorder(completion.Dependencies{RequestRecords: requests.Observe, Logs: completion.SnapshotLogWriter(logs), Observe: func(component, message string) { logging.LegacyPrintf(component, "%s", message) }}, completion.RecorderOptions{})
 		settlement.RecordUsage = func(ctx context.Context, row *usage.UsageLog) {
 			recorder.WriteUsage(ctx, querycache.Clone(row), "service.batch_image_settlement")
 		}

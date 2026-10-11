@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -83,6 +84,14 @@ func Logger() gin.HandlerFunc {
 			fields = append(fields, zap.Int64("request_content_length", c.Request.ContentLength))
 		}
 		fields = appendRequestStageFields(fields, c)
+		telemetry.UpdateRequest(c.Request.Context(), func(record *telemetry.RequestRecord) {
+			record.Timings = make(map[string]int64)
+			for _, field := range fields {
+				if strings.HasSuffix(field.Key, "_ms") && field.Key != "latency_ms" {
+					record.Timings[field.Key] = field.Integer
+				}
+			}
+		})
 
 		l := logging.FromContext(c.Request.Context()).With(fields...)
 		l.Info("http request completed", zap.Time("completed_at", endTime))

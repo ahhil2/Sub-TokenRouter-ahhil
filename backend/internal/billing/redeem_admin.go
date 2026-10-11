@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
@@ -79,7 +80,8 @@ func (s *RedeemAdmin) GenerateRedeemCodes(ctx context.Context, input *GenerateRe
 		if input.Count != 1 {
 			return nil, apperror.BadRequest("REDEEM_CODE_CUSTOM_COUNT_INVALID", "count must be 1 when code is provided")
 		}
-		if len(customCode) > 32 {
+		// 长度按 Unicode 字符计数，中文每字占一个名额。
+		if utf8.RuneCountInString(customCode) > 32 {
 			return nil, apperror.BadRequest("REDEEM_CODE_TOO_LONG", "code must be at most 32 characters")
 		}
 	}
