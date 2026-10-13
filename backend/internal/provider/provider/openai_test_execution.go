@@ -141,6 +141,9 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		upstreamTestModelID = strings.TrimSpace(testModelID)
 	}
 	payload := openai.TestResponsesPayload(upstreamTestModelID, prompt, isOAuth)
+	if !isOAuth {
+		c.generationPayload(payload, "responses")
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	// task 失效时会注册新 task 并重试探针，因此开始事件只发送一次。
@@ -214,7 +217,7 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		body = RedactAgentIdentityBody(ctx, s.read, credentialProvider, body)
-		if !c.TaskRecoveryTried && credentialProvider.IsOpenAIAgentIdentity() && openai.IsAgentTaskInvalidHTTPResponse(resp.StatusCode, body) {
+		if providercore.TestOutputBudget(ctx) == 0 && !c.TaskRecoveryTried && credentialProvider.IsOpenAIAgentIdentity() && openai.IsAgentTaskInvalidHTTPResponse(resp.StatusCode, body) {
 			expectedTaskID := credentialProvider.GetCredential("task_id")
 			if err := s.EnsureTask(ctx, credentialProvider, expectedTaskID); err != nil {
 				return (TestStreamOutput{}).Error(c, fmt.Sprintf("Agent Identity task recovery failed: %s", err.Error()))
@@ -252,6 +255,7 @@ func (s *OpenAIProviderTest) executeChat(
 	c.Begin(true)
 
 	payload := openai.TestChatCompletionsPayload(testModelID, prompt)
+	c.generationPayload(payload, "chat")
 	payloadBytes, _ := json.Marshal(payload)
 
 	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})

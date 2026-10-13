@@ -31,6 +31,8 @@ func TestDependencyBoundaries(t *testing.T) {
 		{"internal/provider/postgres/new.go", "database/sql", true},
 		{"internal/search/postgres/new.go", "database/sql", true},
 		{"internal/site/postgres/messages_integration_test.go", modulePath + "/migrations", true},
+		{"internal/site/postgres/pelican_integration_test.go", modulePath + "/migrations", true},
+		{"internal/site/postgres/pelican_integration_test.go", modulePath + "/migrations/extra", false},
 		{"internal/site/postgres/messages_integration_test.go", modulePath + "/migrations/extra", false},
 		{"internal/site/postgres/messages_integration_test.go", modulePath + "/internal/promotion/postgres", false},
 		{"internal/site/postgres/new_test.go", modulePath + "/migrations", false},

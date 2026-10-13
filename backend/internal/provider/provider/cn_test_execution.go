@@ -107,6 +107,9 @@ func (s *CNProviderTest) Execute(
 		apiURL = httpclient.BuildOpenAIEndpointURL(baseURL, "/v1/chat/completions")
 		payload = openai.TestChatCompletionsPayload(testModelID, prompt)
 	}
+	if value, ok := payload.(map[string]any); ok {
+		c.generationPayload(value, protocol)
+	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create test payload")

@@ -38,6 +38,9 @@ func (s *CNProviderTest) ExecuteAdaptive(c *TestRun, value *providercore.Record,
 	c.SetSuppressCompletion(true)
 	defer c.SetSuppressCompletion(false)
 	enabled := value.UpstreamProtocols()
+	if providercore.TestOutputBudget(c.Context) > 0 && selected == "" && len(enabled) > 0 {
+		selected = enabled[0]
+	}
 	if len(enabled) == 0 {
 		return (TestStreamOutput{}).Error(c, "No upstream protocols enabled")
 	}
@@ -88,6 +91,7 @@ func (s *CNProviderTest) executeAdaptiveAnthropic(c *TestRun, value *providercor
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create adaptive Anthropic test payload")
 	}
+	c.generationPayload(payload, "anthropic")
 	payloadBytes, _ := json.Marshal(payload)
 
 	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "正在通过原生 /v1/messages 测试自适应 Anthropic 端点"})
@@ -135,6 +139,7 @@ func (s *CNProviderTest) executeAdaptiveResponses(c *TestRun, value *providercor
 	apiURL := cnTestResponsesURL(value.Platform, baseURL)
 
 	payload := openai.TestResponsesPayload(testModelID, prompt, false)
+	c.generationPayload(payload, "responses")
 	// DeepSeek 原生 Responses 端点无状态，不需要 OpenAI 探测使用的合成 instructions。
 	delete(payload, "instructions")
 	payloadBytes, _ := json.Marshal(payload)

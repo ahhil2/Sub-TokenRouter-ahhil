@@ -397,7 +397,7 @@ internal/upstream/zhipu/...`, Tests: ""},
 
 	// 窄权限属于指定文件，不能由相邻文件或目标子包继承。
 	filePermissions = []filePermission{
-		{Scope: "internal/site", Imports: modulePath + "/migrations", Files: "postgres/messages_integration_test.go"},
+		{Scope: "internal/site", Imports: modulePath + "/migrations", Files: "postgres/messages_integration_test.go postgres/pelican_integration_test.go"},
 		// 目录读取与测试数据构造按实际调用文件登记。
 		{Scope: "internal/gateway/provider", Imports: "internal/modelcatalog", Files: "model_display.go"},
 		{Scope: "internal/provider/httpapi", Imports: "internal/modelcatalog/testkit", Files: "management_catalog_test.go"},

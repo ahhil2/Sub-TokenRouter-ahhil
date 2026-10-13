@@ -8,6 +8,7 @@ import (
 
 // opsAssemblyProviders 汇总 ops 模块的 Wire provider。
 var opsAssemblyProviders = wire.NewSet(
+	provideChannelMonitor,
 	provideSystemLock,
 	provideSystemOperations,
 	provideSystemHTTP,

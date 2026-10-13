@@ -21,6 +21,12 @@ initializeTfCliImportSession()
  * Route definitions with lazy loading
  */
 const routes: RouteRecordRaw[] = [
+  {
+    path: '/monitor',
+    name: 'ChannelMonitor',
+    component: () => import('@/views/ChannelMonitorView.vue'),
+    meta: { requiresAuth: false, title: 'Channel monitoring', titleKey: 'channelMonitor.title' }
+  },
   // ==================== Setup Routes ====================
   {
     path: '/setup',
@@ -53,6 +59,18 @@ const routes: RouteRecordRaw[] = [
       titleKey: 'marketplace.title',
       descriptionKey: 'marketplace.subtitle'
     }
+  },
+  {
+    path: '/pelican-showcase',
+    name: 'PelicanShowcase',
+    component: () => import('@/views/PelicanShowcaseView.vue'),
+    meta: { requiresAuth: false, title: 'Pelican Showcase', titleKey: 'pelican.title' }
+  },
+  {
+    path: '/admin/pelican-tests',
+    name: 'AdminPelicanTests',
+    component: () => import('@/views/admin/PelicanTestsView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Pelican Tests', titleKey: 'pelican.adminTitle' }
   },
   {
     path: '/login',

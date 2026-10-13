@@ -205,6 +205,8 @@ const userNavItems = computed((): NavItem[] => {
     { path: '/dashboard', label: t('nav.dashboard'), icon: 'dashboard' as const },
     { path: '/messages', label: t('messages.title'), icon: 'chat' as const },
     { path: '/models', label: t('nav.modelMarketplace'), icon: 'modelMarketplace' as const },
+    { path: '/monitor', label: t('channelMonitor.title'), icon: 'chart' as const },
+    { path: '/pelican-showcase', label: t('pelican.title'), icon: 'creative' as const },
     { path: '/usage-ranking', label: t('nav.usageRanking'), icon: 'ranking' as const, featureFlag: flagUsageRankingAccess },
     { path: '/keys', label: t('nav.apiKeys'), icon: 'key' as const },
     { path: '/team', label: t('nav.team'), icon: 'users' as const, featureFlag: flagTeamAccess },
@@ -257,6 +259,8 @@ const personalNavItems = computed((): NavItem[] => {
   const items: NavItem[] = [
     { path: '/dashboard', label: t('nav.dashboard'), icon: 'dashboard' as const },
     { path: '/models', label: t('nav.modelMarketplace'), icon: 'modelMarketplace' as const },
+    { path: '/monitor', label: t('channelMonitor.title'), icon: 'chart' as const },
+    { path: '/pelican-showcase', label: t('pelican.title'), icon: 'creative' as const },
     { path: '/usage-ranking', label: t('nav.usageRanking'), icon: 'ranking' as const, featureFlag: flagUsageRankingAccess },
     { path: '/keys', label: t('nav.apiKeys'), icon: 'key' as const },
     { path: '/team', label: t('nav.team'), icon: 'users' as const, featureFlag: flagTeamAccess },
@@ -329,6 +333,8 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/messages', label: t('messages.title'), icon: 'chat' as const },
     { path: '/admin/teams', label: t('nav.teams'), icon: 'users' as const, featureFlag: flagTeamAccess },
     { path: '/admin/groups', label: t('nav.groups'), icon: 'folder' as const },
+    { path: '/monitor', label: t('channelMonitor.title'), icon: 'chart' as const },
+    { path: '/admin/pelican-tests', label: t('pelican.adminTitle'), icon: 'creative' as const },
     {
       path: '/admin/model-management', label: t('nav.modelManagement'), icon: 'pricing' as const,
       children: [

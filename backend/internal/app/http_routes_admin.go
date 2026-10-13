@@ -31,6 +31,7 @@ import (
 
 // provideAdminRouteMount 将管理员 HTTP 处理器和跨模块读取函数绑定到路由注册函数。
 func provideAdminRouteMount(eAdminTLSFingerprintProfile *routeegress.TLSFingerprintProfileHandler,
+	ePelican *routesite.PelicanHandler,
 	eAdminSchedulerDiagnostics *routescheduler.DiagnosticsHandler,
 	eAdminTLSFingerprintRouter *routeegress.TLSFingerprintRouterHandler,
 	eAdminProviderCodexImport *routeprovider.CodexImportHandler,
@@ -89,6 +90,7 @@ func provideAdminRouteMount(eAdminTLSFingerprintProfile *routeegress.TLSFingerpr
 		// 审计中间件挂在认证之后：所有管理面变更类操作 + 敏感读取入审计日志
 		admin.Use(security.Audit)
 		admin.Use(middleware.ProviderTerminology())
+		routesite.RegisterPelicanAdminRoutes(admin, ePelican)
 		{
 			// 只读能力目录：提供商与分组表单共用后端定义。
 			admin.GET("/protocol-capabilities", protocolCatalog)

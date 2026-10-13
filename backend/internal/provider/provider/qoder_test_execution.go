@@ -77,7 +77,7 @@ func (s *QoderProviderTest) Execute(c *TestRun, value *providercore.Record, mode
 	requestBody, err := json.Marshal(map[string]any{
 		"model":      testModelID,
 		"messages":   []map[string]string{{"role": "user", "content": testPrompt}},
-		"max_tokens": 16,
+		"max_tokens": c.outputBudget(16),
 		"stream":     true,
 	})
 	if err != nil {

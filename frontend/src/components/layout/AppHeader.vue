@@ -46,6 +46,8 @@
 
       <!-- 右侧分为工具区和账户区：工具区是同尺寸图标按钮，账户区是余额按钮和头像。 -->
       <div class="header-status-actions">
+        <router-link v-if="publicPage" to="/monitor" class="btn btn-secondary btn-sm hidden md:inline-flex">{{ t('channelMonitor.title') }}</router-link>
+        <router-link v-if="publicPage" to="/pelican-showcase" class="btn btn-secondary btn-sm">{{ t('pelican.title') }}</router-link>
         <div class="header-status-icon-group">
           <router-link
             v-if="publicPage"

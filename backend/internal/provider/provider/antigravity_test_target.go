@@ -46,6 +46,9 @@ func (t antigravityTestTarget) Execute(ctx context.Context, request provider.Pre
 		return run.Result((TestStreamOutput{}).Error(run, err.Error()))
 	}
 	if result.Text != "" {
+		if result.MappedModel != "" {
+			(TestStreamOutput{}).SendEvent(run, provider.TestEvent{Type: "status", Model: result.MappedModel})
+		}
 		(TestStreamOutput{}).SendEvent(run, provider.TestEvent{Type: "content", Text: result.Text})
 	}
 	(TestStreamOutput{}).SendEvent(run, provider.TestEvent{Type: "test_complete", Success: true})

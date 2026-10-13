@@ -102,6 +102,9 @@ func (s *GrokProviderTest) Execute(c *TestRun, value *providercore.Record, model
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create Grok test payload")
 	}
+	if value.Type == capability.ProviderTypeAPIKey {
+		payloadBytes = c.generationJSON(payloadBytes, "responses")
+	}
 
 	if !s.SuppressStart {
 		(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})

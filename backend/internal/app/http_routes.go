@@ -14,6 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/idempotency"
 	identityhttp "github.com/TokenFlux/TokenRouter/internal/identity/httpapi"
 	notificationhttp "github.com/TokenFlux/TokenRouter/internal/notification/httpapi"
+	opshttp "github.com/TokenFlux/TokenRouter/internal/ops/httpapi"
 	paymenthttp "github.com/TokenFlux/TokenRouter/internal/payment/httpapi"
 	promotionhttp "github.com/TokenFlux/TokenRouter/internal/promotion/httpapi"
 	routinghttp "github.com/TokenFlux/TokenRouter/internal/routing/httpapi"
@@ -56,6 +57,8 @@ func provideHTTPRouteMount(auth authRouteMount, user userRouteMount, admin admin
 
 // provideAuthRouteMount 将认证 HTTP 处理器和跨模块读取函数绑定到路由注册函数。
 func provideAuthRouteMount(eModelMarketplace *routinghttp.MarketplaceHandler,
+	eChannelMonitor *opshttp.ChannelMonitorHandler,
+	ePelican *sitehttp.PelicanHandler,
 	ePublicSettings *sitehttp.PublicHandler,
 	eNotification *notificationhttp.Handler,
 	ePasskey *identityhttp.PasskeyHandler,
@@ -71,6 +74,8 @@ func provideAuthRouteMount(eModelMarketplace *routinghttp.MarketplaceHandler,
 		sitehttp.RegisterPublicSettingsRoutes(public, ePublicSettings)
 		notificationhttp.RegisterUnsubscribeRoute(public, eNotification)
 		routinghttp.RegisterPublicMarketplaceRoutes(v1, eModelMarketplace)
+		opshttp.RegisterChannelMonitorRoutes(v1, eChannelMonitor, security.Panel.PublicIP())
+		sitehttp.RegisterPelicanPublicRoutes(v1, ePelican, security.Panel.PublicIP())
 		identityhttp.RegisterSessionRoutes(v1, eAuth, guards)
 	}
 }

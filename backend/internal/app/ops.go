@@ -23,6 +23,7 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/notification"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
+	opshttp "github.com/TokenFlux/TokenRouter/internal/ops/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/ops/maintenance"
 	opspostgres "github.com/TokenFlux/TokenRouter/internal/ops/postgres"
 	opsadapter "github.com/TokenFlux/TokenRouter/internal/ops/provider"
@@ -42,6 +43,10 @@ func provideOpsErrorQueue(manager *lifecycle.Manager) *ops.ErrorLogQueue {
 }
 
 func provideOpsRepository(db *sql.DB) ops.OpsRepository { return opspostgres.NewOpsRepository(db) }
+
+func provideChannelMonitor(db *sql.DB) *opshttp.ChannelMonitorHandler {
+	return opshttp.NewChannelMonitorHandler(ops.NewChannelMonitor(opspostgres.NewOpsRepository(db)))
+}
 
 func provideOpsService(repo ops.OpsRepository, settings *settings.Store, options *ops.Options, providers *providerpostgres.ProviderStore, users *identitypostgres.UserStore, c *scheduler.ConcurrencyService, sink *ops.OpsSystemLogSink, quota *provider.QuotaSettingsCache, worker *apikey.AuthCacheInvalidationWorker, keys *apikey.APIKeyService, pre *preaggregation.PreAggregationSettingsService) *ops.OpsService {
 	s := ops.NewOpsService(repo, settings, options, opsProviderReader{providers}, opsUsers{users}, c, sink, opsadapter.LogControl{})

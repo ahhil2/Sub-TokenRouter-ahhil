@@ -11,6 +11,7 @@
 //   - error*.go、ingress_reject.go、upstream*.go：错误分类、异步入库和入口拒绝计数。
 //   - dashboard*.go、health_score.go、histograms.go、trends.go、token_stats*.go：历史监控查询和统计结果。
 //   - realtime*.go、concurrency.go、provider_availability.go：实时流量、并发和提供商可用性。
+//   - channel_monitor.go：公开渠道请求统计、时间窗口和查询缓存。
 //   - request_details*.go、models.go、user_error.go：请求明细、阶段耗时和用户错误视图。
 //   - settings*.go、admin_settings_read.go、composite_settings.go、ignored_status.go：运行设置及其解析。
 //   - system_log*.go、log_runtime.go：系统日志写入、查询和运行日志配置。

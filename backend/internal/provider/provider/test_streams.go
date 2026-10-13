@@ -22,12 +22,15 @@ type TestStreamOutput struct{}
 
 // Gemini 保留 Gemini 流的内容、图片与终态事件顺序。
 func (s TestStreamOutput) Gemini(c *TestRun, body io.Reader) error {
-	reader := bufio.NewReader(body)
+	reader := bufio.NewReader(c.generationReader(body))
 
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
+				if providercore.TestOutputBudget(c.Context) > 0 {
+					return s.Error(c, "Generation stream ended before completion")
+				}
 				s.SendEvent(c, providercore.TestEvent{Type: "test_complete", Success: true})
 				return nil
 			}
@@ -84,6 +87,9 @@ func (s TestStreamOutput) Gemini(c *TestRun, body io.Reader) error {
 
 				// 内容处理完毕后再发送完成事件。
 				if finishReason, ok := candidate["finishReason"].(string); ok && finishReason != "" {
+					if c.truncated(finishReason) {
+						return s.Error(c, "Generation stopped: "+finishReason)
+					}
 					s.SendEvent(c, providercore.TestEvent{Type: "test_complete", Success: true})
 					return nil
 				}
@@ -103,12 +109,15 @@ func (s TestStreamOutput) Gemini(c *TestRun, body io.Reader) error {
 
 // Anthropic 将 Claude 流转换为提供商测试事件。
 func (s TestStreamOutput) Anthropic(c *TestRun, body io.Reader) error {
-	reader := bufio.NewReader(body)
+	reader := bufio.NewReader(c.generationReader(body))
 
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
+				if providercore.TestOutputBudget(c.Context) > 0 {
+					return s.Error(c, "Generation stream ended before completion")
+				}
 				s.SendEvent(c, providercore.TestEvent{Type: "test_complete", Success: true})
 				return nil
 			}
@@ -138,6 +147,12 @@ func (s TestStreamOutput) Anthropic(c *TestRun, body io.Reader) error {
 			if delta, ok := data["delta"].(map[string]any); ok {
 				if text, ok := delta["text"].(string); ok {
 					s.SendEvent(c, providercore.TestEvent{Type: "content", Text: text})
+				}
+			}
+		case "message_delta":
+			if delta, ok := data["delta"].(map[string]any); ok {
+				if reason, ok := delta["stop_reason"].(string); ok && c.truncated(reason) {
+					return s.Error(c, "Generation stopped: "+reason)
 				}
 			}
 		case "message_stop":
@@ -192,7 +207,7 @@ func (s TestStreamOutput) Qoder(c *TestRun, body io.ReadCloser) error {
 
 // ChatCompletions 处理 OpenAI 兼容 Chat Completions API 返回的 SSE 分片。
 func (s TestStreamOutput) ChatCompletions(c *TestRun, body io.Reader) error {
-	reader := bufio.NewReader(body)
+	reader := bufio.NewReader(c.generationReader(body))
 	seenJSON := false
 	seenFinish := false
 
@@ -259,6 +274,9 @@ func (s TestStreamOutput) ChatCompletions(c *TestRun, body io.Reader) error {
 				}
 			}
 			if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {
+				if c.truncated(finishReason) {
+					return s.Error(c, "Generation stopped: "+finishReason)
+				}
 				seenFinish = true
 			}
 		}
@@ -267,7 +285,7 @@ func (s TestStreamOutput) ChatCompletions(c *TestRun, body io.Reader) error {
 
 // Responses 要求实际收到终态事件，不能把提前 EOF 当作成功。
 func (s TestStreamOutput) Responses(c *TestRun, body io.Reader) error {
-	reader := bufio.NewReader(body)
+	reader := bufio.NewReader(c.generationReader(body))
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -301,8 +319,15 @@ func (s TestStreamOutput) Responses(c *TestRun, body io.Reader) error {
 				s.SendEvent(c, providercore.TestEvent{Type: "content", Text: delta})
 			}
 		case "response.completed", "response.done":
+			if response, ok := data["response"].(map[string]any); ok {
+				if status, ok := response["status"].(string); ok && c.truncated(status) {
+					return s.Error(c, "Generation stopped: "+status)
+				}
+			}
 			s.SendEvent(c, providercore.TestEvent{Type: "test_complete", Success: true})
 			return nil
+		case "response.incomplete":
+			return s.Error(c, "Generation stopped before completion")
 		case "response.failed":
 			errorMsg := "OpenAI response failed"
 			if responseData, ok := data["response"].(map[string]any); ok {

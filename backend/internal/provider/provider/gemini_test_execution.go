@@ -54,6 +54,7 @@ func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 
 	// 构造原 Gemini 测试报文。
 	payload := geminiTestPayload(testModelID, prompt, testTypes...)
+	payload = c.generationJSON(payload, "gemini")
 
 	// 按凭据类型选择原请求构造。
 	var req *http.Request

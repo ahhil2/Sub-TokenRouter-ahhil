@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tidwall/sjson"
+
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
@@ -64,5 +66,39 @@ func (s *AntigravityProbe) Execute(ctx context.Context, value *provider.Record, 
 		input.UserAgent = request.UserAgent
 	}
 	adapter, attempt := s.Retry.Bind(input)
+	if request.OutputTokens > 0 {
+		body, err = sjson.SetBytes(body, "request.generationConfig.maxOutputTokens", request.OutputTokens)
+		if err != nil {
+			return nil, err
+		}
+		if s.Enter != nil {
+			done, enterErr := s.Enter()
+			if enterErr != nil {
+				return nil, enterErr
+			}
+			defer done()
+		}
+		httpRequest, buildErr := antigravity.NewAPIRequestWithURL(ctx, adapter.Options.BaseURL(), "streamGenerateContent", token, body)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		adapter.Options.ApplyHeaders(httpRequest)
+		response, sendErr := adapter.Options.Do(httpRequest)
+		if sendErr != nil {
+			return nil, sendErr
+		}
+		if response == nil {
+			return nil, errors.New("upstream returned empty response")
+		}
+		defer response.Body.Close()
+		if response.StatusCode >= 400 {
+			return nil, fmt.Errorf("API returned %d", response.StatusCode)
+		}
+		sink := &generationBufferSink{}
+		run := NewTestRun(ctx, nil, sink)
+		defer run.Cancel()
+		streamErr := run.Result((TestStreamOutput{}).Gemini(run, response.Body))
+		return &antigravity.TestConnectionResult{Text: sink.text.String(), MappedModel: model}, streamErr
+	}
 	return antigravity.Probe(ctx, attempt, adapter.Options, model, s.Retry.BodyLimit, s.Enter)
 }

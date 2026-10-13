@@ -59,6 +59,7 @@ type TestRequest struct {
 	Protocol              string
 	UserAgent, Originator string
 	Automatic             bool
+	OutputTokens          int
 }
 type TestRoute uint8
 
@@ -176,6 +177,9 @@ func NewTestService(loader TestLoader, options TestOptions) *TestService {
 }
 
 func (s *TestService) Test(ctx context.Context, request TestRequest, sink TestEventSink) error {
+	if request.OutputTokens > 0 {
+		ctx = context.WithValue(ctx, testOutputBudgetKey{}, request.OutputTokens)
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	guarded := &testGuardedSink{next: sink, cancel: cancel}

@@ -7,8 +7,12 @@ import admin from './admin'
 import misc from './misc'
 import team from './team'
 import requests from './requests'
+import pelican from './pelican'
+import channelMonitor from './channelMonitor'
 
 export default {
+  channelMonitor,
+  pelican,
   requests,
   legal: {
     "login": "登录",

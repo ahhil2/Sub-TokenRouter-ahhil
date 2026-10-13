@@ -91,6 +91,7 @@ func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, 
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create test payload")
 	}
+	c.generationPayload(payload, "anthropic")
 	payloadBytes, _ := json.Marshal(payload)
 
 	// 报文构造完成后发布开始事件。
@@ -164,6 +165,7 @@ func (s *AnthropicProviderTest) executeVertex(c *TestRun, ctx context.Context, v
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create test payload")
 	}
+	c.generationPayload(payload, "anthropic")
 	payloadBytes, _ := json.Marshal(payload)
 	vertexBody, err := vertex.BuildVertexAnthropicRequestBody(payloadBytes)
 	if err != nil {
@@ -246,7 +248,7 @@ func (s *AnthropicProviderTest) ExecuteBedrock(c *TestRun, ctx context.Context, 
 				},
 			},
 		},
-		"max_tokens":  256,
+		"max_tokens":  c.outputBudget(256),
 		"temperature": 1,
 	}
 	bedrockBody, _ := json.Marshal(bedrockPayload)
@@ -299,7 +301,8 @@ func (s *AnthropicProviderTest) ExecuteBedrock(c *TestRun, ctx context.Context, 
 
 	// 从原非流式 Claude JSON 提取第一段文字。
 	var result struct {
-		Content []struct {
+		StopReason string `json:"stop_reason"`
+		Content    []struct {
 			Text string `json:"text"`
 		} `json:"content"`
 	}
@@ -308,6 +311,9 @@ func (s *AnthropicProviderTest) ExecuteBedrock(c *TestRun, ctx context.Context, 
 	}
 
 	text := ""
+	if c.truncated(result.StopReason) {
+		return (TestStreamOutput{}).Error(c, "Generation stopped: "+result.StopReason)
+	}
 	if len(result.Content) > 0 {
 		text = result.Content[0].Text
 	}

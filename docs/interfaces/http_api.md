@@ -1,5 +1,7 @@
 # HTTP 接口
 
+渠道监控页 `/monitor` 使用公开接口 `GET /api/v1/channel-monitors`，返回公开分组最近 90 分钟的可用率、缓存率和首 Token 延迟。可见性与计算方法见[渠道监控](../operations/channel_monitoring.md)。
+
 本文描述 TokenRouter 的路由族、认证方式、共同中间件、响应格式和各路由由哪个模块负责。新增或移动接口时，用本文确定接口应该放在哪里。本文不逐个列出所有 endpoint；上游协议规范和领域状态机见各自的文档。
 
 ## 章节导航
@@ -65,6 +67,8 @@ RequestLogger
 | `/api/v1/pages/*` 等页面路由 | 按页面类型使用用户或管理员 JWT | 服务端生成或读取的 pricing、账单和管理页面数据 |
 
 ### 各模块的 HTTP 入口
+
+- 鹈鹕测试：公开画廊和管理员任务绑定 `site/httpapi.PelicanHandler`，路径、公开字段和执行行为见[鹈鹕测智](../domains/pelican_showcase.md)。
 
 - 提供商：管理端展示值和脱敏映射在 `provider/httpapi/dto`，代理展示值在 `egress/httpapi/dto`。敏感字段、省略和空集合的处理、代理管理员字段的范围都按既定格式输出；非敏感的嵌套 map、slice 和时间指针各用独立副本，修改展示结果不会影响提供商配置。提供商备份、即时和计划测试、API Key 上游用量查询使用 `provider/httpapi`；提供商的增删改查、列表、复制和恢复、批量管理、凭据字段更新、刷新和重新授权、隐私、调度开关、额度重置和健康恢复绑定 `provider/httpapi.ManagementHandler`；模型目录、实时模型同步、tier 和详细统计也走这里。高级调度诊断绑定 `scheduler/httpapi.DiagnosticsHandler`。
 - 设置：综合设置由 `settings/httpapi` 组合各领域的端点；SMTP、预聚合和创作状态分别调用各自的处理器。备份导出需要 step-up，导入使用管理员的幂等 helper。

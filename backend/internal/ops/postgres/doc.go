@@ -7,6 +7,7 @@
 //
 // 文件分组：
 //   - ops_repo*.go：查询运维数据，维护告警规则、事件和静默记录。
+//   - channel_monitor.go：聚合公开分组的渠道监控指标。
 //   - collector_queries.go、ops_sla_sql.go：采集指标并生成 SLA 过滤条件。
 //   - ops_ingress_reject_repo.go：批量写入和查询入口拒绝计数。
 //   - cleanup.go、historical_ingress_cleanup.go：清理过期日志和历史入口拒绝记录。

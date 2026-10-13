@@ -1,0 +1,18 @@
+export default {
+  title: '鹈鹕测智', adminTitle: '鹈鹕测试管理',
+  description: '用同一句提示词观察模型的 HTML / SVG 动画生成效果。作品仅供参考，不代表标准化智力评分。历史保留 30 天。',
+  adminDescription: '按分组和模型安排生成任务。费用由平台承担，通过格式检查的作品自动公开。',
+  group: '分组', model: '模型', date: '生成日期（北京时间）', all: '全部', refresh: '刷新', preview: '查看动画',
+  loading: '加载中…', loadFailed: '加载失败，请刷新重试。', empty: '暂无作品或执行记录。',
+  previous: '上一页', next: '下一页', viewGallery: '公开画廊', create: '添加测试', edit: '编辑测试', save: '保存',
+  run: '立即测试', history: '执行历史', delete: '删除', details: '详情', hide: '隐藏', publish: '公开',
+  published: '已公开', hidden: '未公开', paused: '已暂停', enabled: '开启定时测试', interval: '测试间隔（分钟，5 至 10080）',
+  schedule: '执行计划', lastRun: '最近执行', nextRun: '下次执行', actions: '操作', every: '每 {minutes} 分钟',
+  queued: '已排队', notRun: '尚未执行', noTasks: '尚未添加测试。新任务默认暂停。',
+  newPaused: '新任务先保存为暂停状态。保存后可编辑开启，或立即测试一次。',
+  consent: '我确认公开这个分组的展示名称、模型名称和后续作品。测试成功或失败的记录将自动展示。',
+  consentRequired: '请先确认公开展示授权并保存。', cost: '每轮生成一次，不自动重试。默认每 6 小时一次，超时 300 秒，不扣普通用户余额。',
+  deleteConfirm: '删除后无法恢复。删除任务会同时删除该任务的全部作品。',
+  provider: '执行提供商 ID', raw: '原始响应', sandbox: '作品在隔离沙箱中运行，外部资源受到限制。',
+  status: { running: '执行中', success: '生成成功', failed: '生成失败', interrupted: '执行中断' },
+}
