@@ -90,7 +90,7 @@ func (s *AntigravityProbe) Execute(ctx context.Context, value *provider.Record, 
 		if response == nil {
 			return nil, errors.New("upstream returned empty response")
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		if response.StatusCode >= 400 {
 			return nil, fmt.Errorf("API returned %d", response.StatusCode)
 		}

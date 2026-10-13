@@ -52,9 +52,9 @@ func (sink *generationTestSink) Emit(_ context.Context, event TestEvent) error {
 	}
 	if event.Type == "content" {
 		if sink.text.Len()+len(event.Text) > sink.limit {
-			return errors.New("Generated response exceeds the byte limit")
+			return errors.New("generated response exceeds the byte limit")
 		}
-		sink.text.WriteString(event.Text)
+		_, _ = sink.text.WriteString(event.Text)
 	}
 	return nil
 }

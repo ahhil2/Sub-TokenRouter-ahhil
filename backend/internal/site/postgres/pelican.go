@@ -27,7 +27,7 @@ func (repository *pelicanRepository) Catalog(ctx context.Context) ([]site.Pelica
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []site.PelicanCatalogItem{}
 	for rows.Next() {
 		var item site.PelicanCatalogItem
@@ -50,7 +50,7 @@ func (repository *pelicanRepository) Tasks(ctx context.Context) ([]site.PelicanT
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []site.PelicanTask{}
 	for rows.Next() {
 		var raw []byte
@@ -122,7 +122,7 @@ func (repository *pelicanRepository) Results(ctx context.Context, filter site.Pe
 	if err != nil {
 		return page, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var raw []byte
 		var item site.PelicanResult
@@ -176,7 +176,7 @@ func (repository *pelicanRepository) Claim(ctx context.Context) (*site.PelicanCl
 	if err != nil {
 		return nil, err
 	}
-	defer transaction.Rollback()
+	defer func() { _ = transaction.Rollback() }()
 	if _, err := transaction.ExecContext(ctx, `SELECT pg_advisory_xact_lock(710298)`); err != nil {
 		return nil, err
 	}
@@ -221,7 +221,7 @@ func (repository *pelicanRepository) Finish(ctx context.Context, claim site.Peli
 	if err != nil {
 		return err
 	}
-	defer transaction.Rollback()
+	defer func() { _ = transaction.Rollback() }()
 	var consent bool
 	err = transaction.QueryRowContext(ctx, `UPDATE pelican_tasks SET lease_until=NULL, lease_token='',
 		next_run_at=GREATEST(next_run_at,NOW()) WHERE id=$1 AND lease_token=$2 AND lease_until>NOW() RETURNING public_consent`, claim.Task.ID, claim.Token).Scan(&consent)
@@ -243,7 +243,7 @@ func (repository *pelicanRepository) Maintain(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer transaction.Rollback()
+	defer func() { _ = transaction.Rollback() }()
 	_, err = transaction.ExecContext(ctx, `WITH expired AS (
 		UPDATE pelican_tasks SET lease_until=NULL, lease_token='', next_run_at=NOW()+make_interval(mins=>interval_minutes)
 		WHERE lease_until<=NOW() RETURNING id, public_consent

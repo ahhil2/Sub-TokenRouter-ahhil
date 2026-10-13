@@ -53,10 +53,8 @@ func TestPelicanRepository(t *testing.T) {
 	require.Error(t, repository.RequestRun(ctx, tasks[0].ID))
 	var workers sync.WaitGroup
 	claims := make(chan *site.PelicanClaim, 8)
-	for index := 0; index < 8; index++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+	for range 8 {
+		workers.Go(func() {
 			claimed, claimErr := repository.Claim(ctx)
 			if claimErr != nil {
 				t.Error(claimErr)
@@ -64,7 +62,7 @@ func TestPelicanRepository(t *testing.T) {
 			if claimed != nil {
 				claims <- claimed
 			}
-		}()
+		})
 	}
 	workers.Wait()
 	close(claims)

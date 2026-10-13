@@ -48,7 +48,7 @@ UPDATE ops_error_logs SET status_code=401,error_owner='client' WHERE id=6;
 	sla := opsSLACountableSQL("e.status_code", "e.upstream_status_code", "e.upstream_errors", "e.error_owner", "e.is_business_limited", nil)
 	rows, err := transaction.QueryContext(ctx, fmt.Sprintf(channelMonitorSQL, sla), end.Add(-90*time.Minute), end, 270)
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	seen := map[int64]int{}
 	for rows.Next() {
 		var id, requests, successes int64

@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -97,7 +98,11 @@ func (monitor *ChannelMonitor) Snapshot(ctx context.Context) (*ChannelMonitorSna
 		if value.Err != nil {
 			return nil, value.Err
 		}
-		return value.Val.(*ChannelMonitorSnapshot), nil
+		snapshot, ok := value.Val.(*ChannelMonitorSnapshot)
+		if !ok {
+			return nil, errors.New("invalid channel monitor snapshot")
+		}
+		return snapshot, nil
 	}
 }
 

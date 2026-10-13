@@ -67,7 +67,7 @@ func (store *Store) ReadChannelMonitor(ctx context.Context, end time.Time) (*ops
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	positions := map[int64]int{}
 	for rows.Next() {
 		var channel ops.MonitoredChannel

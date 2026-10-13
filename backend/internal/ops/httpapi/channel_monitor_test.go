@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestChannelMonitorPublicRoute(t *testing.T) {
 		guarded := false
 		RegisterChannelMonitorRoutes(router.Group("/api/v1"), NewChannelMonitorHandler(ops.NewChannelMonitor(channelMonitorReader{fail: fail})), func(ctx *gin.Context) { guarded = true; ctx.Next() })
 		recorder := httptest.NewRecorder()
-		router.ServeHTTP(recorder, httptest.NewRequest("GET", "/api/v1/channel-monitors", nil))
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/channel-monitors", nil))
 		require.True(t, guarded)
 		require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
 		if fail {

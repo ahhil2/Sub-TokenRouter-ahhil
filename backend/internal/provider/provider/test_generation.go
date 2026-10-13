@@ -16,9 +16,9 @@ func (*generationBufferSink) Begin(context.Context, bool) error { return nil }
 func (sink *generationBufferSink) Emit(_ context.Context, event provider.TestEvent) error {
 	if event.Type == "content" {
 		if sink.text.Len()+len(event.Text) > 1<<20 {
-			return errors.New("Generated response exceeds the byte limit")
+			return errors.New("generated response exceeds the byte limit")
 		}
-		sink.text.WriteString(event.Text)
+		_, _ = sink.text.WriteString(event.Text)
 	}
 	return nil
 }

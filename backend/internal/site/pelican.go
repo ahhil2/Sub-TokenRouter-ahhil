@@ -181,9 +181,9 @@ func ExtractPelicanHTML(raw string) (string, error) {
 	text := strings.TrimSpace(raw)
 	if fence := strings.Index(text, "```"); fence >= 0 {
 		remaining := text[fence+3:]
-		if newline := strings.IndexByte(remaining, '\n'); newline >= 0 {
-			if end := strings.Index(remaining[newline+1:], "```"); end >= 0 {
-				text = strings.TrimSpace(remaining[newline+1:][:end])
+		if _, content, found := strings.Cut(remaining, "\n"); found {
+			if end := strings.Index(content, "```"); end >= 0 {
+				text = strings.TrimSpace(content[:end])
 			}
 		}
 	}

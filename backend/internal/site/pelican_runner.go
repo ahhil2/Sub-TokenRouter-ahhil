@@ -31,9 +31,8 @@ func (runner *PelicanRunner) Start(ctx context.Context) error {
 	go func() {
 		defer close(runner.done)
 		var workers sync.WaitGroup
-		for index := 0; index < 2; index++ {
-			workers.Add(1)
-			go func() { defer workers.Done(); runner.work(ctx) }()
+		for range 2 {
+			workers.Go(func() { runner.work(ctx) })
 		}
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
