@@ -14,6 +14,8 @@ const (
 	Label = "redeem_code_usage"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldRechargeSnapshot holds the string denoting the recharge_snapshot field in the database.
+	FieldRechargeSnapshot = "recharge_snapshot"
 	// FieldRedeemCodeID holds the string denoting the redeem_code_id field in the database.
 	FieldRedeemCodeID = "redeem_code_id"
 	// FieldUserID holds the string denoting the user_id field in the database.
@@ -45,6 +47,7 @@ const (
 // Columns holds all SQL columns for redeemcodeusage fields.
 var Columns = []string{
 	FieldID,
+	FieldRechargeSnapshot,
 	FieldRedeemCodeID,
 	FieldUserID,
 	FieldUsedAt,

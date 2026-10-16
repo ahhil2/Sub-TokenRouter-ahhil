@@ -336,12 +336,12 @@ func (_q *RedeemCodeUsageQuery) WithUser(opts ...func(*UserQuery)) *RedeemCodeUs
 // Example:
 //
 //	var v []struct {
-//		RedeemCodeID int64 `json:"redeem_code_id,omitempty"`
+//		RechargeSnapshot *billing.RechargeSnapshot `json:"recharge_snapshot,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.RedeemCodeUsage.Query().
-//		GroupBy(redeemcodeusage.FieldRedeemCodeID).
+//		GroupBy(redeemcodeusage.FieldRechargeSnapshot).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *RedeemCodeUsageQuery) GroupBy(field string, fields ...string) *RedeemCodeUsageGroupBy {
@@ -359,11 +359,11 @@ func (_q *RedeemCodeUsageQuery) GroupBy(field string, fields ...string) *RedeemC
 // Example:
 //
 //	var v []struct {
-//		RedeemCodeID int64 `json:"redeem_code_id,omitempty"`
+//		RechargeSnapshot *billing.RechargeSnapshot `json:"recharge_snapshot,omitempty"`
 //	}
 //
 //	client.RedeemCodeUsage.Query().
-//		Select(redeemcodeusage.FieldRedeemCodeID).
+//		Select(redeemcodeusage.FieldRechargeSnapshot).
 //		Scan(ctx, &v)
 func (_q *RedeemCodeUsageQuery) Select(fields ...string) *RedeemCodeUsageSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

@@ -6,6 +6,7 @@
 //   - admin_user_handler.go：处理管理后台的用户查询与修改。
 //
 // 文件分组：
+//   - member_groups.go：身份分组、成员管理、倍率和本人权益接口。
 //   - routes_auth.go、routes_admin.go、routes_settings.go、routes_user.go、auth_endpoints.go 和 authentication.go：注册路由并分发认证请求。
 //   - OAuth 文件（如 email_oauth.go 和 oauth_start.go）、google_one_tap.go 和 pending_handler.go：处理第三方登录、绑定和待完成的注册。
 //   - session_handler.go、session_binding.go、logout_cookies.go 和 token_response.go：管理会话、请求设备信息与登录响应。

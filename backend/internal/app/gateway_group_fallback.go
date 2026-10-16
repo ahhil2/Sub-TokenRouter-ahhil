@@ -21,7 +21,9 @@ type runtimeGroupFallbackResolver func(context.Context, *apikey.APIKey, int64, p
 // provideFundingAdmission 复用唯一权益缓存和现有 RPM 存储，资金检查通过后才累计 RPM。
 func provideFundingAdmission(funds *billing.Eligibility, rpm scheduler.UserRPMCache, rates billing.UserGroupRateRepository) *admission.FundingAdmission {
 	limiter := scheduler.NewRPMAdmission(rpm, rates, scheduler.Diagnostics{Logf: logging.LegacyPrintf})
-	return admission.NewFundingAdmission(funds, limiter)
+	checker := admission.NewFundingAdmission(funds, limiter)
+	checker.Rates, _ = rates.(billing.EffectiveRateReader)
+	return checker
 }
 
 func provideRuntimeGroupFallbackResolver(keys *apikey.APIKeyService, funding *admission.FundingAdmission, subscriptions *billing.SubscriptionService, cache session.GatewayCache) runtimeGroupFallbackResolver {

@@ -5,6 +5,9 @@ import ChannelMonitorView from '../ChannelMonitorView.vue'
 import channelMonitor from '@/i18n/locales/zh/channelMonitor'
 import { getChannelMonitor } from '@/api/channelMonitor'
 
+const auth = vi.hoisted(() => ({ isAuthenticated: false, isAdmin: false }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
+vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div data-test="app-layout"><aside data-test="sidebar" /><slot /></div>' } }))
 vi.mock('@/api/channelMonitor', () => ({ getChannelMonitor: vi.fn() }))
 vi.mock('@/components/layout/AppHeader.vue', () => ({ default: { template: '<header />' } }))
 vi.mock('vue-i18n', async () => {
@@ -18,11 +21,13 @@ vi.mock('vue-i18n', async () => {
 const response = { generated_at: '2026-10-13T00:00:00Z', window_minutes: 90, slot_seconds: 270, refresh_seconds: 30, monitoring_enabled: true, channels: [] }
 
 function render() {
-  return mount(ChannelMonitorView, { global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh: { channelMonitor } } })], stubs: { ProviderIcon: true, ChannelMonitorCard: true } } })
+  return mount(ChannelMonitorView, { global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh: { channelMonitor } } })], stubs: { ProviderIcon: true, ChannelMonitorCard: true, ChannelMonitorSettings: true } } })
 }
 
 describe('ChannelMonitorView', () => {
   beforeEach(() => {
+    auth.isAuthenticated = false
+    auth.isAdmin = false
     vi.useFakeTimers()
     vi.mocked(getChannelMonitor).mockReset().mockResolvedValue(response)
     vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
@@ -69,6 +74,55 @@ describe('ChannelMonitorView', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('渠道监控暂未开启')
     expect(wrapper.find('.monitor-legend').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the app sidebar for signed-in users and hides configuration', async () => {
+    auth.isAuthenticated = true
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.find('[data-test="sidebar"]').exists()).toBe(true)
+    expect(wrapper.find('header').exists()).toBe(false)
+    expect(wrapper.find('[aria-controls="channel-monitor-settings"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('lets administrators configure monitoring within the app layout', async () => {
+    auth.isAuthenticated = true
+    auth.isAdmin = true
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.find('[data-test="sidebar"]').exists()).toBe(true)
+    await wrapper.get('[aria-controls="channel-monitor-settings"]').trigger('click')
+    expect(wrapper.findComponent({ name: 'ChannelMonitorSettings' }).exists()).toBe(true)
+    wrapper.findComponent({ name: 'ChannelMonitorSettings' }).vm.$emit('saved')
+    await flushPromises()
+    expect(getChannelMonitor).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('keeps guests on the public layout without configuration', async () => {
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.find('header').exists()).toBe(true)
+    expect(wrapper.find('[data-test="sidebar"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-controls="channel-monitor-settings"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('refreshes again when settings are saved during an in-flight poll', async () => {
+    auth.isAuthenticated = true
+    auth.isAdmin = true
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[aria-controls="channel-monitor-settings"]').trigger('click')
+    let finish: (value: typeof response) => void = () => {}
+    vi.mocked(getChannelMonitor).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    await vi.advanceTimersByTimeAsync(30000)
+    wrapper.findComponent({ name: 'ChannelMonitorSettings' }).vm.$emit('saved')
+    finish(response)
+    await flushPromises()
+    expect(getChannelMonitor).toHaveBeenCalledTimes(3)
     wrapper.unmount()
   })
 })

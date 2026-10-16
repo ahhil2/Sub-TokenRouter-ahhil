@@ -15,6 +15,21 @@ const (
 	ChannelMonitorRefresh = 30 * time.Second
 )
 
+var ErrInvalidMonitorConfig = errors.New("invalid channel monitor configuration")
+
+type ChannelMonitorGroupConfig struct {
+	GroupID int64  `json:"group_id"`
+	Enabled bool   `json:"enabled"`
+	Status  string `json:"status"`
+}
+
+type ChannelMonitorGroupOption struct {
+	ChannelMonitorGroupConfig
+	Name     string `json:"name"`
+	Brand    string `json:"brand"`
+	Eligible bool   `json:"eligible"`
+}
+
 type ChannelMonitorMetrics struct {
 	Requests     int64    `json:"requests"`
 	Successes    int64    `json:"successes"`
@@ -34,6 +49,7 @@ type MonitoredChannel struct {
 	Name           string  `json:"name"`
 	Brand          string  `json:"brand"`
 	RateMultiplier float64 `json:"rate_multiplier"`
+	StatusOverride string  `json:"status_override"`
 	ChannelMonitorMetrics
 	Slots []ChannelMonitorSlot `json:"slots"`
 }
@@ -49,6 +65,8 @@ type ChannelMonitorSnapshot struct {
 
 type ChannelMonitorRepository interface {
 	ReadChannelMonitor(context.Context, time.Time) (*ChannelMonitorSnapshot, error)
+	ReadChannelMonitorConfig(context.Context) ([]ChannelMonitorGroupOption, error)
+	SaveChannelMonitorConfig(context.Context, []ChannelMonitorGroupConfig) error
 }
 
 type ChannelMonitor struct {
@@ -57,6 +75,7 @@ type ChannelMonitor struct {
 	cached     *ChannelMonitorSnapshot
 	expires    time.Time
 	load       singleflight.Group
+	configLock sync.RWMutex
 }
 
 func NewChannelMonitor(repository ChannelMonitorRepository) *ChannelMonitor {
@@ -68,6 +87,8 @@ func (monitor *ChannelMonitor) Snapshot(ctx context.Context) (*ChannelMonitorSna
 		return snapshot, nil
 	}
 	result := monitor.load.DoChan("snapshot", func() (any, error) {
+		monitor.configLock.RLock()
+		defer monitor.configLock.RUnlock()
 		if snapshot := monitor.fresh(); snapshot != nil {
 			return snapshot, nil
 		}
@@ -104,6 +125,39 @@ func (monitor *ChannelMonitor) Snapshot(ctx context.Context) (*ChannelMonitorSna
 		}
 		return snapshot, nil
 	}
+}
+
+func (monitor *ChannelMonitor) Configuration(ctx context.Context) ([]ChannelMonitorGroupOption, error) {
+	return monitor.repository.ReadChannelMonitorConfig(ctx)
+}
+
+func (monitor *ChannelMonitor) SaveConfiguration(ctx context.Context, groups []ChannelMonitorGroupConfig) error {
+	if groups == nil || len(groups) > 200 {
+		return ErrInvalidMonitorConfig
+	}
+	seen := make(map[int64]bool, len(groups))
+	for _, group := range groups {
+		if group.GroupID <= 0 || seen[group.GroupID] {
+			return ErrInvalidMonitorConfig
+		}
+		seen[group.GroupID] = true
+		switch group.Status {
+		case "auto", "operational", "degraded", "failed", "maintenance":
+		default:
+			return ErrInvalidMonitorConfig
+		}
+	}
+	monitor.configLock.Lock()
+	defer monitor.configLock.Unlock()
+	if err := monitor.repository.SaveChannelMonitorConfig(ctx, groups); err != nil {
+		return err
+	}
+	monitor.mutex.Lock()
+	monitor.cached = nil
+	monitor.expires = time.Time{}
+	monitor.mutex.Unlock()
+	monitor.load.Forget("snapshot")
+	return nil
 }
 
 func (monitor *ChannelMonitor) fresh() *ChannelMonitorSnapshot {

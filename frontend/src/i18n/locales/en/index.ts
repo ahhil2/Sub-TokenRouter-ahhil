@@ -9,8 +9,10 @@ import team from './team'
 import requests from './requests'
 import pelican from './pelican'
 import channelMonitor from './channelMonitor'
+import identityGroups from './identityGroups'
 
 export default {
+  identityGroups,
   channelMonitor,
   pelican,
   requests,

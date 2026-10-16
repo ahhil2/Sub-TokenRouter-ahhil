@@ -75,6 +75,8 @@ func provideAuthRouteMount(eModelMarketplace *routinghttp.MarketplaceHandler,
 		notificationhttp.RegisterUnsubscribeRoute(public, eNotification)
 		routinghttp.RegisterPublicMarketplaceRoutes(v1, eModelMarketplace)
 		opshttp.RegisterChannelMonitorRoutes(v1, eChannelMonitor, security.Panel.PublicIP())
+		monitorAdmin := v1.Group("/admin", security.Admin, security.Panel.Global(), security.Audit)
+		opshttp.RegisterChannelMonitorAdminRoutes(monitorAdmin, eChannelMonitor)
 		sitehttp.RegisterPelicanPublicRoutes(v1, ePelican, security.Panel.PublicIP())
 		identityhttp.RegisterSessionRoutes(v1, eAuth, guards)
 	}
@@ -124,6 +126,7 @@ func provideUserRouteMount(
 	eTeam *teamhttp.UserHandler,
 	eTotp *identityhttp.TotpHandler,
 	eUser *identityhttp.UserHandler,
+	eMemberGroups *identityhttp.MemberGroupHandler,
 ) userRouteMount {
 	return func(v1 *gin.RouterGroup, security httpRouteSecurity) {
 		authenticated := v1.Group("")
@@ -134,6 +137,7 @@ func provideUserRouteMount(
 		// 用户管理面变更类操作入审计（含 TOTP 启用/禁用、step-up 验证、密码修改等安全事件）
 		authenticated.Use(security.Audit)
 		identityhttp.RegisterUserRoutes(authenticated, eUser, eTotp, ePasskey)
+		authenticated.GET("/user/identity-groups", eMemberGroups.Self)
 		promotionhttp.RegisterUserRoutes(authenticated, eUserPromotion)
 		apikeyhttp.RegisterUserRoutes(authenticated, eAPIKey)
 		teamhttp.RegisterUserRoutes(authenticated, eTeam, security.StepUp)

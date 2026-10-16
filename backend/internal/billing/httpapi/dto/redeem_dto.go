@@ -4,21 +4,24 @@ import (
 	"bytes"
 	"encoding/json"
 	"time"
+
+	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
 type RedeemCode struct {
-	RequiresPayment bool       `json:"requires_payment"` // 领取者需要有成功付款记录
-	ID              int64      `json:"id"`
-	Code            string     `json:"code"`
-	Type            string     `json:"type"`
-	Value           float64    `json:"value"`
-	Status          string     `json:"status"`
-	MaxUses         int        `json:"max_uses"`
-	UsedCount       int        `json:"used_count"`
-	ExpiresAt       *time.Time `json:"expires_at"`
-	UsedBy          *int64     `json:"used_by"` // 最后一次成功兑换的用户
-	UsedAt          *time.Time `json:"used_at"` // 最后一次成功兑换的时间
-	CreatedAt       time.Time  `json:"created_at"`
+	RechargeSnapshot *billing.RechargeSnapshot `json:"recharge_snapshot,omitempty"`
+	RequiresPayment  bool                      `json:"requires_payment"` // 领取者需要有成功付款记录
+	ID               int64                     `json:"id"`
+	Code             string                    `json:"code"`
+	Type             string                    `json:"type"`
+	Value            float64                   `json:"value"`
+	Status           string                    `json:"status"`
+	MaxUses          int                       `json:"max_uses"`
+	UsedCount        int                       `json:"used_count"`
+	ExpiresAt        *time.Time                `json:"expires_at"`
+	UsedBy           *int64                    `json:"used_by"` // 最后一次成功兑换的用户
+	UsedAt           *time.Time                `json:"used_at"` // 最后一次成功兑换的时间
+	CreatedAt        time.Time                 `json:"created_at"`
 
 	PlanID *int64 `json:"plan_id"`
 

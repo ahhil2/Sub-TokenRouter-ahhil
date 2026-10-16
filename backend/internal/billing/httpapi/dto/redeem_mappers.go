@@ -26,20 +26,21 @@ func RedeemCodeFromServiceAdmin(rc *billing.RedeemCode) *AdminRedeemCode {
 
 func RedeemCodeFromServiceBase(rc *billing.RedeemCode) RedeemCode {
 	out := RedeemCode{
-		RequiresPayment: rc.RequiresPayment,
-		ID:              rc.ID,
-		Code:            rc.Code,
-		Type:            rc.Type,
-		Value:           rc.Value,
-		Status:          rc.Status,
-		MaxUses:         rc.MaxUses,
-		UsedCount:       rc.UsedCount,
-		ExpiresAt:       rc.ExpiresAt,
-		UsedBy:          rc.UsedBy,
-		UsedAt:          rc.UsedAt,
-		CreatedAt:       rc.CreatedAt,
-		PlanID:          rc.PlanID,
-		User:            UserSummaryFromBilling(rc.User),
+		RechargeSnapshot: rc.RechargeSnapshot,
+		RequiresPayment:  rc.RequiresPayment,
+		ID:               rc.ID,
+		Code:             rc.Code,
+		Type:             rc.Type,
+		Value:            rc.Value,
+		Status:           rc.Status,
+		MaxUses:          rc.MaxUses,
+		UsedCount:        rc.UsedCount,
+		ExpiresAt:        rc.ExpiresAt,
+		UsedBy:           rc.UsedBy,
+		UsedAt:           rc.UsedAt,
+		CreatedAt:        rc.CreatedAt,
+		PlanID:           rc.PlanID,
+		User:             UserSummaryFromBilling(rc.User),
 	}
 
 	// For admin_balance/admin_concurrency types, include notes so users can see

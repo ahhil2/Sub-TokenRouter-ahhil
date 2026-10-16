@@ -939,6 +939,7 @@ var (
 	// PaymentOrdersColumns holds the columns for the "payment_orders" table.
 	PaymentOrdersColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "recharge_snapshot", Type: field.TypeJSON, Nullable: true},
 		{Name: "user_email", Type: field.TypeString, Size: 255},
 		{Name: "user_name", Type: field.TypeString, Size: 100},
 		{Name: "user_notes", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
@@ -995,7 +996,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "payment_orders_users_payment_orders",
-				Columns:    []*schema.Column{PaymentOrdersColumns[47]},
+				Columns:    []*schema.Column{PaymentOrdersColumns[48]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -1004,7 +1005,7 @@ var (
 			{
 				Name:    "paymentorder_out_trade_no",
 				Unique:  true,
-				Columns: []*schema.Column{PaymentOrdersColumns[11]},
+				Columns: []*schema.Column{PaymentOrdersColumns[12]},
 				Annotation: &entsql.IndexAnnotation{
 					Where: "out_trade_no <> ''",
 				},
@@ -1012,37 +1013,37 @@ var (
 			{
 				Name:    "paymentorder_user_id",
 				Unique:  false,
-				Columns: []*schema.Column{PaymentOrdersColumns[47]},
+				Columns: []*schema.Column{PaymentOrdersColumns[48]},
 			},
 			{
 				Name:    "paymentorder_status",
 				Unique:  false,
-				Columns: []*schema.Column{PaymentOrdersColumns[29]},
+				Columns: []*schema.Column{PaymentOrdersColumns[30]},
 			},
 			{
 				Name:    "paymentorder_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{PaymentOrdersColumns[37]},
+				Columns: []*schema.Column{PaymentOrdersColumns[38]},
 			},
 			{
 				Name:    "paymentorder_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{PaymentOrdersColumns[45]},
+				Columns: []*schema.Column{PaymentOrdersColumns[46]},
 			},
 			{
 				Name:    "paymentorder_paid_at",
 				Unique:  false,
-				Columns: []*schema.Column{PaymentOrdersColumns[38]},
+				Columns: []*schema.Column{PaymentOrdersColumns[39]},
 			},
 			{
 				Name:    "paymentorder_payment_type_paid_at",
 				Unique:  false,
-				Columns: []*schema.Column{PaymentOrdersColumns[12], PaymentOrdersColumns[38]},
+				Columns: []*schema.Column{PaymentOrdersColumns[13], PaymentOrdersColumns[39]},
 			},
 			{
 				Name:    "paymentorder_order_type",
 				Unique:  false,
-				Columns: []*schema.Column{PaymentOrdersColumns[23]},
+				Columns: []*schema.Column{PaymentOrdersColumns[24]},
 			},
 		},
 	}
@@ -1498,6 +1499,7 @@ var (
 	// RedeemCodeUsagesColumns holds the columns for the "redeem_code_usages" table.
 	RedeemCodeUsagesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "recharge_snapshot", Type: field.TypeJSON, Nullable: true},
 		{Name: "used_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "redeem_code_id", Type: field.TypeInt64},
 		{Name: "user_id", Type: field.TypeInt64},
@@ -1510,13 +1512,13 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "redeem_code_usages_redeem_codes_usage_records",
-				Columns:    []*schema.Column{RedeemCodeUsagesColumns[2]},
+				Columns:    []*schema.Column{RedeemCodeUsagesColumns[3]},
 				RefColumns: []*schema.Column{RedeemCodesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "redeem_code_usages_users_redeem_code_usages",
-				Columns:    []*schema.Column{RedeemCodeUsagesColumns[3]},
+				Columns:    []*schema.Column{RedeemCodeUsagesColumns[4]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -1525,17 +1527,17 @@ var (
 			{
 				Name:    "redeemcodeusage_redeem_code_id",
 				Unique:  false,
-				Columns: []*schema.Column{RedeemCodeUsagesColumns[2]},
+				Columns: []*schema.Column{RedeemCodeUsagesColumns[3]},
 			},
 			{
 				Name:    "redeemcodeusage_user_id",
 				Unique:  false,
-				Columns: []*schema.Column{RedeemCodeUsagesColumns[3]},
+				Columns: []*schema.Column{RedeemCodeUsagesColumns[4]},
 			},
 			{
 				Name:    "redeemcodeusage_redeem_code_id_user_id",
 				Unique:  true,
-				Columns: []*schema.Column{RedeemCodeUsagesColumns[2], RedeemCodeUsagesColumns[3]},
+				Columns: []*schema.Column{RedeemCodeUsagesColumns[3], RedeemCodeUsagesColumns[4]},
 			},
 		},
 	}

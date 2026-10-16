@@ -81,6 +81,7 @@ func provideAdminRouteMount(eAdminTLSFingerprintProfile *routeegress.TLSFingerpr
 	eAdminUser *routeidentity.AdminUserHandler[dto.APIKey[routingdto.Group]],
 	eAdminOps *routeops.OpsHandler,
 	eSearch *routesearch.Handler,
+	eMemberGroups *routeidentity.MemberGroupHandler,
 ) adminRouteMount {
 	return func(v1 *gin.RouterGroup, security httpRouteSecurity, protocolCatalog gin.HandlerFunc) {
 		admin := v1.Group("/admin")
@@ -90,6 +91,7 @@ func provideAdminRouteMount(eAdminTLSFingerprintProfile *routeegress.TLSFingerpr
 		// 审计中间件挂在认证之后：所有管理面变更类操作 + 敏感读取入审计日志
 		admin.Use(security.Audit)
 		admin.Use(middleware.ProviderTerminology())
+		routeidentity.RegisterMemberGroupAdminRoutes(admin, eMemberGroups)
 		routesite.RegisterPelicanAdminRoutes(admin, ePelican)
 		{
 			// 只读能力目录：提供商与分组表单共用后端定义。

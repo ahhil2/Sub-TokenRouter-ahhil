@@ -10,7 +10,8 @@ const { t, locale } = useI18n()
 const activeSlot = ref<number | null>(null)
 const active = computed(() => activeSlot.value === null ? null : props.channel.slots[activeSlot.value])
 const tooltipID = computed(() => `channel-${props.channel.id}-slot-tooltip`)
-const status = computed(() => channelStatus(props.channel.availability))
+const manualStatus = computed(() => props.channel.status_override && props.channel.status_override !== 'auto' ? props.channel.status_override : null)
+const status = computed(() => manualStatus.value ?? channelStatus(props.channel.availability))
 const tooltipPosition = computed(() => `${((activeSlot.value ?? 0) + 0.5) / props.channel.slots.length * 100}%`)
 const timeFormatter = computed(() => new Intl.DateTimeFormat(locale.value, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }))
 
@@ -36,7 +37,7 @@ function slotLabel(index: number) {
           <span class="monitor-multiplier" :title="t('channelMonitor.multiplierHint')">{{ t('channelMonitor.multiplier') }} <b>{{ channel.rate_multiplier }}×</b></span>
         </div>
       </div>
-      <span class="monitor-status" :data-status="status">{{ t(`channelMonitor.status.${status}`) }}</span>
+      <span class="monitor-status" :data-status="status" :title="manualStatus ? t('channelMonitor.manualStatusHint') : undefined">{{ t(`channelMonitor.status.${status}`) }}<small v-if="manualStatus"> · {{ t('channelMonitor.manual') }}</small></span>
     </div>
 
     <dl class="monitor-metrics">
@@ -92,6 +93,7 @@ h3 { margin: 0 0 9px; font-size: 23px; line-height: 1.3; font-weight: 750; lette
 .monitor-status { flex-shrink: 0; padding: 5px 12px; border-radius: 9999px; font-size: 13px; line-height: 1.5; font-weight: 650; background: var(--monitor-mint); color: var(--monitor-accent-text); }
 .monitor-status[data-status='unknown'] { background: var(--monitor-surface); color: var(--monitor-muted); }
 .monitor-status[data-status='degraded'] { background: var(--monitor-warning-bg); color: var(--monitor-warning-text); }
+.monitor-status[data-status='maintenance'] { background: var(--monitor-warning-bg); color: var(--monitor-warning-text); }
 .monitor-status[data-status='failed'] { background: var(--monitor-danger-bg); color: var(--monitor-danger-text); }
 .monitor-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 30px; }
 .monitor-metrics > div { background: var(--monitor-surface); border: 1px solid var(--monitor-border); border-radius: var(--radius-monitor-23); padding: 18px 15px; }

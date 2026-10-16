@@ -3,6 +3,7 @@
 package ent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/redeemcode"
 	"github.com/TokenFlux/TokenRouter/ent/redeemcodeusage"
 	"github.com/TokenFlux/TokenRouter/ent/user"
+	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
 // RedeemCodeUsage is the model entity for the RedeemCodeUsage schema.
@@ -19,6 +21,8 @@ type RedeemCodeUsage struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int64 `json:"id,omitempty"`
+	// RechargeSnapshot holds the value of the "recharge_snapshot" field.
+	RechargeSnapshot *billing.RechargeSnapshot `json:"recharge_snapshot,omitempty"`
 	// RedeemCodeID holds the value of the "redeem_code_id" field.
 	RedeemCodeID int64 `json:"redeem_code_id,omitempty"`
 	// UserID holds the value of the "user_id" field.
@@ -69,6 +73,8 @@ func (*RedeemCodeUsage) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
+		case redeemcodeusage.FieldRechargeSnapshot:
+			values[i] = new([]byte)
 		case redeemcodeusage.FieldID, redeemcodeusage.FieldRedeemCodeID, redeemcodeusage.FieldUserID:
 			values[i] = new(sql.NullInt64)
 		case redeemcodeusage.FieldUsedAt:
@@ -93,7 +99,15 @@ func (_m *RedeemCodeUsage) assignValues(columns []string, values []any) error {
 			if !ok {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
-			_m.ID = value.Int64
+			_m.ID = int64(value.Int64)
+		case redeemcodeusage.FieldRechargeSnapshot:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field recharge_snapshot", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.RechargeSnapshot); err != nil {
+					return fmt.Errorf("unmarshal field recharge_snapshot: %w", err)
+				}
+			}
 		case redeemcodeusage.FieldRedeemCodeID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field redeem_code_id", values[i])
@@ -158,6 +172,9 @@ func (_m *RedeemCodeUsage) String() string {
 	var builder strings.Builder
 	builder.WriteString("RedeemCodeUsage(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("recharge_snapshot=")
+	builder.WriteString(fmt.Sprintf("%v", _m.RechargeSnapshot))
+	builder.WriteString(", ")
 	builder.WriteString("redeem_code_id=")
 	builder.WriteString(fmt.Sprintf("%v", _m.RedeemCodeID))
 	builder.WriteString(", ")

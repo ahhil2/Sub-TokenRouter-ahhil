@@ -19,6 +19,29 @@ export interface MonitoredChannel extends ChannelMetrics {
   brand: string
   rate_multiplier: number
   slots: ChannelSlot[]
+  status_override?: ChannelMonitorStatus
+}
+
+export type ChannelMonitorStatus = 'auto' | 'operational' | 'degraded' | 'failed' | 'maintenance'
+
+export interface ChannelMonitorGroupConfig {
+  group_id: number
+  enabled: boolean
+  status: ChannelMonitorStatus
+}
+
+export interface ChannelMonitorGroupOption extends ChannelMonitorGroupConfig {
+  name: string
+  brand: string
+  eligible: boolean
+}
+
+export async function getChannelMonitorConfig(signal?: AbortSignal): Promise<ChannelMonitorGroupOption[]> {
+  return (await apiClient.get<{ groups: ChannelMonitorGroupOption[] }>('/admin/channel-monitors/config', { signal })).data.groups
+}
+
+export async function saveChannelMonitorConfig(groups: ChannelMonitorGroupConfig[]): Promise<void> {
+  await apiClient.put('/admin/channel-monitors/config', { groups })
 }
 
 export interface ChannelMonitorSnapshot {

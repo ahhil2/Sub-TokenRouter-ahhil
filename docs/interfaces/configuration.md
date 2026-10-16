@@ -123,6 +123,8 @@ setup 的数据库和 Redis 连接测试由精简版 bootstrap 执行，输入�
 <a id="runtime_settings"></a>
 ## 数据库运行时设置
 
+渠道监控的展示分组与手动状态保存在 `settings` 的 `channel_monitor_groups` 键中，值为 JSON 数组。默认空列表，由管理员通过专用配置接口保存，成功后清空当前进程的监控快照缓存。字段和公开资格见[渠道监控](../operations/channel_monitoring.md)。
+
 `settings` 是一张 `key/value/updated_at` 表，删除某个键表示恢复它的 getter 的默认行为。`settings.Store` 和它的 PostgreSQL 适配层负责通用的读写、版本字段和更新通知。身份的注册、安全和验证码设置，OAuth 配置的解释，提供商冷却，推广开关，用量排行，审计保留期和网关策略，分别由所属模块读取和解释；面板限流的配置和缓存在 `server/runtimeconfig`。
 
 运行时设置包括：注册和邮件验证、第三方登录、SMTP、TOTP、会话绑定、step-up、登录协议、面板限流、部分冷却和流超时、支付展示，以及各种功能开关。不同 getter 在缺键时的回退值，可能来自代码常量，也可能来自 app 传入的启动选项，所以缺失的键不一定等于 `false`。

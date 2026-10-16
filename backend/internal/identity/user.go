@@ -28,9 +28,10 @@ const (
 var ErrUserNotFound = billing.ErrUserNotFound
 
 type User struct {
-	Subscriptions []billing.UserSubscription
-	ID            int64
-	Email         string
+	IdentityGroups []string
+	Subscriptions  []billing.UserSubscription
+	ID             int64
+	Email          string
 	// PreferredLocale 为空时使用浏览器或站点默认语言。
 	PreferredLocale *string
 	Username        string

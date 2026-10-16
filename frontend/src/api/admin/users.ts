@@ -67,6 +67,7 @@ export async function list(
   page: number = 1,
   pageSize: number = 20,
   filters?: {
+    identity_group?: string
     status?: 'active' | 'disabled'
     role?: 'admin' | 'user'
     search?: string
@@ -83,6 +84,7 @@ export async function list(
 ): Promise<PaginatedResponse<AdminUser>> {
   // Build params with attribute filters in attr[id]=value format
   const params: Record<string, any> = {
+    identity_group: filters?.identity_group,
     page,
     page_size: pageSize,
     status: filters?.status,

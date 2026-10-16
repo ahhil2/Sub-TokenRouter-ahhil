@@ -34,6 +34,7 @@ func OrderFromEntity(v *dbent.PaymentOrder) *payment.Order {
 		PaymentInvoicePdfURL: v.PaymentInvoicePdfURL,
 		PaymentInvoiceStatus: v.PaymentInvoiceStatus,
 		BillingSnapshot:      v.BillingSnapshot,
+		RechargeSnapshot:     v.RechargeSnapshot,
 		OrderType:            v.OrderType,
 		PlanID:               v.PlanID,
 		PlanSnapshot:         v.PlanSnapshot,

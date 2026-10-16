@@ -6,6 +6,7 @@
 //   - subscription_service.go：分配、延长、撤销订阅并维护额度窗口。
 //
 // 文件分组：
+//   - identity_rates.go、recharge_bonus.go：身份倍率解析和充值赠送快照。
 //   - calculator.go、price_resolver.go、default_catalog.go：查询价格配置和模型目录，计算费用。
 //   - public_quote.go、media_pricing.go：生成公开报价并查询图片单价。
 //   - settlement*.go、funds.go、allocation.go：分配订阅与余额扣款，执行结算并更新缓存。

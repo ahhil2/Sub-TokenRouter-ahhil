@@ -1,6 +1,7 @@
 <template>
   <!-- 支付信息以单列居中展示，并限制宽度。 -->
   <div class="mx-auto w-full max-w-md">
+    <RechargeBreakdown :snapshot="paidOrder?.recharge_snapshot ?? props.rechargeSnapshot" class="card mb-4 p-4" />
     <!-- 终态：展示结果，由用户确认后返回 -->
 
     <!-- 支付成功 -->
@@ -229,6 +230,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import RechargeBreakdown from './RechargeBreakdown.vue'
 import { usePaymentStore } from '@/stores/payment'
 import { useAppStore } from '@/stores'
 import { paymentAPI } from '@/api/payment'
@@ -249,6 +251,7 @@ import {
 } from './alipayDeepLink'
 
 const props = defineProps<{
+  rechargeSnapshot?: import('@/api/identityGroups').RechargeSnapshot | null
   orderId: number
   amount?: number
   payAmount?: number

@@ -67,7 +67,7 @@ func TestCreateOrderInTx_WritesProviderSnapshot(t *testing.T) {
 		Save(ctx)
 	require.NoError(t, err)
 
-	svc := payment.NewCheckout(NewOrderStore(client), nil, nil, nil, payment.CheckoutRuntime{})
+	svc := payment.NewCheckout(NewOrderStore(client), nil, nil, nil, payment.CheckoutRuntime{RechargeIdentity: func(context.Context, int64) (string, error) { return "bonus_10", nil }})
 	order, err := svc.CreateOrderInTx(
 		ctx,
 		payment.CreateOrderRequest{
@@ -102,6 +102,9 @@ func TestCreateOrderInTx_WritesProviderSnapshot(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatInt(instance.ID, 10), valueOrEmpty(order.ProviderInstanceID))
+	require.Equal(t, 88.0, order.RechargeSnapshot.BaseAmount)
+	require.Equal(t, 8.8, order.RechargeSnapshot.BonusAmount)
+	require.Equal(t, 96.8, order.RechargeSnapshot.CreditedAmount)
 	require.Equal(t, payment.TypeAlipay, valueOrEmpty(order.ProviderKey))
 	require.Equal(t, float64(2), order.ProviderSnapshot["schema_version"])
 	require.Equal(t, strconv.FormatInt(instance.ID, 10), order.ProviderSnapshot["provider_instance_id"])

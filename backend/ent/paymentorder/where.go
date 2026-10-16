@@ -275,6 +275,16 @@ func UpdatedAt(v time.Time) predicate.PaymentOrder {
 	return predicate.PaymentOrder(sql.FieldEQ(FieldUpdatedAt, v))
 }
 
+// RechargeSnapshotIsNil applies the IsNil predicate on the "recharge_snapshot" field.
+func RechargeSnapshotIsNil() predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldIsNull(FieldRechargeSnapshot))
+}
+
+// RechargeSnapshotNotNil applies the NotNil predicate on the "recharge_snapshot" field.
+func RechargeSnapshotNotNil() predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldNotNull(FieldRechargeSnapshot))
+}
+
 // UserIDEQ applies the EQ predicate on the "user_id" field.
 func UserIDEQ(v int64) predicate.PaymentOrder {
 	return predicate.PaymentOrder(sql.FieldEQ(FieldUserID, v))

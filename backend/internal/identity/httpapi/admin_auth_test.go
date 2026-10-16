@@ -126,6 +126,50 @@ func TestAdminAuthJWTValidatesTokenVersion(t *testing.T) {
 	})
 }
 
+func TestAdminAuthProtectsIdentityGroupRoutes(t *testing.T) {
+	authService := identity.NewSessionService(identity.SessionOptions{Secret: "test-secret", ExpireHour: 1}, nil, nil, nil, nil)
+	user := &identity.User{ID: 7, Email: "member@example.com", Role: identity.RoleUser, Status: billing.StatusActive, TokenVersion: 1}
+	userRepo := &stubUserRepo{getByID: func(context.Context, int64) (*identity.User, error) {
+		return user, nil
+	}}
+	userService := identity.NewUserService(userRepo, nil, nil, nil, nil)
+	token, err := authService.GenerateToken(context.Background(), user)
+	require.NoError(t, err)
+	router := gin.New()
+	admin := router.Group("/admin", identityhttp.AdminAuth(authService, userService, nil, nil))
+	identityhttp.RegisterMemberGroupAdminRoutes(admin, &identityhttp.MemberGroupHandler{})
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/admin/identity-groups"},
+		{http.MethodGet, "/admin/identity-groups/users"},
+		{http.MethodGet, "/admin/identity-groups/bonus_5/members"},
+		{http.MethodPut, "/admin/identity-groups/bonus_5/members"},
+		{http.MethodGet, "/admin/identity-groups/ahhilai/rates"},
+		{http.MethodPut, "/admin/identity-groups/ahhilai/rates"},
+	} {
+		for _, scenario := range []struct {
+			name   string
+			token  string
+			status int
+		}{
+			{"anonymous", "", http.StatusUnauthorized},
+			{"non-admin", token, http.StatusForbidden},
+		} {
+			t.Run(route.method+route.path+"/"+scenario.name, func(t *testing.T) {
+				request := httptest.NewRequest(route.method, route.path, nil)
+				if scenario.token != "" {
+					request.Header.Set("Authorization", "Bearer "+scenario.token)
+				}
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				require.Equal(t, scenario.status, response.Code)
+			})
+		}
+	}
+}
+
 func (s *stubUserRepo) Create(ctx context.Context, user *identity.User) error {
 	panic("unexpected Create call")
 }

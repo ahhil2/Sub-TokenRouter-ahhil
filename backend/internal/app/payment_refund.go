@@ -63,6 +63,7 @@ func providePaymentRuntime(client *dbent.Client, registry *payment.Registry, bal
 	signing, fallbacks := payment.ResolvePaymentResumeSigningKeys(os.Getenv("PAYMENT_RESUME_SIGNING_KEY"), []byte(key))
 	resume := payment.NewPaymentResumeService(signing, fallbacks...)
 	checkout := payment.NewCheckout(orders, coreConfig, payment.NewVisibleMethodLoadBalancer(balancer, coreConfig), resume, payment.CheckoutRuntime{
+		RechargeIdentity: identitypostgres.NewMemberGroupStore(client).RechargeIdentity,
 		User: func(ctx context.Context, id int64) (*payment.Buyer, error) {
 			u, e := identityUsers.GetByID(ctx, id)
 			if u == nil {

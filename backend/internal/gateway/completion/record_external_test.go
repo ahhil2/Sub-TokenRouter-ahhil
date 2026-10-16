@@ -3406,7 +3406,8 @@ func TestOpenAIGatewayServiceRecordUsage_SubscriptionBillingUsesPlanGroupRateOve
 	require.InDelta(t, 0.5, usageRepo.LastLog.RateMultiplier, 1e-12)
 	require.InDelta(t, expectedCost.ActualCost, usageRepo.LastLog.ActualCost, 1e-12)
 	require.InDelta(t, expectedCost.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
-	require.Equal(t, 0, rateRepo.Calls)
+	require.InDelta(t, userGroupRate, billingRepo.LastCmd.BalanceRateMultiplier, 1e-12)
+	require.Equal(t, 1, rateRepo.Calls)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_InferredSubscriptionUsesPlanGroupRate(t *testing.T) {
@@ -3477,7 +3478,8 @@ func TestOpenAIGatewayServiceRecordUsage_InferredSubscriptionUsesPlanGroupRate(t
 	require.InDelta(t, 0.5, usageRepo.LastLog.RateMultiplier, 1e-12)
 	require.InDelta(t, expectedCost.ActualCost, usageRepo.LastLog.ActualCost, 1e-12)
 	require.InDelta(t, expectedCost.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
-	require.Equal(t, 0, rateRepo.Calls)
+	require.InDelta(t, userGroupRate, billingRepo.LastCmd.BalanceRateMultiplier, 1e-12)
+	require.Equal(t, 1, rateRepo.Calls)
 	require.Equal(t, 1, billingRepo.ResolveCalls)
 }
 

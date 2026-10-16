@@ -32,8 +32,42 @@ type recordEffects struct{ events *[]string }
 
 type recordModels struct{}
 
+type recordIdentityRates struct {
+	rate    float64
+	err     error
+	payerID int64
+}
+
 // recordPriceCatalog 仅为资金和日志时序测试提供明确目录价。
 type recordPriceCatalog struct{}
+
+func (rates *recordIdentityRates) Resolve(context.Context, int64, int64, float64) float64 {
+	return rates.rate
+}
+
+func (rates *recordIdentityRates) ResolveChecked(_ context.Context, payerID, _ int64, _ float64) (float64, error) {
+	rates.payerID = payerID
+	return rates.rate, rates.err
+}
+
+func TestRecordUsesPayerIdentityRates(t *testing.T) {
+	for _, openAI := range []bool{false, true} {
+		for _, rate := range []float64{0, 0.2} {
+			core, funds, _, input, _ := recordFixture()
+			groupID := int64(6)
+			input.APIKey.GroupID = &groupID
+			input.APIKey.Group = &GroupSnapshot{ID: groupID, RateMultiplier: 1}
+			rates := &recordIdentityRates{rate: rate}
+			core.rates = rates
+			require.NoError(t, core.Record(context.Background(), input, openAI))
+			require.Equal(t, input.User.ID, rates.payerID)
+			require.Equal(t, rate, funds.command.BalanceRateMultiplier)
+			rates.err = errors.New("identity lookup failed")
+			require.ErrorIs(t, core.Record(context.Background(), input, openAI), rates.err)
+			require.Equal(t, 1, funds.calls)
+		}
+	}
+}
 
 func (s *recordStore) Apply(ctx context.Context, c *billing.UsageBillingCommand) (*billing.UsageBillingApplyResult, error) {
 	s.calls++

@@ -70,6 +70,16 @@ func UsedAt(v time.Time) predicate.RedeemCodeUsage {
 	return predicate.RedeemCodeUsage(sql.FieldEQ(FieldUsedAt, v))
 }
 
+// RechargeSnapshotIsNil applies the IsNil predicate on the "recharge_snapshot" field.
+func RechargeSnapshotIsNil() predicate.RedeemCodeUsage {
+	return predicate.RedeemCodeUsage(sql.FieldIsNull(FieldRechargeSnapshot))
+}
+
+// RechargeSnapshotNotNil applies the NotNil predicate on the "recharge_snapshot" field.
+func RechargeSnapshotNotNil() predicate.RedeemCodeUsage {
+	return predicate.RedeemCodeUsage(sql.FieldNotNull(FieldRechargeSnapshot))
+}
+
 // RedeemCodeIDEQ applies the EQ predicate on the "redeem_code_id" field.
 func RedeemCodeIDEQ(v int64) predicate.RedeemCodeUsage {
 	return predicate.RedeemCodeUsage(sql.FieldEQ(FieldRedeemCodeID, v))

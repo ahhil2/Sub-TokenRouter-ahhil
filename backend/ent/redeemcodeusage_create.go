@@ -14,6 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/redeemcode"
 	"github.com/TokenFlux/TokenRouter/ent/redeemcodeusage"
 	"github.com/TokenFlux/TokenRouter/ent/user"
+	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
 // RedeemCodeUsageCreate is the builder for creating a RedeemCodeUsage entity.
@@ -22,6 +23,12 @@ type RedeemCodeUsageCreate struct {
 	mutation *RedeemCodeUsageMutation
 	hooks    []Hook
 	conflict []sql.ConflictOption
+}
+
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (_c *RedeemCodeUsageCreate) SetRechargeSnapshot(v *billing.RechargeSnapshot) *RedeemCodeUsageCreate {
+	_c.mutation.SetRechargeSnapshot(v)
+	return _c
 }
 
 // SetRedeemCodeID sets the "redeem_code_id" field.
@@ -133,7 +140,7 @@ func (_c *RedeemCodeUsageCreate) sqlSave(ctx context.Context) (*RedeemCodeUsage,
 		return nil, err
 	}
 	id := _spec.ID.Value.(int64)
-	_node.ID = id
+	_node.ID = int64(id)
 	_c.mutation.id = &_node.ID
 	_c.mutation.done = true
 	return _node, nil
@@ -145,6 +152,10 @@ func (_c *RedeemCodeUsageCreate) createSpec() (*RedeemCodeUsage, *sqlgraph.Creat
 		_spec = sqlgraph.NewCreateSpec(redeemcodeusage.Table, sqlgraph.NewFieldSpec(redeemcodeusage.FieldID, field.TypeInt64))
 	)
 	_spec.OnConflict = _c.conflict
+	if value, ok := _c.mutation.RechargeSnapshot(); ok {
+		_spec.SetField(redeemcodeusage.FieldRechargeSnapshot, field.TypeJSON, value)
+		_node.RechargeSnapshot = value
+	}
 	if value, ok := _c.mutation.UsedAt(); ok {
 		_spec.SetField(redeemcodeusage.FieldUsedAt, field.TypeTime, value)
 		_node.UsedAt = value
@@ -190,7 +201,7 @@ func (_c *RedeemCodeUsageCreate) createSpec() (*RedeemCodeUsage, *sqlgraph.Creat
 // of the `INSERT` statement. For example:
 //
 //	client.RedeemCodeUsage.Create().
-//		SetRedeemCodeID(v).
+//		SetRechargeSnapshot(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -199,7 +210,7 @@ func (_c *RedeemCodeUsageCreate) createSpec() (*RedeemCodeUsage, *sqlgraph.Creat
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.RedeemCodeUsageUpsert) {
-//			SetRedeemCodeID(v+v).
+//			SetRechargeSnapshot(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *RedeemCodeUsageCreate) OnConflict(opts ...sql.ConflictOption) *RedeemCodeUsageUpsertOne {
@@ -234,6 +245,24 @@ type (
 		*sql.UpdateSet
 	}
 )
+
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (u *RedeemCodeUsageUpsert) SetRechargeSnapshot(v *billing.RechargeSnapshot) *RedeemCodeUsageUpsert {
+	u.Set(redeemcodeusage.FieldRechargeSnapshot, v)
+	return u
+}
+
+// UpdateRechargeSnapshot sets the "recharge_snapshot" field to the value that was provided on create.
+func (u *RedeemCodeUsageUpsert) UpdateRechargeSnapshot() *RedeemCodeUsageUpsert {
+	u.SetExcluded(redeemcodeusage.FieldRechargeSnapshot)
+	return u
+}
+
+// ClearRechargeSnapshot clears the value of the "recharge_snapshot" field.
+func (u *RedeemCodeUsageUpsert) ClearRechargeSnapshot() *RedeemCodeUsageUpsert {
+	u.SetNull(redeemcodeusage.FieldRechargeSnapshot)
+	return u
+}
 
 // SetRedeemCodeID sets the "redeem_code_id" field.
 func (u *RedeemCodeUsageUpsert) SetRedeemCodeID(v int64) *RedeemCodeUsageUpsert {
@@ -309,6 +338,27 @@ func (u *RedeemCodeUsageUpsertOne) Update(set func(*RedeemCodeUsageUpsert)) *Red
 		set(&RedeemCodeUsageUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (u *RedeemCodeUsageUpsertOne) SetRechargeSnapshot(v *billing.RechargeSnapshot) *RedeemCodeUsageUpsertOne {
+	return u.Update(func(s *RedeemCodeUsageUpsert) {
+		s.SetRechargeSnapshot(v)
+	})
+}
+
+// UpdateRechargeSnapshot sets the "recharge_snapshot" field to the value that was provided on create.
+func (u *RedeemCodeUsageUpsertOne) UpdateRechargeSnapshot() *RedeemCodeUsageUpsertOne {
+	return u.Update(func(s *RedeemCodeUsageUpsert) {
+		s.UpdateRechargeSnapshot()
+	})
+}
+
+// ClearRechargeSnapshot clears the value of the "recharge_snapshot" field.
+func (u *RedeemCodeUsageUpsertOne) ClearRechargeSnapshot() *RedeemCodeUsageUpsertOne {
+	return u.Update(func(s *RedeemCodeUsageUpsert) {
+		s.ClearRechargeSnapshot()
+	})
 }
 
 // SetRedeemCodeID sets the "redeem_code_id" field.
@@ -435,7 +485,7 @@ func (_c *RedeemCodeUsageCreateBulk) Save(ctx context.Context) ([]*RedeemCodeUsa
 				mutation.id = &nodes[i].ID
 				if specs[i].ID.Value != nil {
 					id := specs[i].ID.Value.(int64)
-					nodes[i].ID = id
+					nodes[i].ID = int64(id)
 				}
 				mutation.done = true
 				return nodes[i], nil
@@ -488,7 +538,7 @@ func (_c *RedeemCodeUsageCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.RedeemCodeUsageUpsert) {
-//			SetRedeemCodeID(v+v).
+//			SetRechargeSnapshot(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *RedeemCodeUsageCreateBulk) OnConflict(opts ...sql.ConflictOption) *RedeemCodeUsageUpsertBulk {
@@ -555,6 +605,27 @@ func (u *RedeemCodeUsageUpsertBulk) Update(set func(*RedeemCodeUsageUpsert)) *Re
 		set(&RedeemCodeUsageUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (u *RedeemCodeUsageUpsertBulk) SetRechargeSnapshot(v *billing.RechargeSnapshot) *RedeemCodeUsageUpsertBulk {
+	return u.Update(func(s *RedeemCodeUsageUpsert) {
+		s.SetRechargeSnapshot(v)
+	})
+}
+
+// UpdateRechargeSnapshot sets the "recharge_snapshot" field to the value that was provided on create.
+func (u *RedeemCodeUsageUpsertBulk) UpdateRechargeSnapshot() *RedeemCodeUsageUpsertBulk {
+	return u.Update(func(s *RedeemCodeUsageUpsert) {
+		s.UpdateRechargeSnapshot()
+	})
+}
+
+// ClearRechargeSnapshot clears the value of the "recharge_snapshot" field.
+func (u *RedeemCodeUsageUpsertBulk) ClearRechargeSnapshot() *RedeemCodeUsageUpsertBulk {
+	return u.Update(func(s *RedeemCodeUsageUpsert) {
+		s.ClearRechargeSnapshot()
+	})
 }
 
 // SetRedeemCodeID sets the "redeem_code_id" field.

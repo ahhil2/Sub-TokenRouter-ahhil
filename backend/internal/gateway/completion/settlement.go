@@ -19,6 +19,7 @@ type SettlementInput struct {
 	RequestPayloadHash                                                                                         string
 	ProviderRateMultiplier, SubscriptionRateMultiplier, SubscriptionRateMultiplierScale, BalanceRateMultiplier float64
 	QuotaUpdates                                                                                               bool
+	RateMultipliersResolved                                                                                    bool
 	BillingBaseAmountUSD                                                                                       *float64
 }
 type usageBillingParams = SettlementInput
@@ -141,6 +142,10 @@ func ApplyRateMultipliers(cmd *billing.UsageBillingCommand, p *usageBillingParam
 		cmd.SubscriptionRateMultiplierScale = 1
 	}
 	cmd.BalanceRateMultiplier = RateOrFallback(p.BalanceRateMultiplier, effectiveRate)
+	if p.RateMultipliersResolved {
+		cmd.SubscriptionRateMultiplier = p.SubscriptionRateMultiplier
+		cmd.BalanceRateMultiplier = p.BalanceRateMultiplier
+	}
 }
 
 func (s *Recorder) Apply(ctx context.Context, requestID string, usageLog *UsageLog, p *usageBillingParams) (bool, error) {

@@ -14,11 +14,12 @@
     </template>
     <template #cell-pay_amount="{ value, row }">
       <div class="text-sm">
+        <RechargeBreakdown :snapshot="row.recharge_snapshot" class="mb-2" />
         <span class="font-medium text-gray-900 dark:text-white">{{ formatGatewayAmount(value, row.currency) }}</span>
         <span v-if="row.fee_rate > 0" class="ml-1 text-xs text-gray-400" :title="t('payment.orders.fee') + ': ' + row.fee_rate + '%'">
           ({{ t('payment.orders.fee') }} {{ row.fee_rate }}%)
         </span>
-        <div v-if="row.amount !== row.pay_amount" class="text-xs text-gray-500">
+        <div v-if="!row.recharge_snapshot && row.amount !== row.pay_amount" class="text-xs text-gray-500">
           {{ t('payment.orders.creditedAmount') }}: {{ formatOrderAmount(row.amount, row) }}
         </div>
       </div>
@@ -46,6 +47,7 @@ import type { PaymentOrder } from '@/types/payment'
 import type { Column } from '@/components/common/types'
 import DataTable from '@/components/common/DataTable.vue'
 import OrderStatusBadge from '@/components/payment/OrderStatusBadge.vue'
+import RechargeBreakdown from '@/components/payment/RechargeBreakdown.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { formatPaymentAmount } from '@/components/payment/currency'
 

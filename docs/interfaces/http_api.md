@@ -1,6 +1,6 @@
 # HTTP 接口
 
-渠道监控页 `/monitor` 使用公开接口 `GET /api/v1/channel-monitors`，返回公开分组最近 90 分钟的可用率、缓存率和首 Token 延迟。可见性与计算方法见[渠道监控](../operations/channel_monitoring.md)。
+渠道监控页 `/monitor` 使用公开接口 `GET /api/v1/channel-monitors`，返回管理员选定的公开分组最近 90 分钟的可用率、缓存率和首 Token 延迟。管理员通过 `GET/PUT /api/v1/admin/channel-monitors/config` 配置展示分组与状态，普通用户和访客只读公开快照。默认无展示分组。可见性与计算方法见[渠道监控](../operations/channel_monitoring.md)。
 
 本文描述 TokenRouter 的路由族、认证方式、共同中间件、响应格式和各路由由哪个模块负责。新增或移动接口时，用本文确定接口应该放在哪里。本文不逐个列出所有 endpoint；上游协议规范和领域状态机见各自的文档。
 
@@ -31,6 +31,14 @@
 新增创作台路由时，先读[创作台](../domains/creative_studio.md)，核对生命周期、幂等和留存规则。
 
 ## 全局入口
+
+### 用户身份分组接口
+
+`/api/v1/admin/identity-groups` 使用管理员认证、面板限流和审计。`GET` 返回三个固定身份及成员数；`GET /users` 搜索待分配用户；`GET /:code/members` 按 `search`、`page`、`page_size` 查询成员；`PUT /:code/members` 接收 `user_ids` 和 `action: add | remove`，每批最多 500 位用户。
+
+`GET/PUT /api/v1/admin/identity-groups/ahhilai/rates` 读取或批量设置普通分组倍率，写入体为 `rates` 数组，每项包含 `group_id` 和可空的 `rate_multiplier`。空值删除该项覆盖，零值表示免费。其他身份不能设置消费倍率。
+
+`GET /api/v1/user/identity-groups` 返回当前登录用户的 `identity_groups` 和 `bonus_rate`。管理员用户列表支持 `identity_group` 筛选，用户信息增加 `identity_groups`。兑换及支付订单增加可空的 `recharge_snapshot`，字段包括 `identity_code`、`base_amount`、`bonus_rate`、`bonus_amount`、`credited_amount`。历史空快照按无赠送处理。
 
 `SetupRouter` 在一个 Gin engine 上安装 app 提供的共同中间件和注册函数。common 路由由 server 注册；app 按顺序挂载 auth、user、admin、gateway、payment 和 page 路由，各模块的注册函数在各自的 HTTP 适配层里。综合设置的 GET 和 PUT 属于 `settings/httpapi`，预聚合有自己的处理器，创作模型候选和 worker 状态属于 `creative/httpapi`。输出格式的映射由所属的 HTTP 模块提供。主要的全局顺序：
 

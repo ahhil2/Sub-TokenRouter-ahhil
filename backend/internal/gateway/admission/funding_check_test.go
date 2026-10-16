@@ -15,6 +15,26 @@ type fundingCheckFixture func(context.Context, billing.CheckInput) error
 
 type rpmCheckFixture func(context.Context, *scheduler.RPMUser, *scheduler.RPMGroup) error
 
+type failingIdentityRates struct {
+	billing.EffectiveRateReader
+	err error
+}
+
+func (rates failingIdentityRates) EffectiveGroupRate(context.Context, int64, int64) (*float64, error) {
+	return nil, rates.err
+}
+
+func TestFundingAdmissionRejectsUnavailableIdentityRates(t *testing.T) {
+	failure := errors.New("identity rates unavailable")
+	checker := NewFundingAdmission(fundingCheckFixture(func(context.Context, billing.CheckInput) error {
+		t.Fatal("identity lookup must succeed before funding admission")
+		return nil
+	}), nil)
+	checker.Rates = failingIdentityRates{err: failure}
+	err := checker.CheckFunding(context.Background(), billing.CheckInput{Payer: &billing.UserSummary{ID: 1}, Group: &billing.GroupSnapshot{ID: 2}})
+	require.ErrorIs(t, err, failure)
+}
+
 func (f fundingCheckFixture) Check(ctx context.Context, input billing.CheckInput) error {
 	return f(ctx, input)
 }

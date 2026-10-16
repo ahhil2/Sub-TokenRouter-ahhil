@@ -3,17 +3,21 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-const channelMonitorSQL = `
+const (
+	channelMonitorSQL = `
 WITH visible_groups AS MATERIALIZED (
- SELECT id, name, COALESCE(NULLIF(display_brand, ''), name) AS brand, rate_multiplier, sort_order
+ SELECT id, name, COALESCE(NULLIF(display_brand, ''), name) AS brand, rate_multiplier, sort_order, config.status AS status_override
  FROM groups
- WHERE deleted_at IS NULL AND status = 'active' AND NOT is_exclusive
+ JOIN jsonb_to_recordset(COALESCE((SELECT value::jsonb FROM settings WHERE key = 'channel_monitor_groups'), '[]'::jsonb))
+ AS config(group_id bigint, enabled bool, status text) ON config.group_id = groups.id AND config.enabled
+ WHERE groups.deleted_at IS NULL AND groups.status = 'active' AND NOT groups.is_exclusive
  AND EXISTS (SELECT 1 FROM provider_groups pg JOIN providers p ON p.id = pg.provider_id
              WHERE pg.group_id = groups.id AND p.deleted_at IS NULL AND p.status = 'active')
  ORDER BY sort_order, id LIMIT 200
@@ -48,9 +52,27 @@ WITH visible_groups AS MATERIALIZED (
  FROM bucketed GROUP BY GROUPING SETS ((group_id, bucket), (group_id))
 )
 SELECT g.id, g.name, g.brand, g.rate_multiplier, COALESCE(m.bucket, -1),
- COALESCE(m.requests, 0), COALESCE(m.successes, 0), m.cache_rate, m.ttft
+ COALESCE(m.requests, 0), COALESCE(m.successes, 0), m.cache_rate, m.ttft, g.status_override
 FROM visible_groups g LEFT JOIN metrics m ON m.group_id = g.id
 ORDER BY g.sort_order, g.id, m.bucket`
+	channelMonitorConfigSQL = `
+SELECT g.id, g.name, COALESCE(NULLIF(g.display_brand, ''), g.name),
+ COALESCE(config.enabled, false), COALESCE(config.status, 'auto'),
+ g.status = 'active' AND NOT g.is_exclusive AND EXISTS (
+ SELECT 1 FROM provider_groups pg JOIN providers p ON p.id = pg.provider_id
+ WHERE pg.group_id = g.id AND p.deleted_at IS NULL AND p.status = 'active') AS eligible
+FROM groups g
+LEFT JOIN jsonb_to_recordset(COALESCE((SELECT value::jsonb FROM settings WHERE key = 'channel_monitor_groups'), '[]'::jsonb))
+ AS config(group_id bigint, enabled bool, status text) ON config.group_id = g.id
+WHERE g.deleted_at IS NULL ORDER BY g.sort_order, g.id`
+	saveChannelMonitorConfigSQL = `
+INSERT INTO settings (key, value, updated_at)
+SELECT 'channel_monitor_groups', $1::text, NOW()
+WHERE NOT EXISTS (
+ SELECT 1 FROM jsonb_to_recordset($1::text::jsonb) AS config(group_id bigint)
+ WHERE NOT EXISTS (SELECT 1 FROM groups WHERE id = config.group_id AND deleted_at IS NULL))
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`
+)
 
 func (store *Store) ReadChannelMonitor(ctx context.Context, end time.Time) (*ops.ChannelMonitorSnapshot, error) {
 	snapshot := &ops.ChannelMonitorSnapshot{Channels: []ops.MonitoredChannel{}}
@@ -75,7 +97,7 @@ func (store *Store) ReadChannelMonitor(ctx context.Context, end time.Time) (*ops
 		var cacheRate, ttft sql.NullFloat64
 		var metrics ops.ChannelMonitorMetrics
 		if err := rows.Scan(&channel.ID, &channel.Name, &channel.Brand, &channel.RateMultiplier, &bucket,
-			&metrics.Requests, &metrics.Successes, &cacheRate, &ttft); err != nil {
+			&metrics.Requests, &metrics.Successes, &cacheRate, &ttft, &channel.StatusOverride); err != nil {
 			return nil, err
 		}
 		if metrics.Requests > 0 {
@@ -106,4 +128,40 @@ func (store *Store) ReadChannelMonitor(ctx context.Context, end time.Time) (*ops
 		}
 	}
 	return snapshot, rows.Err()
+}
+
+func (store *Store) ReadChannelMonitorConfig(ctx context.Context) ([]ops.ChannelMonitorGroupOption, error) {
+	rows, err := store.db.QueryContext(ctx, channelMonitorConfigSQL)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	groups := []ops.ChannelMonitorGroupOption{}
+	for rows.Next() {
+		var group ops.ChannelMonitorGroupOption
+		if err := rows.Scan(&group.GroupID, &group.Name, &group.Brand, &group.Enabled, &group.Status, &group.Eligible); err != nil {
+			return nil, err
+		}
+		groups = append(groups, group)
+	}
+	return groups, rows.Err()
+}
+
+func (store *Store) SaveChannelMonitorConfig(ctx context.Context, groups []ops.ChannelMonitorGroupConfig) error {
+	payload, err := json.Marshal(groups)
+	if err != nil {
+		return err
+	}
+	result, err := store.db.ExecContext(ctx, saveChannelMonitorConfigSQL, string(payload))
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ops.ErrInvalidMonitorConfig
+	}
+	return nil
 }

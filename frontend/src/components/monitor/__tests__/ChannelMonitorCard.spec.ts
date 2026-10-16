@@ -30,6 +30,13 @@ function render(input = channel) {
 }
 
 describe('ChannelMonitorCard', () => {
+  it('labels manual status without changing statistics or history blocks', () => {
+    const wrapper = render({ ...channel, status_override: 'maintenance' })
+    expect(wrapper.get('.monitor-status').text()).toContain('维护中')
+    expect(wrapper.get('.monitor-status').text()).toContain('手动')
+    expect(wrapper.text()).toContain('100.0%')
+    expect(wrapper.findAll('.monitor-block[data-status="operational"]')).toHaveLength(20)
+  })
   it('shows real metrics and twenty blocks without intelligence testing', () => {
     const wrapper = render()
     expect(wrapper.findAll('.monitor-block')).toHaveLength(20)

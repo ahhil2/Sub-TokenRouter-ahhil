@@ -469,6 +469,7 @@ describe('readPaymentRecoverySnapshot', () => {
   it('restores an unexpired snapshot when the resume token matches', () => {
     const snapshot: PaymentRecoverySnapshot = {
       orderId: 33,
+      rechargeSnapshot: { identity_code: 'bonus_10', base_amount: 18, bonus_rate: 0.1, bonus_amount: 1.8, credited_amount: 19.8 },
       amount: 18,
       qrCode: '',
       expiresAt: '2099-01-01T00:10:00.000Z',
@@ -493,6 +494,10 @@ describe('readPaymentRecoverySnapshot', () => {
     })
 
     expect(restored?.orderId).toBe(33)
+    expect(restored?.rechargeSnapshot).toEqual(snapshot.rechargeSnapshot)
+    expect(readPaymentRecoverySnapshot(JSON.stringify({ ...snapshot, rechargeSnapshot: { bonus_amount: 'invalid' } }), {
+      now: Date.UTC(2099, 0, 1, 0, 1, 0),
+    })).toBeNull()
   })
 
   it('drops expired or mismatched recovery snapshots', () => {

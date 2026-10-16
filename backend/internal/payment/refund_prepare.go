@@ -20,7 +20,7 @@ func (s *RefundWorkflow) RequestRefund(ctx context.Context, oid, uid int64, reas
 	if err != nil {
 		return fmt.Errorf("get user: %w", err)
 	}
-	if u.Balance < o.Amount {
+	if u.Balance < o.RechargeSnapshot.RefundCredit(o.Amount) {
 		return infraerrors.BadRequest("BALANCE_NOT_ENOUGH", "refund amount exceeds balance")
 	}
 	nr := strings.TrimSpace(reason)
@@ -147,9 +147,10 @@ func (s *RefundWorkflow) PrepDeduct(ctx context.Context, o *Order, p *RefundPlan
 	}
 	p.DeductionType = DeductionTypeBalance
 	// 非强制退款必须先确认余额足以完成权益回收，避免无提示地少扣余额。
-	if u.Balance < p.RefundAmount && !force {
+	creditToDeduct := o.RechargeSnapshot.RefundCredit(p.RefundAmount)
+	if u.Balance < creditToDeduct && !force {
 		return &RefundResult{Success: false, Warning: "user balance is insufficient for deduction, use force", RequireForce: true}
 	}
-	p.BalanceToDeduct = math.Max(0, math.Min(p.RefundAmount, u.Balance))
+	p.BalanceToDeduct = math.Max(0, math.Min(creditToDeduct, u.Balance))
 	return nil
 }

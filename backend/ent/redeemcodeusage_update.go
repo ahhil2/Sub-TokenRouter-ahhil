@@ -15,6 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/redeemcode"
 	"github.com/TokenFlux/TokenRouter/ent/redeemcodeusage"
 	"github.com/TokenFlux/TokenRouter/ent/user"
+	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
 // RedeemCodeUsageUpdate is the builder for updating RedeemCodeUsage entities.
@@ -27,6 +28,18 @@ type RedeemCodeUsageUpdate struct {
 // Where appends a list predicates to the RedeemCodeUsageUpdate builder.
 func (_u *RedeemCodeUsageUpdate) Where(ps ...predicate.RedeemCodeUsage) *RedeemCodeUsageUpdate {
 	_u.mutation.Where(ps...)
+	return _u
+}
+
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (_u *RedeemCodeUsageUpdate) SetRechargeSnapshot(v *billing.RechargeSnapshot) *RedeemCodeUsageUpdate {
+	_u.mutation.SetRechargeSnapshot(v)
+	return _u
+}
+
+// ClearRechargeSnapshot clears the value of the "recharge_snapshot" field.
+func (_u *RedeemCodeUsageUpdate) ClearRechargeSnapshot() *RedeemCodeUsageUpdate {
+	_u.mutation.ClearRechargeSnapshot()
 	return _u
 }
 
@@ -149,6 +162,12 @@ func (_u *RedeemCodeUsageUpdate) sqlSave(ctx context.Context) (_node int, err er
 			}
 		}
 	}
+	if value, ok := _u.mutation.RechargeSnapshot(); ok {
+		_spec.SetField(redeemcodeusage.FieldRechargeSnapshot, field.TypeJSON, value)
+	}
+	if _u.mutation.RechargeSnapshotCleared() {
+		_spec.ClearField(redeemcodeusage.FieldRechargeSnapshot, field.TypeJSON)
+	}
 	if value, ok := _u.mutation.UsedAt(); ok {
 		_spec.SetField(redeemcodeusage.FieldUsedAt, field.TypeTime, value)
 	}
@@ -228,6 +247,18 @@ type RedeemCodeUsageUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *RedeemCodeUsageMutation
+}
+
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (_u *RedeemCodeUsageUpdateOne) SetRechargeSnapshot(v *billing.RechargeSnapshot) *RedeemCodeUsageUpdateOne {
+	_u.mutation.SetRechargeSnapshot(v)
+	return _u
+}
+
+// ClearRechargeSnapshot clears the value of the "recharge_snapshot" field.
+func (_u *RedeemCodeUsageUpdateOne) ClearRechargeSnapshot() *RedeemCodeUsageUpdateOne {
+	_u.mutation.ClearRechargeSnapshot()
+	return _u
 }
 
 // SetRedeemCodeID sets the "redeem_code_id" field.
@@ -378,6 +409,12 @@ func (_u *RedeemCodeUsageUpdateOne) sqlSave(ctx context.Context) (_node *RedeemC
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.RechargeSnapshot(); ok {
+		_spec.SetField(redeemcodeusage.FieldRechargeSnapshot, field.TypeJSON, value)
+	}
+	if _u.mutation.RechargeSnapshotCleared() {
+		_spec.ClearField(redeemcodeusage.FieldRechargeSnapshot, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.UsedAt(); ok {
 		_spec.SetField(redeemcodeusage.FieldUsedAt, field.TypeTime, value)

@@ -158,6 +158,8 @@ Webhook 路由不使用用户 JWT，所以提供商验签、订单绑定和金�
 <a id="redeem_eligibility"></a>
 ## 兑换码
 
+正数余额兑换的身份加赠、在线订单快照和退款回收规则见[用户身份分组](user_identity_groups.md#recharge)。每次兑换分别保存加赠明细，多人兑换同一码时各自使用自己的权益。
+
 充值/订阅页通过公开设置 `purchase_subscription_enabled` 和本地化的 `purchase_subscription_url` 展示外部购码入口。管理员在系统设置的支付页配置开关和链接。链接经 `sanitizeUrl` 校验后在新窗口打开，页面同时提供 `/redeem` 兑换入口。购买页面受 `payment_enabled` 控制，购码入口在选择充值或订阅时显示，进入支付或套餐确认后隐藏。
 
 外部商店需要发放当前实例生成的兑换码。购码链接跳转后，用户回到本站提交兑换码，权益通过兑换服务发放。外部购买不会产生本站支付订单，因此外部售出的兑换码通常应关闭 `requires_payment`，否则用户仍需满足下文的本站付款记录条件。

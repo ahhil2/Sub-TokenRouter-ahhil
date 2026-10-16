@@ -317,6 +317,7 @@ func (r *RedeemStore) useInTx(ctx context.Context, id, userID int64) error {
 func (r *RedeemStore) CreateUsage(ctx context.Context, usage *billing.RedeemCodeUsage) error {
 	client := clientFromContext(ctx, r.client)
 	created, err := client.RedeemCodeUsage.Create().
+		SetRechargeSnapshot(usage.RechargeSnapshot).
 		SetRedeemCodeID(usage.RedeemCodeID).
 		SetUserID(usage.UserID).
 		SetUsedAt(usage.UsedAt).
@@ -630,10 +631,11 @@ func redeemCodeUsageEntityToService(model *dbent.RedeemCodeUsage) *billing.Redee
 		return nil
 	}
 	out := &billing.RedeemCodeUsage{
-		ID:           model.ID,
-		RedeemCodeID: model.RedeemCodeID,
-		UserID:       model.UserID,
-		UsedAt:       model.UsedAt,
+		RechargeSnapshot: model.RechargeSnapshot,
+		ID:               model.ID,
+		RedeemCodeID:     model.RedeemCodeID,
+		UserID:           model.UserID,
+		UsedAt:           model.UsedAt,
 	}
 	if model.Edges.User != nil {
 		out.User = userSummaryFromEntity(model.Edges.User)
@@ -669,6 +671,7 @@ func redeemCodeHistoryFromUsageEntities(models []*dbent.RedeemCodeUsage) []billi
 		usedAt := usage.UsedAt
 		code.UsedBy = &usedBy
 		code.UsedAt = &usedAt
+		code.RechargeSnapshot = usage.RechargeSnapshot
 		out = append(out, *code)
 	}
 	return out

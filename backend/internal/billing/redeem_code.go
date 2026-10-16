@@ -25,11 +25,12 @@ const (
 )
 
 type RedeemCode struct {
-	ID     int64
-	Code   string
-	Type   string
-	Value  float64
-	Status string
+	RechargeSnapshot *RechargeSnapshot
+	ID               int64
+	Code             string
+	Type             string
+	Value            float64
+	Status           string
 	// RequiresPayment 表示领取者需要有成功付款记录。
 	RequiresPayment bool
 	MaxUses         int
@@ -48,10 +49,11 @@ type RedeemCode struct {
 }
 
 type RedeemCodeUsage struct {
-	ID           int64
-	RedeemCodeID int64
-	UserID       int64
-	UsedAt       time.Time
+	RechargeSnapshot *RechargeSnapshot
+	ID               int64
+	RedeemCodeID     int64
+	UserID           int64
+	UsedAt           time.Time
 
 	RedeemCode *RedeemCode
 	User       *UserSummary

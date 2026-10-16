@@ -1,13 +1,47 @@
 package payment
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
+
+type checkoutIdentityStore struct {
+	CheckoutStore
+	draft CheckoutDraft
+	calls int
+}
+
+func (store *checkoutIdentityStore) CreateCheckout(_ context.Context, draft CheckoutDraft) (*Order, error) {
+	store.draft = draft
+	store.calls++
+	return draft.Order.Clone(), nil
+}
+
+func TestCheckoutIdentitySnapshot(t *testing.T) {
+	store := &checkoutIdentityStore{}
+	identityCode := "bonus_5"
+	checkout := &Checkout{store: store, runtime: CheckoutRuntime{RechargeIdentity: func(context.Context, int64) (string, error) { return identityCode, nil }}}
+	order, err := checkout.CreateOrderInTx(context.Background(), CreateOrderRequest{UserID: 1, OrderType: OrderTypeBalance}, &Buyer{ID: 1}, nil, &PaymentConfig{}, 100, 100, FeeBreakdown{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 105.0, order.RechargeSnapshot.CreditedAmount)
+	require.Equal(t, 100.0, order.Amount)
+	require.Equal(t, 100.0, AffiliateRebateBasePoints(order))
+	identityCode = "bonus_10"
+	require.Equal(t, "bonus_5", store.draft.Order.RechargeSnapshot.IdentityCode)
+	require.NotSame(t, store.draft.Order.RechargeSnapshot, order.RechargeSnapshot)
+	checkout.runtime.RechargeIdentity = func(context.Context, int64) (string, error) { return "", errors.New("identity unavailable") }
+	_, err = checkout.CreateOrderInTx(context.Background(), CreateOrderRequest{UserID: 1, OrderType: OrderTypeBalance}, &Buyer{ID: 1}, nil, &PaymentConfig{}, 100, 100, FeeBreakdown{}, nil)
+	require.Error(t, err)
+	require.Equal(t, 1, store.calls)
+}
 
 func TestShouldUseAlipayMobilePrecreate(t *testing.T) {
 	t.Parallel()

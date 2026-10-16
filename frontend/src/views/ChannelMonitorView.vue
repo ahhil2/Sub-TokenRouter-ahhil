@@ -2,11 +2,16 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppHeader from '@/components/layout/AppHeader.vue'
+import AppLayout from '@/components/layout/AppLayout.vue'
+import { useAuthStore } from '@/stores/auth'
+import ChannelMonitorSettings from '@/components/monitor/ChannelMonitorSettings.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ChannelMonitorCard from '@/components/monitor/ChannelMonitorCard.vue'
 import { getChannelMonitor, type ChannelMonitorSnapshot, type MonitoredChannel } from '@/api/channelMonitor'
 
 const { t, locale } = useI18n()
+const auth = useAuthStore()
+const configuring = ref(false)
 const snapshot = ref<ChannelMonitorSnapshot | null>(null)
 const loading = ref(false)
 const error = ref(false)
@@ -14,6 +19,7 @@ const countdown = ref(30)
 let controller: AbortController | undefined
 let timer: ReturnType<typeof setInterval> | undefined
 let disposed = false
+let refreshRequested = false
 const groups = computed(() => {
   const brands = new Map<string, MonitoredChannel[]>()
   for (const channel of snapshot.value?.channels ?? []) {
@@ -37,8 +43,19 @@ async function refresh() {
   } catch {
     if (!disposed) { error.value = true; countdown.value = 30 }
   } finally {
-    if (!disposed) loading.value = false
+    if (!disposed) {
+      loading.value = false
+      if (refreshRequested) {
+        refreshRequested = false
+        void refresh()
+      }
+    }
   }
+}
+
+function configurationSaved() {
+  if (loading.value) refreshRequested = true
+  else void refresh()
 }
 
 function resume() {
@@ -63,13 +80,18 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="channel-monitor-page">
-    <AppHeader public-page />
-    <main class="monitor-main">
+  <component :is="auth.isAuthenticated ? AppLayout : 'div'" hide-page-heading class="channel-monitor-page" :class="{ 'monitor-authenticated': auth.isAuthenticated }">
+    <AppHeader v-if="!auth.isAuthenticated" public-page />
+    <div class="monitor-main">
       <div class="monitor-page-heading">
         <div><h1>{{ t('channelMonitor.title') }}</h1><p>{{ t('channelMonitor.subtitle') }}</p></div>
-        <div class="monitor-refresh"><span v-if="snapshot">{{ t('channelMonitor.updatedAt', { time: updatedAt }) }}</span><button type="button" class="btn btn-secondary btn-sm" :disabled="loading" @click="refresh">{{ t(loading ? 'channelMonitor.refreshing' : 'channelMonitor.refresh') }}</button></div>
+        <div class="monitor-refresh">
+          <span v-if="snapshot">{{ t('channelMonitor.updatedAt', { time: updatedAt }) }}</span>
+          <button v-if="auth.isAuthenticated && auth.isAdmin" type="button" class="btn btn-secondary btn-sm" :aria-expanded="configuring" aria-controls="channel-monitor-settings" @click="configuring = !configuring">{{ t('channelMonitor.configure') }}</button>
+          <button type="button" class="btn btn-secondary btn-sm" :disabled="loading" @click="refresh">{{ t(loading ? 'channelMonitor.refreshing' : 'channelMonitor.refresh') }}</button>
+        </div>
       </div>
+      <ChannelMonitorSettings v-if="auth.isAuthenticated && auth.isAdmin && configuring" id="channel-monitor-settings" @saved="configurationSaved" />
       <div v-if="error" role="alert" class="monitor-notice">{{ t(snapshot ? 'channelMonitor.stale' : 'channelMonitor.loadFailed') }}</div>
       <div v-if="loading && !snapshot" role="status" class="monitor-loading">{{ t('channelMonitor.loading') }}</div>
       <div v-else-if="snapshot && !snapshot.monitoring_enabled" role="status" class="monitor-loading">{{ t('channelMonitor.disabled') }}</div>
@@ -84,8 +106,8 @@ onBeforeUnmount(() => {
         <div class="monitor-legend"><span><i class="legend-operational" />{{ t('channelMonitor.status.operational') }}</span><span><i class="legend-degraded" />{{ t('channelMonitor.status.degraded') }}</span><span><i class="legend-failed" />{{ t('channelMonitor.status.failed') }}</span><span><i class="legend-unknown" />{{ t('channelMonitor.status.unknown') }}</span></div>
         <p>{{ t('channelMonitor.availabilityDefinition') }}</p><p>{{ t('channelMonitor.cacheDefinition') }}</p><p>{{ t('channelMonitor.ttftDefinition') }}</p>
       </footer>
-    </main>
-  </div>
+    </div>
+  </component>
 </template>
 
 <style scoped>
@@ -110,4 +132,6 @@ h2 { display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight
 .legend-operational { background: #41A988; }.legend-degraded { background: var(--monitor-warning); }.legend-failed { background: var(--monitor-danger); }.legend-unknown { background: var(--monitor-empty); }
 @media (max-width: 1279px) { .monitor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; } }
 @media (max-width: 767px) { .monitor-main { padding: calc(var(--header-h) + 24px) 16px 24px; }.monitor-grid { grid-template-columns: minmax(0, 1fr); }.monitor-page-heading { margin-bottom: 28px; }h1 { font-size: 24px; }h2 { font-size: 22px; } }
+.monitor-authenticated .monitor-main { padding: 0; max-width: none; width: 100%; }
+.monitor-refresh { flex-wrap: wrap; }
 </style>

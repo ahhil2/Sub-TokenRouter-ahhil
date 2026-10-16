@@ -63,12 +63,15 @@ var (
 )
 
 type UserStore struct {
-	client *dbent.Client
-	sql    SQLExecutor
+	client  *dbent.Client
+	sql     SQLExecutor
+	members *MemberGroupStore
 }
 
 func NewUserStore(client *dbent.Client, sqlDB *sql.DB) *UserStore {
-	return NewUserStoreWithSQL(client, sqlDB)
+	store := NewUserStoreWithSQL(client, sqlDB)
+	store.members = NewMemberGroupStore(client)
+	return store
 }
 
 func NewUserStoreWithSQL(client *dbent.Client, sqlq SQLExecutor) *UserStore {
@@ -197,6 +200,13 @@ func (r *UserStore) GetByID(ctx context.Context, id int64) (*identitycore.User, 
 	}
 
 	out := UserFromEntity(m)
+	if r.members != nil {
+		memberships, err := r.members.Memberships(ctx, []int64{id})
+		if err != nil {
+			return nil, err
+		}
+		out.IdentityGroups = memberships[id]
+	}
 	groups, err := r.IdentityLoadAllowedGroups(ctx, []int64{id})
 	if err != nil {
 		return nil, err
@@ -541,6 +551,15 @@ func (r *UserStore) ListWithFilters(ctx context.Context, params pagination.Pagin
 	}
 
 	q := r.client.User.Query()
+	if filters.IdentityGroup != "" {
+		if _, err := identitycore.MemberGroupCategory(filters.IdentityGroup); err != nil {
+			return nil, nil, err
+		}
+		q = q.Where(func(selector *entsql.Selector) {
+			members := entsql.Table("user_identity_memberships")
+			selector.Where(entsql.In(selector.C(dbuser.FieldID), entsql.Select(members.C("user_id")).From(members).Where(entsql.EQ(members.C("identity_code"), filters.IdentityGroup))))
+		})
+	}
 
 	if filters.Status != "" {
 		q = q.Where(dbuser.StatusEQ(filters.Status))
@@ -635,6 +654,18 @@ func (r *UserStore) ListWithFilters(ctx context.Context, params pagination.Pagin
 	}
 
 	allowedGroupsByUser, err := r.IdentityLoadAllowedGroups(ctx, userIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if r.members != nil {
+		memberships, err := r.members.Memberships(ctx, userIDs)
+		if err != nil {
+			return nil, nil, err
+		}
+		for id, user := range userMap {
+			user.IdentityGroups = memberships[id]
+		}
+	}
 	if err != nil {
 		return nil, nil, err
 	}

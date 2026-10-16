@@ -14,6 +14,8 @@ const (
 	Label = "payment_order"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldRechargeSnapshot holds the string denoting the recharge_snapshot field in the database.
+	FieldRechargeSnapshot = "recharge_snapshot"
 	// FieldUserID holds the string denoting the user_id field in the database.
 	FieldUserID = "user_id"
 	// FieldUserEmail holds the string denoting the user_email field in the database.
@@ -124,6 +126,7 @@ const (
 // Columns holds all SQL columns for paymentorder fields.
 var Columns = []string{
 	FieldID,
+	FieldRechargeSnapshot,
 	FieldUserID,
 	FieldUserEmail,
 	FieldUserName,

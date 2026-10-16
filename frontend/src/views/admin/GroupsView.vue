@@ -1,6 +1,11 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <div class="tabs mb-4" role="tablist" :aria-label="t('identityGroups.title')">
+      <button class="tab" :class="{ 'tab-active': !identityTab }" role="tab" :aria-selected="!identityTab" @click="identityTab = false">{{ t('identityGroups.ordinary') }}</button>
+      <button class="tab" :class="{ 'tab-active': identityTab }" role="tab" :aria-selected="identityTab" @click="identityTab = true">{{ t('identityGroups.title') }}</button>
+    </div>
+    <IdentityGroupsPanel v-if="identityTab" />
+    <TablePageLayout v-else>
       <template #filters>
         <div
           class="flex flex-col justify-between gap-2 lg:flex-row lg:items-start"
@@ -595,6 +600,7 @@ import type {
 import type { Column } from "@/components/common/types";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import TablePageLayout from "@/components/layout/TablePageLayout.vue";
+import IdentityGroupsPanel from '@/components/admin/group/IdentityGroupsPanel.vue';
 import DataTable from "@/components/common/DataTable.vue";
 import Pagination from "@/components/common/Pagination.vue";
 import BaseDialog from "@/components/common/BaseDialog.vue";
@@ -651,6 +657,7 @@ import {
 } from "./groupsReasoningEffort";
 
 const { t } = useI18n();
+const identityTab = ref(false);
 const appStore = useAppStore();
 const onboardingStore = useOnboardingStore();
 const { formatBalanceAmount } = useBalanceDisplay();

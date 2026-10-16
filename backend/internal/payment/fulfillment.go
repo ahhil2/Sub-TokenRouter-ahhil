@@ -402,7 +402,8 @@ func (s *Fulfillment) DoBalance(ctx context.Context, o *Order, lease *Fulfillmen
 	case RedeemActionRedeem:
 		// Code exists but unused — skip creation, proceed to redeem
 	}
-	if _, err := s.redeemService.Redeem(billing.ContextSkipRedeemAffiliate(ctx), o.UserID, o.RechargeCode); err != nil {
+	rechargeCtx := billing.ContextPaymentRecharge(billing.ContextSkipRedeemAffiliate(ctx), o.RechargeSnapshot)
+	if _, err := s.redeemService.Redeem(rechargeCtx, o.UserID, o.RechargeCode); err != nil {
 		return fmt.Errorf("redeem balance: %w", err)
 	}
 	if err := s.ApplyAffiliateRebateForOrder(ctx, o); err != nil {
@@ -434,9 +435,16 @@ func (s *Fulfillment) MarkCompleted(ctx context.Context, o *Order, lease *Fulfil
 		return infraerrors.Conflict("CONFLICT", "fulfillment lease was lost before completion")
 	}
 	if !s.HasAuditLog(ctx, o.ID, auditAction) {
+		creditedAmount, bonusAmount := o.Amount, 0.0
+		if o.RechargeSnapshot != nil {
+			creditedAmount = o.RechargeSnapshot.CreditedAmount
+			bonusAmount = o.RechargeSnapshot.BonusAmount
+		}
 		s.runtime.Audit(ctx, o.ID, auditAction, "system", map[string]any{
 			"rechargeCode":   o.RechargeCode,
-			"creditedAmount": o.Amount,
+			"baseAmount":     o.Amount,
+			"bonusAmount":    bonusAmount,
+			"creditedAmount": creditedAmount,
 			"payAmount":      o.PayAmount,
 		})
 		s.DispatchPaymentFulfillmentNotification(o, auditAction)
@@ -468,6 +476,10 @@ func (s *Fulfillment) DispatchPaymentFulfillmentNotification(o *Order, auditActi
 }
 
 func (s *Fulfillment) SendBalanceRechargeSuccessNotification(ctx context.Context, o *Order) error {
+	creditedAmount := o.Amount
+	if o.RechargeSnapshot != nil {
+		creditedAmount = o.RechargeSnapshot.CreditedAmount
+	}
 	currentBalance := ""
 	if s.runtime.User != nil {
 		if user, err := s.runtime.User(ctx, o.UserID); err == nil && user != nil {
@@ -484,7 +496,7 @@ func (s *Fulfillment) SendBalanceRechargeSuccessNotification(ctx context.Context
 		SourceType:     "payment_order",
 		SourceID:       strconv.FormatInt(o.ID, 10),
 		Variables: map[string]string{
-			"recharge_amount": fmt.Sprintf("%.2f", o.Amount),
+			"recharge_amount": strconv.FormatFloat(creditedAmount, 'f', -1, 64),
 			"current_balance": currentBalance,
 			"order_id":        strconv.FormatInt(o.ID, 10),
 		},

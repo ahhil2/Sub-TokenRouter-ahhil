@@ -1226,7 +1226,11 @@ func (s *Public) ResolveCreativePricing(ctx context.Context, userID int64, valid
 	subscriptionRate := groupDefault
 	balanceRate := groupDefault
 	if s.UserGroupRateRepo != nil {
-		if userRate, err := s.UserGroupRateRepo.GetByUserAndGroup(ctx, userID, group.ID); err == nil && userRate != nil {
+		userRate, err := billing.EffectiveGroupRate(ctx, s.UserGroupRateRepo, userID, group.ID)
+		if err != nil {
+			return nil, err
+		}
+		if userRate != nil {
 			balanceRate = *userRate
 		}
 	}

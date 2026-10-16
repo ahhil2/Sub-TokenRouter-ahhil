@@ -94,28 +94,29 @@ type ResolveOrderByResumeTokenRequest struct {
 
 // PublicOrderResult 是签名恢复 token 可读取的订单结果；token 已证明持有支付会话。
 type PublicOrderResult struct {
-	ID                  int64      `json:"id"`
-	OutTradeNo          string     `json:"out_trade_no"`
-	Amount              float64    `json:"amount"`
-	PayAmount           float64    `json:"pay_amount"`
-	FeeRate             float64    `json:"fee_rate"`
-	FeeFixed            float64    `json:"fee_fixed"`
-	FeeRateAmount       float64    `json:"fee_rate_amount"`
-	FeeAmount           float64    `json:"fee_amount"`
-	Currency            string     `json:"currency"`
-	PaymentType         string     `json:"payment_type"`
-	OrderType           string     `json:"order_type"`
-	Status              string     `json:"status"`
-	CreatedAt           time.Time  `json:"created_at"`
-	ExpiresAt           time.Time  `json:"expires_at"`
-	PaidAt              *time.Time `json:"paid_at,omitempty"`
-	CompletedAt         *time.Time `json:"completed_at,omitempty"`
-	RefundAmount        float64    `json:"refund_amount"`
-	RefundReason        *string    `json:"refund_reason,omitempty"`
-	RefundRequestedAt   *time.Time `json:"refund_requested_at,omitempty"`
-	RefundRequestedBy   *string    `json:"refund_requested_by,omitempty"`
-	RefundRequestReason *string    `json:"refund_request_reason,omitempty"`
-	PlanID              *int64     `json:"plan_id,omitempty"`
+	RechargeSnapshot    *billing.RechargeSnapshot `json:"recharge_snapshot,omitempty"`
+	ID                  int64                     `json:"id"`
+	OutTradeNo          string                    `json:"out_trade_no"`
+	Amount              float64                   `json:"amount"`
+	PayAmount           float64                   `json:"pay_amount"`
+	FeeRate             float64                   `json:"fee_rate"`
+	FeeFixed            float64                   `json:"fee_fixed"`
+	FeeRateAmount       float64                   `json:"fee_rate_amount"`
+	FeeAmount           float64                   `json:"fee_amount"`
+	Currency            string                    `json:"currency"`
+	PaymentType         string                    `json:"payment_type"`
+	OrderType           string                    `json:"order_type"`
+	Status              string                    `json:"status"`
+	CreatedAt           time.Time                 `json:"created_at"`
+	ExpiresAt           time.Time                 `json:"expires_at"`
+	PaidAt              *time.Time                `json:"paid_at,omitempty"`
+	CompletedAt         *time.Time                `json:"completed_at,omitempty"`
+	RefundAmount        float64                   `json:"refund_amount"`
+	RefundReason        *string                   `json:"refund_reason,omitempty"`
+	RefundRequestedAt   *time.Time                `json:"refund_requested_at,omitempty"`
+	RefundRequestedBy   *string                   `json:"refund_requested_by,omitempty"`
+	RefundRequestReason *string                   `json:"refund_request_reason,omitempty"`
+	PlanID              *int64                    `json:"plan_id,omitempty"`
 }
 
 // PublicOrderVerifyResult 是匿名 out_trade_no 查单结果；out_trade_no 不是密钥，只返回最小状态信息。
@@ -130,30 +131,31 @@ type PublicOrderVerifyResult struct {
 }
 
 type PaymentOrderResult struct {
-	ID                  int64      `json:"id"`
-	UserID              int64      `json:"user_id"`
-	Amount              float64    `json:"amount"`
-	PayAmount           float64    `json:"pay_amount"`
-	FeeRate             float64    `json:"fee_rate"`
-	FeeFixed            float64    `json:"fee_fixed"`
-	FeeRateAmount       float64    `json:"fee_rate_amount"`
-	FeeAmount           float64    `json:"fee_amount"`
-	Currency            string     `json:"currency"`
-	PaymentType         string     `json:"payment_type"`
-	OutTradeNo          string     `json:"out_trade_no"`
-	Status              string     `json:"status"`
-	OrderType           string     `json:"order_type"`
-	CreatedAt           time.Time  `json:"created_at"`
-	ExpiresAt           time.Time  `json:"expires_at"`
-	PaidAt              *time.Time `json:"paid_at,omitempty"`
-	CompletedAt         *time.Time `json:"completed_at,omitempty"`
-	RefundAmount        float64    `json:"refund_amount"`
-	RefundReason        *string    `json:"refund_reason,omitempty"`
-	RefundRequestedAt   *time.Time `json:"refund_requested_at,omitempty"`
-	RefundRequestedBy   *string    `json:"refund_requested_by,omitempty"`
-	RefundRequestReason *string    `json:"refund_request_reason,omitempty"`
-	PlanID              *int64     `json:"plan_id,omitempty"`
-	ProviderInstanceID  *string    `json:"provider_instance_id,omitempty"`
+	RechargeSnapshot    *billing.RechargeSnapshot `json:"recharge_snapshot,omitempty"`
+	ID                  int64                     `json:"id"`
+	UserID              int64                     `json:"user_id"`
+	Amount              float64                   `json:"amount"`
+	PayAmount           float64                   `json:"pay_amount"`
+	FeeRate             float64                   `json:"fee_rate"`
+	FeeFixed            float64                   `json:"fee_fixed"`
+	FeeRateAmount       float64                   `json:"fee_rate_amount"`
+	FeeAmount           float64                   `json:"fee_amount"`
+	Currency            string                    `json:"currency"`
+	PaymentType         string                    `json:"payment_type"`
+	OutTradeNo          string                    `json:"out_trade_no"`
+	Status              string                    `json:"status"`
+	OrderType           string                    `json:"order_type"`
+	CreatedAt           time.Time                 `json:"created_at"`
+	ExpiresAt           time.Time                 `json:"expires_at"`
+	PaidAt              *time.Time                `json:"paid_at,omitempty"`
+	CompletedAt         *time.Time                `json:"completed_at,omitempty"`
+	RefundAmount        float64                   `json:"refund_amount"`
+	RefundReason        *string                   `json:"refund_reason,omitempty"`
+	RefundRequestedAt   *time.Time                `json:"refund_requested_at,omitempty"`
+	RefundRequestedBy   *string                   `json:"refund_requested_by,omitempty"`
+	RefundRequestReason *string                   `json:"refund_request_reason,omitempty"`
+	PlanID              *int64                    `json:"plan_id,omitempty"`
+	ProviderInstanceID  *string                   `json:"provider_instance_id,omitempty"`
 }
 
 // NewPaymentHandler creates a new PaymentHandler.
@@ -508,6 +510,7 @@ func (h *PaymentHandler) VerifyOrder(c *gin.Context) {
 
 func UserBuildPublicOrderResult(order *payment.Order) PublicOrderResult {
 	return PublicOrderResult{
+		RechargeSnapshot:    order.RechargeSnapshot,
 		ID:                  order.ID,
 		OutTradeNo:          order.OutTradeNo,
 		Amount:              order.Amount,
@@ -634,6 +637,7 @@ func UserSanitizePaymentOrderForResponse(order *payment.Order) *PaymentOrderResu
 		return nil
 	}
 	return &PaymentOrderResult{
+		RechargeSnapshot:    order.RechargeSnapshot,
 		ID:                  order.ID,
 		UserID:              order.UserID,
 		Amount:              order.Amount,

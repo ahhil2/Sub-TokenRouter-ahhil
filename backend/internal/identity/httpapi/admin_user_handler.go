@@ -167,11 +167,12 @@ func (h *AdminUserHandler[K]) List(c *gin.Context) {
 	}
 
 	filters := identity.UserListFilters{
-		Status:     c.Query("status"),
-		Role:       c.Query("role"),
-		Search:     search,
-		GroupName:  strings.TrimSpace(c.Query("group_name")),
-		Attributes: ParseAttributeFilters(c),
+		IdentityGroup: c.Query("identity_group"),
+		Status:        c.Query("status"),
+		Role:          c.Query("role"),
+		Search:        search,
+		GroupName:     strings.TrimSpace(c.Query("group_name")),
+		Attributes:    ParseAttributeFilters(c),
 	}
 	if raw := strings.TrimSpace(c.Query("api_key_group_id")); raw != "" {
 		if id, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil && id > 0 {

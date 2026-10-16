@@ -28,6 +28,7 @@ type ForceExpireOrderRequest struct {
 
 // AdminPaymentOrderResult 是后台订单响应 DTO，显式排除 provider_snapshot。
 type AdminPaymentOrderResult struct {
+	RechargeSnapshot     *billing.RechargeSnapshot        `json:"recharge_snapshot,omitempty"`
 	ID                   int64                            `json:"id"`
 	UserID               int64                            `json:"user_id"`
 	UserEmail            string                           `json:"user_email,omitempty"`
@@ -279,6 +280,7 @@ func AdminSanitizeAdminPaymentOrderForResponse(order *payment.Order) *AdminPayme
 		return nil
 	}
 	return &AdminPaymentOrderResult{
+		RechargeSnapshot:     order.RechargeSnapshot,
 		ID:                   order.ID,
 		UserID:               order.UserID,
 		UserEmail:            order.UserEmail,

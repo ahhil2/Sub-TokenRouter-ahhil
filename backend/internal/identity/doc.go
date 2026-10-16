@@ -6,6 +6,7 @@
 //   - session_service.go：访问令牌、刷新令牌和会话撤销。
 //
 // 文件分组：
+//   - member_groups.go：运营身份类别、批量分配和成员查询。
 //   - admin_*.go：后台用户管理、事务操作和认证设置管理。
 //   - auth_*.go、bootstrap.go：认证依赖、邮箱绑定、OAuth 注册和初始管理员创建。
 //   - user*.go、risk_status.go：用户数据、资料更新、自定义属性和风险状态。

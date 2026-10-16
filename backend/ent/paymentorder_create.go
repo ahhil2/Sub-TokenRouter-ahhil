@@ -24,6 +24,12 @@ type PaymentOrderCreate struct {
 	conflict []sql.ConflictOption
 }
 
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (_c *PaymentOrderCreate) SetRechargeSnapshot(v *billing.RechargeSnapshot) *PaymentOrderCreate {
+	_c.mutation.SetRechargeSnapshot(v)
+	return _c
+}
+
 // SetUserID sets the "user_id" field.
 func (_c *PaymentOrderCreate) SetUserID(v int64) *PaymentOrderCreate {
 	_c.mutation.SetUserID(v)
@@ -830,7 +836,7 @@ func (_c *PaymentOrderCreate) sqlSave(ctx context.Context) (*PaymentOrder, error
 		return nil, err
 	}
 	id := _spec.ID.Value.(int64)
-	_node.ID = id
+	_node.ID = int64(id)
 	_c.mutation.id = &_node.ID
 	_c.mutation.done = true
 	return _node, nil
@@ -842,6 +848,10 @@ func (_c *PaymentOrderCreate) createSpec() (*PaymentOrder, *sqlgraph.CreateSpec)
 		_spec = sqlgraph.NewCreateSpec(paymentorder.Table, sqlgraph.NewFieldSpec(paymentorder.FieldID, field.TypeInt64))
 	)
 	_spec.OnConflict = _c.conflict
+	if value, ok := _c.mutation.RechargeSnapshot(); ok {
+		_spec.SetField(paymentorder.FieldRechargeSnapshot, field.TypeJSON, value)
+		_node.RechargeSnapshot = value
+	}
 	if value, ok := _c.mutation.UserEmail(); ok {
 		_spec.SetField(paymentorder.FieldUserEmail, field.TypeString, value)
 		_node.UserEmail = value
@@ -1050,7 +1060,7 @@ func (_c *PaymentOrderCreate) createSpec() (*PaymentOrder, *sqlgraph.CreateSpec)
 // of the `INSERT` statement. For example:
 //
 //	client.PaymentOrder.Create().
-//		SetUserID(v).
+//		SetRechargeSnapshot(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -1059,7 +1069,7 @@ func (_c *PaymentOrderCreate) createSpec() (*PaymentOrder, *sqlgraph.CreateSpec)
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.PaymentOrderUpsert) {
-//			SetUserID(v+v).
+//			SetRechargeSnapshot(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *PaymentOrderCreate) OnConflict(opts ...sql.ConflictOption) *PaymentOrderUpsertOne {
@@ -1094,6 +1104,24 @@ type (
 		*sql.UpdateSet
 	}
 )
+
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (u *PaymentOrderUpsert) SetRechargeSnapshot(v *billing.RechargeSnapshot) *PaymentOrderUpsert {
+	u.Set(paymentorder.FieldRechargeSnapshot, v)
+	return u
+}
+
+// UpdateRechargeSnapshot sets the "recharge_snapshot" field to the value that was provided on create.
+func (u *PaymentOrderUpsert) UpdateRechargeSnapshot() *PaymentOrderUpsert {
+	u.SetExcluded(paymentorder.FieldRechargeSnapshot)
+	return u
+}
+
+// ClearRechargeSnapshot clears the value of the "recharge_snapshot" field.
+func (u *PaymentOrderUpsert) ClearRechargeSnapshot() *PaymentOrderUpsert {
+	u.SetNull(paymentorder.FieldRechargeSnapshot)
+	return u
+}
 
 // SetUserID sets the "user_id" field.
 func (u *PaymentOrderUpsert) SetUserID(v int64) *PaymentOrderUpsert {
@@ -1888,6 +1916,27 @@ func (u *PaymentOrderUpsertOne) Update(set func(*PaymentOrderUpsert)) *PaymentOr
 		set(&PaymentOrderUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (u *PaymentOrderUpsertOne) SetRechargeSnapshot(v *billing.RechargeSnapshot) *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetRechargeSnapshot(v)
+	})
+}
+
+// UpdateRechargeSnapshot sets the "recharge_snapshot" field to the value that was provided on create.
+func (u *PaymentOrderUpsertOne) UpdateRechargeSnapshot() *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateRechargeSnapshot()
+	})
+}
+
+// ClearRechargeSnapshot clears the value of the "recharge_snapshot" field.
+func (u *PaymentOrderUpsertOne) ClearRechargeSnapshot() *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.ClearRechargeSnapshot()
+	})
 }
 
 // SetUserID sets the "user_id" field.
@@ -2847,7 +2896,7 @@ func (_c *PaymentOrderCreateBulk) Save(ctx context.Context) ([]*PaymentOrder, er
 				mutation.id = &nodes[i].ID
 				if specs[i].ID.Value != nil {
 					id := specs[i].ID.Value.(int64)
-					nodes[i].ID = id
+					nodes[i].ID = int64(id)
 				}
 				mutation.done = true
 				return nodes[i], nil
@@ -2900,7 +2949,7 @@ func (_c *PaymentOrderCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.PaymentOrderUpsert) {
-//			SetUserID(v+v).
+//			SetRechargeSnapshot(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *PaymentOrderCreateBulk) OnConflict(opts ...sql.ConflictOption) *PaymentOrderUpsertBulk {
@@ -2974,6 +3023,27 @@ func (u *PaymentOrderUpsertBulk) Update(set func(*PaymentOrderUpsert)) *PaymentO
 		set(&PaymentOrderUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (u *PaymentOrderUpsertBulk) SetRechargeSnapshot(v *billing.RechargeSnapshot) *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetRechargeSnapshot(v)
+	})
+}
+
+// UpdateRechargeSnapshot sets the "recharge_snapshot" field to the value that was provided on create.
+func (u *PaymentOrderUpsertBulk) UpdateRechargeSnapshot() *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateRechargeSnapshot()
+	})
+}
+
+// ClearRechargeSnapshot clears the value of the "recharge_snapshot" field.
+func (u *PaymentOrderUpsertBulk) ClearRechargeSnapshot() *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.ClearRechargeSnapshot()
+	})
 }
 
 // SetUserID sets the "user_id" field.

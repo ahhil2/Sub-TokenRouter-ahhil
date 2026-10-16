@@ -104,6 +104,7 @@ export interface CheckoutInfoResponse {
 // ==================== Orders ====================
 
 export interface PaymentOrder {
+  recharge_snapshot?: import('@/api/identityGroups').RechargeSnapshot | null
   id: number
   user_id: number
   amount: number
@@ -254,6 +255,7 @@ export interface WechatJSAPIPayload {
 }
 
 export interface CreateOrderResult {
+  recharge_snapshot?: import('@/api/identityGroups').RechargeSnapshot | null
   order_id: number
   amount: number
   pay_url?: string

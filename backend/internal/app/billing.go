@@ -73,10 +73,11 @@ func provideBillingRedeem(repo billing.RedeemCodeRepository, users *identitypost
 		Concurrency: identitypostgres.NewConcurrencyStore(client),
 	})
 	runtime := billing.RedeemRuntime{
-		HasPaidOrder: paymentpostgres.NewOrderStore(client).HasPaidOrder,
-		Now:          time.Now,
-		Observe:      logging.LegacyPrintf,
-		Background:   func(name string, fn func()) { tasks.Go(name, fn) },
+		RechargeIdentity: identitypostgres.NewMemberGroupStore(client).RechargeIdentity,
+		HasPaidOrder:     paymentpostgres.NewOrderStore(client).HasPaidOrder,
+		Now:              time.Now,
+		Observe:          logging.LegacyPrintf,
+		Background:       func(name string, fn func()) { tasks.Go(name, fn) },
 	}
 	return billing.NewRedeemService(repo, billingIdentityUsers{Repository: users}, subs, cache, eligibility, mutations, auth, affiliate, runtime)
 }

@@ -1,5 +1,6 @@
 <template>
   <AppLayout>
+    <UserIdentityBenefits class="mb-4" @loaded="identityBonusRate = $event" />
     <!-- 页签与标题同行放在页头右侧；支付中和订阅确认时隐藏。 -->
     <template v-if="!loading && tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" #page-heading-actions>
       <div v-segmented role="tablist" class="segmented gap-1">
@@ -89,6 +90,7 @@
             <PaymentStatusPanel
               v-if="paymentPhase === 'paying'"
               :order-id="paymentState.orderId"
+              :recharge-snapshot="paymentState.rechargeSnapshot"
               :amount="paymentState.amount"
               :pay-amount="paymentState.payAmount"
               :qr-code="paymentState.qrCode"
@@ -275,6 +277,7 @@
                   </dl>
 
                   <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('payment.orderSummary') }}</h2>
+                  <RechargeBreakdown v-if="!isSubscriptionCheckout" :snapshot="identityPreview" class="mt-3" />
                   <dl class="mt-3 space-y-2 text-sm">
                     <div class="flex justify-between gap-4">
                       <dt class="text-gray-500 dark:text-dark-400">{{ checkoutBaseLabel }}</dt>
@@ -379,6 +382,8 @@ import { vSegmented } from '@/directives/segmented'
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import UserIdentityBenefits from '@/components/common/UserIdentityBenefits.vue'
+import RechargeBreakdown from '@/components/payment/RechargeBreakdown.vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -665,6 +670,14 @@ const subscriptionUsdToCnyRate = computed(() => {
   return Number.isFinite(rate) && rate > 0 ? rate : 0
 })
 const creditedAmount = computed(() => Math.round((validAmount.value * balanceRechargeMultiplier.value) * 100) / 100)
+const identityBonusRate = ref(0)
+const identityPreview = computed(() => ({
+  identity_code: '',
+  base_amount: creditedAmount.value,
+  bonus_rate: identityBonusRate.value,
+  bonus_amount: Number((creditedAmount.value * identityBonusRate.value).toFixed(8)),
+  credited_amount: Number((creditedAmount.value + creditedAmount.value * identityBonusRate.value).toFixed(8)),
+}))
 const hasHelpContent = computed(() => Boolean(checkout.value.help_text || checkout.value.help_image_url))
 const renderedHelpText = computed(() => {
   const content = checkout.value.help_text.trim()

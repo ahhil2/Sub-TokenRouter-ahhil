@@ -1088,7 +1088,7 @@ func (s *Public) ResolvePricingSnapshot(ctx context.Context, owner BatchImageOwn
 		subscriptionRateMultiplier = groupDefaultMultiplier
 		balanceRateMultiplier = groupDefaultMultiplier
 		if s.UserGroupRateRepo != nil {
-			userRate, rateErr := s.UserGroupRateRepo.GetByUserAndGroup(ctx, owner.EffectiveBillingUserID(), group.ID)
+			userRate, rateErr := billing.EffectiveGroupRate(ctx, s.UserGroupRateRepo, owner.EffectiveBillingUserID(), group.ID)
 			if rateErr != nil {
 				return nil, ErrBatchImageSettlementPricingMissing
 			}

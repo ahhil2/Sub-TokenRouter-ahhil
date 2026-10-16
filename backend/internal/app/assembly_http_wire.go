@@ -18,6 +18,7 @@ var httpAssemblyProviders = wire.NewSet(
 	provideAuthRouteMount,
 	provideUserRouteMount,
 	provideAdminRouteMount,
+	provideMemberGroupHandler,
 	provideGatewayRouteMount,
 	providePaymentRouteMount,
 	provideForwardedSettings,

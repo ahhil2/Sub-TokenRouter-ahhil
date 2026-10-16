@@ -6,6 +6,7 @@
 //   - user_subscription_repo.go：查询订阅，写入状态、有效期和额度窗口。
 //
 // 文件分组：
+//   - identity_rates.go：身份倍率管理、个人覆盖合并和变更审计。
 //   - balance.go、available_balance.go：余额更新、初始余额写入和可用余额扣减。
 //   - settlement.go、usage_dedup_retention.go：资金结算、任务写入接口和结算去重记录归档。
 //   - key_usage.go、member_usage.go：API Key 与团队成员的用量累计和窗口重置。

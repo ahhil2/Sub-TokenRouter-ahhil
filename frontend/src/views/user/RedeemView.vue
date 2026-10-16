@@ -6,6 +6,7 @@
       class="grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[22.5rem_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)]"
     >
       <section data-testid="redeem-panel" class="card p-4 sm:p-6">
+        <UserIdentityBenefits class="mb-4" />
         <div class="flex flex-col gap-4">
           <RedeemCelebration
             :sequence="celebration?.sequence ?? 0"
@@ -32,6 +33,7 @@
               </div>
             </dl>
           </RedeemCelebration>
+          <RechargeBreakdown :snapshot="lastRecharge" />
 
           <!-- 中等宽度下输入框与按钮同排，宽屏左栏较窄时恢复纵向排列。 -->
           <form
@@ -140,14 +142,15 @@
                 </p>
               </div>
 
-              <p
+              <div
                 :class="[
-                  'max-w-40 shrink-0 truncate text-right text-sm font-semibold tabular-nums',
+                  'max-w-64 shrink-0 text-right text-sm font-semibold tabular-nums',
                   getHistoryTone(item).text
                 ]"
               >
                 {{ formatHistoryValue(item) }}
-              </p>
+                <RechargeBreakdown :snapshot="item.recharge_snapshot" class="mt-2" />
+              </div>
             </li>
           </ul>
 
@@ -214,6 +217,8 @@
 import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
+import UserIdentityBenefits from '@/components/common/UserIdentityBenefits.vue'
+import RechargeBreakdown from '@/components/payment/RechargeBreakdown.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { useSubscriptionStore } from '@/stores/subscriptions'
@@ -240,6 +245,7 @@ const redeemCode = ref('')
 const redeemForm = ref<HTMLFormElement | null>(null)
 const codeInput = ref<HTMLInputElement | null>(null)
 const submitting = ref(false)
+const lastRecharge = ref<import('@/api/identityGroups').RechargeSnapshot | null>(null)
 const celebration = ref<{ sequence: number; title: string; detail: string } | null>(null)
 let celebrationSequence = 0
 let disposed = false
@@ -317,7 +323,7 @@ const getHistoryItemMeta = (item: RedeemHistoryItem) => {
 
 const formatHistoryValue = (item: RedeemHistoryItem) => {
   if (isBalanceType(item.type)) {
-    return formatSignedBalanceAmount(item.value, 2)
+    return formatSignedBalanceAmount(item.recharge_snapshot?.credited_amount ?? item.value, 2)
   } else if (isSubscriptionType(item.type)) {
     return item.plan?.name || (item.plan_id ? `Plan #${item.plan_id}` : t('redeem.subscriptionAssigned'))
   } else {
@@ -354,7 +360,7 @@ const fetchHistory = async (page = historyPage.value) => {
 // 成功内容来自兑换响应，不依赖后续刷新，也不从余额差额推算到账金额。
 const getCelebrationDetail = (result: RedeemHistoryItem) => {
   if (result.type === 'balance') {
-    return t('redeem.balanceReceived', { amount: formatSignedBalanceAmount(result.value, 2) })
+    return t('redeem.balanceReceived', { amount: formatSignedBalanceAmount(result.recharge_snapshot?.credited_amount ?? result.value, 2) })
   }
   if (result.type === 'concurrency') {
     const count = `${result.value >= 0 ? '+' : ''}${result.value}`
@@ -387,6 +393,7 @@ const handleRedeem = async () => {
     if (disposed) return
 
     redeemCode.value = ''
+    lastRecharge.value = result.recharge_snapshot ?? null
     celebration.value = {
       sequence: ++celebrationSequence,
       title: t('redeem.codeRedeemSuccess'),

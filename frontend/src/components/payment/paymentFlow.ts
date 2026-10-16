@@ -33,6 +33,7 @@ export type PaymentLaunchKind =
   | 'unhandled'
 
 export interface PaymentRecoverySnapshot {
+  rechargeSnapshot?: import('@/api/identityGroups').RechargeSnapshot | null
   orderId: number
   amount: number
   qrCode: string
@@ -158,6 +159,7 @@ export function decidePaymentLaunch(
   const hostedInvoiceUrl = (result.invoice_url || '').trim()
   const hostedPaymentUrl = (result.pay_url || '').trim()
   const baseState = createPaymentRecoverySnapshot({
+    rechargeSnapshot: result.recharge_snapshot,
     orderId: result.order_id,
     amount: result.amount,
     qrCode: result.qr_code || '',
@@ -294,6 +296,13 @@ export function readPaymentRecoverySnapshot(
 
   try {
     const parsed = JSON.parse(raw) as Partial<PaymentRecoverySnapshot>
+    const recharge = parsed.rechargeSnapshot
+    if (recharge != null && (
+      typeof recharge !== 'object'
+      || typeof recharge.identity_code !== 'string'
+      || ![recharge.base_amount, recharge.bonus_rate, recharge.bonus_amount, recharge.credited_amount]
+        .every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)
+    )) return null
     if (
       typeof parsed.orderId !== 'number'
       || typeof parsed.amount !== 'number'
@@ -327,6 +336,7 @@ export function readPaymentRecoverySnapshot(
 
     return {
       orderId: parsed.orderId,
+      rechargeSnapshot: parsed.rechargeSnapshot,
       amount: parsed.amount,
       qrCode: parsed.qrCode,
       expiresAt: parsed.expiresAt,

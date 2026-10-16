@@ -13,6 +13,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/TokenFlux/TokenRouter/internal/billing"
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
@@ -150,7 +151,22 @@ func (s *Checkout) ValidateSubOrder(ctx context.Context, req CreateOrderRequest)
 }
 
 func (s *Checkout) CreateOrderInTx(ctx context.Context, req CreateOrderRequest, user *Buyer, plan *SubscriptionPlan, cfg *PaymentConfig, orderAmount, limitAmount float64, fee FeeBreakdown, sel *InstanceSelection) (*Order, error) {
-	return s.store.CreateCheckout(ctx, BuildCheckoutDraft(req, user, plan, cfg, orderAmount, limitAmount, fee, sel))
+	draft := BuildCheckoutDraft(req, user, plan, cfg, orderAmount, limitAmount, fee, sel)
+	var err error
+	if req.OrderType == OrderTypeBalance {
+		identityCode := ""
+		if s.runtime.RechargeIdentity != nil {
+			identityCode, err = s.runtime.RechargeIdentity(ctx, req.UserID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		draft.Order.RechargeSnapshot, err = billing.CalculateRecharge(orderAmount, identityCode)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return s.store.CreateCheckout(ctx, draft)
 }
 
 func BuildPaymentOrderProviderSnapshot(sel *InstanceSelection, req CreateOrderRequest) map[string]any {
@@ -604,34 +620,35 @@ func ClassifyCreatePaymentError(req CreateOrderRequest, providerKey string, err 
 
 func BuildCreateOrderResponse(order *Order, req CreateOrderRequest, payAmount float64, sel *InstanceSelection, pr *CreatePaymentResponse, resultType CreatePaymentResultType) *CreateOrderResponse {
 	return &CreateOrderResponse{
-		OrderID:       order.ID,
-		Amount:        order.Amount,
-		PayAmount:     payAmount,
-		FeeRate:       order.FeeRate,
-		FeeFixed:      order.FeeFixed,
-		FeeRateAmount: order.FeeRateAmount,
-		FeeAmount:     order.FeeAmount,
-		Status:        OrderStatusPending,
-		ResultType:    resultType,
-		PaymentType:   req.PaymentType,
-		OutTradeNo:    order.OutTradeNo,
-		PayURL:        pr.PayURL,
-		QRCode:        pr.QRCode,
-		ClientSecret:  pr.ClientSecret,
-		CustomerID:    pr.CustomerID,
-		InvoiceID:     pr.InvoiceID,
-		InvoiceURL:    pr.InvoiceURL,
-		InvoicePDF:    pr.InvoicePDF,
-		InvoiceStatus: pr.InvoiceStatus,
-		IntentID:      pr.IntentID,
-		Currency:      pr.Currency,
-		CountryCode:   pr.CountryCode,
-		PaymentEnv:    pr.PaymentEnv,
-		OAuth:         pr.OAuth,
-		JSAPI:         pr.JSAPI,
-		JSAPIPayload:  pr.JSAPI,
-		ExpiresAt:     order.ExpiresAt,
-		PaymentMode:   sel.PaymentMode,
+		OrderID:          order.ID,
+		Amount:           order.Amount,
+		PayAmount:        payAmount,
+		RechargeSnapshot: order.RechargeSnapshot,
+		FeeRate:          order.FeeRate,
+		FeeFixed:         order.FeeFixed,
+		FeeRateAmount:    order.FeeRateAmount,
+		FeeAmount:        order.FeeAmount,
+		Status:           OrderStatusPending,
+		ResultType:       resultType,
+		PaymentType:      req.PaymentType,
+		OutTradeNo:       order.OutTradeNo,
+		PayURL:           pr.PayURL,
+		QRCode:           pr.QRCode,
+		ClientSecret:     pr.ClientSecret,
+		CustomerID:       pr.CustomerID,
+		InvoiceID:        pr.InvoiceID,
+		InvoiceURL:       pr.InvoiceURL,
+		InvoicePDF:       pr.InvoicePDF,
+		InvoiceStatus:    pr.InvoiceStatus,
+		IntentID:         pr.IntentID,
+		Currency:         pr.Currency,
+		CountryCode:      pr.CountryCode,
+		PaymentEnv:       pr.PaymentEnv,
+		OAuth:            pr.OAuth,
+		JSAPI:            pr.JSAPI,
+		JSAPIPayload:     pr.JSAPI,
+		ExpiresAt:        order.ExpiresAt,
+		PaymentMode:      sel.PaymentMode,
 	}
 }
 

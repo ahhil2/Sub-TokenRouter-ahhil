@@ -22,6 +22,7 @@ type CheckoutStore interface {
 	CancelledCount(context.Context, string, time.Time) (int, error)
 }
 type CheckoutRuntime struct {
+	RechargeIdentity func(context.Context, int64) (string, error)
 	User             func(context.Context, int64) (*Buyer, error)
 	WeChatCredential func(context.Context) (string, string, error)
 	CreateProvider   func(string, string, map[string]string) (Provider, error)

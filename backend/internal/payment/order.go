@@ -14,6 +14,7 @@ const (
 )
 
 type Order struct {
+	RechargeSnapshot     *billing.RechargeSnapshot        `json:"recharge_snapshot,omitempty"`
 	ID                   int64                            `json:"id,omitempty"`
 	UserID               int64                            `json:"user_id,omitempty"`
 	UserEmail            string                           `json:"user_email,omitempty"`
@@ -72,6 +73,10 @@ func (o *Order) Clone() *Order {
 		return nil
 	}
 	copy := *o
+	if o.RechargeSnapshot != nil {
+		snapshot := *o.RechargeSnapshot
+		copy.RechargeSnapshot = &snapshot
+	}
 	if o.UserNotes != nil {
 		value := *o.UserNotes
 		copy.UserNotes = &value

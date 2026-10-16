@@ -53,6 +53,7 @@ type (
 )
 
 type RedeemRuntime struct {
+	RechargeIdentity func(context.Context, int64) (string, error)
 	// HasPaidOrder 查询用户成功付款的历史，查询失败时停止发放权益。
 	HasPaidOrder func(context.Context, int64) (bool, error)
 	Now          func() time.Time
@@ -274,11 +275,15 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	}
 
 	// 重新获取更新后的兑换码
+	snapshot := redeemCode.RechargeSnapshot
 	redeemCode, err = s.redeemRepo.GetByID(ctx, redeemCode.ID)
 	if err != nil {
 		return nil, fmt.Errorf("get updated redeem code: %w", err)
 	}
 
+	if redeemCode != nil {
+		redeemCode.RechargeSnapshot = snapshot
+	}
 	return redeemCode, nil
 }
 
@@ -331,7 +336,11 @@ func (s *RedeemService) redeemInTx(ctx, txCtx context.Context, userID int64, cod
 	// 执行兑换逻辑（兑换码已被锁定，此时可安全操作）
 	switch redeemCode.Type {
 	case RedeemTypeBalance:
-		if err := s.transactions.ApplyBalance(txCtx, userID, redeemCode.Value); err != nil {
+		redeemCode.RechargeSnapshot, err = s.rechargeSnapshot(txCtx, userID, redeemCode)
+		if err != nil {
+			return nil, fmt.Errorf("resolve recharge identity: %w", err)
+		}
+		if err := s.transactions.ApplyBalance(txCtx, userID, redeemCode.RechargeSnapshot.CreditedAmount); err != nil {
 			if errors.Is(err, ErrRedeemBalanceUnsupported) {
 				return nil, err
 			}
@@ -362,9 +371,10 @@ func (s *RedeemService) redeemInTx(ctx, txCtx context.Context, userID int64, cod
 
 	usageTime := s.runtime.Now()
 	if err := s.redeemRepo.CreateUsage(txCtx, &RedeemCodeUsage{
-		RedeemCodeID: redeemCode.ID,
-		UserID:       userID,
-		UsedAt:       usageTime,
+		RechargeSnapshot: redeemCode.RechargeSnapshot,
+		RedeemCodeID:     redeemCode.ID,
+		UserID:           userID,
+		UsedAt:           usageTime,
 	}); err != nil {
 		return nil, fmt.Errorf("create redeem usage: %w", err)
 	}

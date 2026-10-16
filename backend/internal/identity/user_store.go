@@ -11,10 +11,11 @@ import (
 
 // UserListFilters 包含用户列表的所有筛选项。
 type UserListFilters struct {
-	Status    string // 用户状态筛选
-	Role      string // 用户角色筛选
-	Search    string // 按邮箱、用户名搜索
-	GroupName string // 按用户授权分组名称模糊筛选
+	IdentityGroup string
+	Status        string // 用户状态筛选
+	Role          string // 用户角色筛选
+	Search        string // 按邮箱、用户名搜索
+	GroupName     string // 按用户授权分组名称模糊筛选
 	// APIKeyGroupID 筛选至少拥有一个未软删除且绑定到该分组的 API Key 的用户。
 	// 0 表示不筛选；该条件直接匹配 api_keys.group_id，不依赖 allowed_groups。
 	APIKeyGroupID int64

@@ -3,6 +3,10 @@
     <TablePageLayout>
       <!-- Single Row: Search, Filters, and Actions -->
       <template #filters>
+        <div class="mb-3 flex flex-wrap gap-2">
+          <Select v-model="identityFilter" :options="identityFilterOptions" class="w-48" @update:model-value="handleIdentityFilter" />
+          <button class="btn btn-secondary" :disabled="selectedIds.length === 0" @click="identityUserIds = [...selectedIds]; showIdentityModal = true">{{ t('identityGroups.assign') }}</button>
+        </div>
         <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
           <!-- Left: Search + Active Filters -->
           <div class="flex min-w-0 w-full flex-1 flex-wrap items-center gap-2 sm:w-auto">
@@ -282,6 +286,7 @@
           @update:selected-keys="handleSelectedKeysUpdate"
         >
           <template #cell-email="{ value, row }">
+            <div class="flex flex-wrap gap-1"><span v-for="code in row.identity_groups" :key="code" class="badge badge-primary">{{ identityName(code) }}</span></div>
             <div class="flex items-center gap-2">
               <UserAvatar
                 :avatar-url="row.avatar_url || ''"
@@ -586,6 +591,7 @@
           </template>
 
           <template #cell-actions="{ row }">
+            <button class="btn btn-secondary btn-sm" @click="identityUserIds = [row.id]; showIdentityModal = true">{{ t('identityGroups.assign') }}</button>
             <div class="flex items-center gap-1">
               <!-- Edit Button -->
               <button
@@ -733,6 +739,7 @@
 
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.users.deleteUser')" :message="t('admin.users.deleteConfirm', { email: deletingUser?.email })" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
     <UserCreateModal :show="showCreateModal" @close="showCreateModal = false" @success="loadUsers" />
+    <UserIdentityModal :show="showIdentityModal" :user-ids="identityUserIds" @close="showIdentityModal = false" @success="loadUsers" />
     <UserEditModal :show="showEditModal" :user="editingUser" @close="closeEditModal" @success="loadUsers" />
     <BulkEditUserModal
       :show="showBulkEditModal"
@@ -754,6 +761,8 @@
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import UserIdentityModal from '@/components/admin/user/UserIdentityModal.vue'
+import { identityName } from '@/api/identityGroups'
 import { useAppStore } from '@/stores/app'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
@@ -763,6 +772,11 @@ import BalanceIcon from '@/components/common/BalanceIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
+const identityFilter = ref('')
+const identityFilterOptions = computed(() => [{ value: '', label: t('identityGroups.filter') }, ...['bonus_5', 'bonus_10', 'ahhilai'].map(code => ({ value: code, label: identityName(code) }))])
+const showIdentityModal = ref(false)
+const identityUserIds = ref<number[]>([])
+function handleIdentityFilter() { pagination.page = 1; void loadUsers() }
 import { adminAPI } from '@/api/admin'
 import type { AdminUser, AdminGroup, UserAttributeDefinition } from '@/types'
 import type { BatchUserUsageStats } from '@/api/admin/dashboard'
@@ -1518,6 +1532,7 @@ const loadUsers = async () => {
       pagination.page_size,
       {
         role: filters.role as any,
+        identity_group: identityFilter.value || undefined,
         status: filters.status as any,
         search: searchQuery.value || undefined,
         group_name: filters.group || undefined,

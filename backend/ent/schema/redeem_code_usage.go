@@ -10,6 +10,8 @@ import (
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
+
+	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
 // RedeemCodeUsage holds the schema definition for the RedeemCodeUsage entity.
@@ -25,6 +27,7 @@ func (RedeemCodeUsage) Annotations() []schema.Annotation {
 
 func (RedeemCodeUsage) Fields() []ent.Field {
 	return []ent.Field{
+		field.JSON("recharge_snapshot", &billing.RechargeSnapshot{}).Optional(),
 		field.Int64("redeem_code_id"),
 		field.Int64("user_id"),
 		field.Time("used_at").

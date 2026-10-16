@@ -22,6 +22,7 @@ type RPMCheck interface {
 type FundingAdmission struct {
 	funds FundingCheck
 	rpm   RPMCheck
+	Rates billing.EffectiveRateReader
 }
 
 // NewFundingAdmission 固定资金与 RPM 检查依赖。
@@ -42,6 +43,11 @@ func (a *FundingAdmission) Check(ctx context.Context, input billing.CheckInput, 
 
 // CheckFunding 在等待结束后复查权益，RPM 已在进入等待前累计。
 func (a *FundingAdmission) CheckFunding(ctx context.Context, input billing.CheckInput) error {
+	if a.Rates != nil && input.Payer != nil && input.Group != nil {
+		if _, err := a.Rates.EffectiveGroupRate(ctx, input.Payer.ID, input.Group.ID); err != nil {
+			return err
+		}
+	}
 	return a.funds.Check(ctx, input)
 }
 

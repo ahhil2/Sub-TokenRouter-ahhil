@@ -206,11 +206,16 @@ func (s *Recorder) resolveSubscription(ctx context.Context, key *KeySnapshot, cu
 	return ResolveSubscription(ctx, current, s.subscriptions, userID, groupID)
 }
 
-func (s *Recorder) resolveUserGroupRateMultiplier(ctx context.Context, userID, groupID int64, fallback float64) float64 {
+func (s *Recorder) resolveUserGroupRateMultiplier(ctx context.Context, userID, groupID int64, fallback float64) (float64, error) {
 	if s.rates == nil {
-		return fallback
+		return fallback, nil
 	}
-	return s.rates.Resolve(ctx, userID, groupID, fallback)
+	if checked, ok := s.rates.(interface {
+		ResolveChecked(context.Context, int64, int64, float64) (float64, error)
+	}); ok {
+		return checked.ResolveChecked(ctx, userID, groupID, fallback)
+	}
+	return s.rates.Resolve(ctx, userID, groupID, fallback), nil
 }
 
 func (s *Recorder) resolveConfigPricingForUsage(ctx context.Context, model string, key *KeySnapshot) (*ResolvedPricing, string) {

@@ -26400,6 +26400,7 @@ type PaymentOrderMutation struct {
 	op                      Op
 	typ                     string
 	id                      *int64
+	recharge_snapshot       **billing.RechargeSnapshot
 	user_email              *string
 	user_name               *string
 	user_notes              *string
@@ -26558,6 +26559,55 @@ func (m *PaymentOrderMutation) IDs(ctx context.Context) ([]int64, error) {
 	default:
 		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
 	}
+}
+
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (m *PaymentOrderMutation) SetRechargeSnapshot(bs *billing.RechargeSnapshot) {
+	m.recharge_snapshot = &bs
+}
+
+// RechargeSnapshot returns the value of the "recharge_snapshot" field in the mutation.
+func (m *PaymentOrderMutation) RechargeSnapshot() (r *billing.RechargeSnapshot, exists bool) {
+	v := m.recharge_snapshot
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRechargeSnapshot returns the old "recharge_snapshot" field's value of the PaymentOrder entity.
+// If the PaymentOrder object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentOrderMutation) OldRechargeSnapshot(ctx context.Context) (v *billing.RechargeSnapshot, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRechargeSnapshot is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRechargeSnapshot requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRechargeSnapshot: %w", err)
+	}
+	return oldValue.RechargeSnapshot, nil
+}
+
+// ClearRechargeSnapshot clears the value of the "recharge_snapshot" field.
+func (m *PaymentOrderMutation) ClearRechargeSnapshot() {
+	m.recharge_snapshot = nil
+	m.clearedFields[paymentorder.FieldRechargeSnapshot] = struct{}{}
+}
+
+// RechargeSnapshotCleared returns if the "recharge_snapshot" field was cleared in this mutation.
+func (m *PaymentOrderMutation) RechargeSnapshotCleared() bool {
+	_, ok := m.clearedFields[paymentorder.FieldRechargeSnapshot]
+	return ok
+}
+
+// ResetRechargeSnapshot resets all changes to the "recharge_snapshot" field.
+func (m *PaymentOrderMutation) ResetRechargeSnapshot() {
+	m.recharge_snapshot = nil
+	delete(m.clearedFields, paymentorder.FieldRechargeSnapshot)
 }
 
 // SetUserID sets the "user_id" field.
@@ -28799,7 +28849,10 @@ func (m *PaymentOrderMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *PaymentOrderMutation) Fields() []string {
-	fields := make([]string, 0, 47)
+	fields := make([]string, 0, 48)
+	if m.recharge_snapshot != nil {
+		fields = append(fields, paymentorder.FieldRechargeSnapshot)
+	}
 	if m.user != nil {
 		fields = append(fields, paymentorder.FieldUserID)
 	}
@@ -28949,6 +29002,8 @@ func (m *PaymentOrderMutation) Fields() []string {
 // schema.
 func (m *PaymentOrderMutation) Field(name string) (ent.Value, bool) {
 	switch name {
+	case paymentorder.FieldRechargeSnapshot:
+		return m.RechargeSnapshot()
 	case paymentorder.FieldUserID:
 		return m.UserID()
 	case paymentorder.FieldUserEmail:
@@ -29052,6 +29107,8 @@ func (m *PaymentOrderMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *PaymentOrderMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
+	case paymentorder.FieldRechargeSnapshot:
+		return m.OldRechargeSnapshot(ctx)
 	case paymentorder.FieldUserID:
 		return m.OldUserID(ctx)
 	case paymentorder.FieldUserEmail:
@@ -29155,6 +29212,13 @@ func (m *PaymentOrderMutation) OldField(ctx context.Context, name string) (ent.V
 // type.
 func (m *PaymentOrderMutation) SetField(name string, value ent.Value) error {
 	switch name {
+	case paymentorder.FieldRechargeSnapshot:
+		v, ok := value.(*billing.RechargeSnapshot)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRechargeSnapshot(v)
+		return nil
 	case paymentorder.FieldUserID:
 		v, ok := value.(int64)
 		if !ok {
@@ -29613,6 +29677,9 @@ func (m *PaymentOrderMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *PaymentOrderMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(paymentorder.FieldRechargeSnapshot) {
+		fields = append(fields, paymentorder.FieldRechargeSnapshot)
+	}
 	if m.FieldCleared(paymentorder.FieldUserNotes) {
 		fields = append(fields, paymentorder.FieldUserNotes)
 	}
@@ -29702,6 +29769,9 @@ func (m *PaymentOrderMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *PaymentOrderMutation) ClearField(name string) error {
 	switch name {
+	case paymentorder.FieldRechargeSnapshot:
+		m.ClearRechargeSnapshot()
+		return nil
 	case paymentorder.FieldUserNotes:
 		m.ClearUserNotes()
 		return nil
@@ -29785,6 +29855,9 @@ func (m *PaymentOrderMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *PaymentOrderMutation) ResetField(name string) error {
 	switch name {
+	case paymentorder.FieldRechargeSnapshot:
+		m.ResetRechargeSnapshot()
+		return nil
 	case paymentorder.FieldUserID:
 		m.ResetUserID()
 		return nil
@@ -40152,6 +40225,7 @@ type RedeemCodeUsageMutation struct {
 	op                 Op
 	typ                string
 	id                 *int64
+	recharge_snapshot  **billing.RechargeSnapshot
 	used_at            *time.Time
 	clearedFields      map[string]struct{}
 	redeem_code        *int64
@@ -40259,6 +40333,55 @@ func (m *RedeemCodeUsageMutation) IDs(ctx context.Context) ([]int64, error) {
 	default:
 		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
 	}
+}
+
+// SetRechargeSnapshot sets the "recharge_snapshot" field.
+func (m *RedeemCodeUsageMutation) SetRechargeSnapshot(bs *billing.RechargeSnapshot) {
+	m.recharge_snapshot = &bs
+}
+
+// RechargeSnapshot returns the value of the "recharge_snapshot" field in the mutation.
+func (m *RedeemCodeUsageMutation) RechargeSnapshot() (r *billing.RechargeSnapshot, exists bool) {
+	v := m.recharge_snapshot
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRechargeSnapshot returns the old "recharge_snapshot" field's value of the RedeemCodeUsage entity.
+// If the RedeemCodeUsage object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RedeemCodeUsageMutation) OldRechargeSnapshot(ctx context.Context) (v *billing.RechargeSnapshot, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRechargeSnapshot is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRechargeSnapshot requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRechargeSnapshot: %w", err)
+	}
+	return oldValue.RechargeSnapshot, nil
+}
+
+// ClearRechargeSnapshot clears the value of the "recharge_snapshot" field.
+func (m *RedeemCodeUsageMutation) ClearRechargeSnapshot() {
+	m.recharge_snapshot = nil
+	m.clearedFields[redeemcodeusage.FieldRechargeSnapshot] = struct{}{}
+}
+
+// RechargeSnapshotCleared returns if the "recharge_snapshot" field was cleared in this mutation.
+func (m *RedeemCodeUsageMutation) RechargeSnapshotCleared() bool {
+	_, ok := m.clearedFields[redeemcodeusage.FieldRechargeSnapshot]
+	return ok
+}
+
+// ResetRechargeSnapshot resets all changes to the "recharge_snapshot" field.
+func (m *RedeemCodeUsageMutation) ResetRechargeSnapshot() {
+	m.recharge_snapshot = nil
+	delete(m.clearedFields, redeemcodeusage.FieldRechargeSnapshot)
 }
 
 // SetRedeemCodeID sets the "redeem_code_id" field.
@@ -40457,7 +40580,10 @@ func (m *RedeemCodeUsageMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *RedeemCodeUsageMutation) Fields() []string {
-	fields := make([]string, 0, 3)
+	fields := make([]string, 0, 4)
+	if m.recharge_snapshot != nil {
+		fields = append(fields, redeemcodeusage.FieldRechargeSnapshot)
+	}
 	if m.redeem_code != nil {
 		fields = append(fields, redeemcodeusage.FieldRedeemCodeID)
 	}
@@ -40475,6 +40601,8 @@ func (m *RedeemCodeUsageMutation) Fields() []string {
 // schema.
 func (m *RedeemCodeUsageMutation) Field(name string) (ent.Value, bool) {
 	switch name {
+	case redeemcodeusage.FieldRechargeSnapshot:
+		return m.RechargeSnapshot()
 	case redeemcodeusage.FieldRedeemCodeID:
 		return m.RedeemCodeID()
 	case redeemcodeusage.FieldUserID:
@@ -40490,6 +40618,8 @@ func (m *RedeemCodeUsageMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *RedeemCodeUsageMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
+	case redeemcodeusage.FieldRechargeSnapshot:
+		return m.OldRechargeSnapshot(ctx)
 	case redeemcodeusage.FieldRedeemCodeID:
 		return m.OldRedeemCodeID(ctx)
 	case redeemcodeusage.FieldUserID:
@@ -40505,6 +40635,13 @@ func (m *RedeemCodeUsageMutation) OldField(ctx context.Context, name string) (en
 // type.
 func (m *RedeemCodeUsageMutation) SetField(name string, value ent.Value) error {
 	switch name {
+	case redeemcodeusage.FieldRechargeSnapshot:
+		v, ok := value.(*billing.RechargeSnapshot)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRechargeSnapshot(v)
+		return nil
 	case redeemcodeusage.FieldRedeemCodeID:
 		v, ok := value.(int64)
 		if !ok {
@@ -40558,7 +40695,11 @@ func (m *RedeemCodeUsageMutation) AddField(name string, value ent.Value) error {
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
 func (m *RedeemCodeUsageMutation) ClearedFields() []string {
-	return nil
+	var fields []string
+	if m.FieldCleared(redeemcodeusage.FieldRechargeSnapshot) {
+		fields = append(fields, redeemcodeusage.FieldRechargeSnapshot)
+	}
+	return fields
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
@@ -40571,6 +40712,11 @@ func (m *RedeemCodeUsageMutation) FieldCleared(name string) bool {
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
 func (m *RedeemCodeUsageMutation) ClearField(name string) error {
+	switch name {
+	case redeemcodeusage.FieldRechargeSnapshot:
+		m.ClearRechargeSnapshot()
+		return nil
+	}
 	return fmt.Errorf("unknown RedeemCodeUsage nullable field %s", name)
 }
 
@@ -40578,6 +40724,9 @@ func (m *RedeemCodeUsageMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *RedeemCodeUsageMutation) ResetField(name string) error {
 	switch name {
+	case redeemcodeusage.FieldRechargeSnapshot:
+		m.ResetRechargeSnapshot()
+		return nil
 	case redeemcodeusage.FieldRedeemCodeID:
 		m.ResetRedeemCodeID()
 		return nil

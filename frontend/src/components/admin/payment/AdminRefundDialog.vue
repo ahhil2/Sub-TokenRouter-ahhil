@@ -6,6 +6,8 @@
     @close="emit('cancel')"
   >
     <form id="refund-form" @submit.prevent="handleSubmit" class="space-y-4">
+      <RechargeBreakdown :snapshot="order?.recharge_snapshot" />
+      <p v-if="order?.recharge_snapshot && form.deduct_balance" class="text-sm">{{ t('identityGroups.refund') }} {{ t('payment.admin.deductBalance') }}: {{ creditToDeduct }}</p>
       <!-- Refund Request Info -->
       <div
         v-if="order?.refund_requested_at || order?.refund_request_reason"
@@ -32,7 +34,7 @@
           <span class="font-mono text-gray-900 dark:text-white">#{{ order?.id }}</span>
         </div>
         <div class="mt-1 flex justify-between text-sm">
-          <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.creditedAmount') }}</span>
+          <span class="text-gray-500 dark:text-gray-400">{{ t(order?.recharge_snapshot ? 'identityGroups.base' : 'payment.orders.creditedAmount') }}</span>
           <span class="font-medium text-gray-900 dark:text-white">{{ order ? formatOrderAmount(order.amount, order) : '-' }}</span>
         </div>
         <div class="mt-1 flex justify-between text-sm">
@@ -162,6 +164,7 @@
 </template>
 
 <script setup lang="ts">
+import RechargeBreakdown from '@/components/payment/RechargeBreakdown.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -211,7 +214,12 @@ const maxRefundable = computed(() => {
 
 const balanceInsufficient = computed(() => {
   if (props.userBalance == null || !props.order) return false
-  return props.userBalance < props.order.amount
+  return props.userBalance < creditToDeduct.value
+})
+const creditToDeduct = computed(() => {
+  const snapshot = props.order?.recharge_snapshot
+  const amount = Number(form.amount) || props.order?.amount || 0
+  return snapshot && snapshot.base_amount > 0 ? Number((amount * snapshot.credited_amount / snapshot.base_amount).toFixed(8)) : amount
 })
 
 const refundInputSymbol = computed(() => {

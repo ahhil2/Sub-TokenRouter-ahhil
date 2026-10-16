@@ -68,6 +68,7 @@ export interface UserProfileSourceContext {
 }
 
 export interface User {
+  identity_groups?: string[] | null
   preferred_locale?: string | null
   id: number
   username: string
@@ -1859,6 +1860,7 @@ export interface UsageLogTiming {
 }
 
 export interface RedeemCode {
+  recharge_snapshot?: import('@/api/identityGroups').RechargeSnapshot | null
   /** 领取者需要有成功付款记录。 */
   requires_payment?: boolean
   id: number

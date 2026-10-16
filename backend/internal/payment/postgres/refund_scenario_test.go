@@ -15,6 +15,7 @@ import (
 
 	dbent "github.com/TokenFlux/TokenRouter/ent"
 	"github.com/TokenFlux/TokenRouter/ent/paymentauditlog"
+	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 	paymentpostgres "github.com/TokenFlux/TokenRouter/internal/payment/postgres"
 	paymentadapter "github.com/TokenFlux/TokenRouter/internal/payment/provider"
@@ -324,6 +325,7 @@ func TestFinishRefundPendingMarksOrderPendingAndRollsBackDeduction(t *testing.T)
 	require.NoError(t, err)
 
 	order, err := client.PaymentOrder.Create().
+		SetRechargeSnapshot(&billing.RechargeSnapshot{IdentityCode: "bonus_10", BaseAmount: 100, BonusRate: 0.1, BonusAmount: 10, CreditedAmount: 110}).
 		SetUserID(user.ID).
 		SetUserEmail(user.Email).
 		SetUserName(user.Username).
@@ -360,7 +362,7 @@ func TestFinishRefundPendingMarksOrderPendingAndRollsBackDeduction(t *testing.T)
 		Force:           true,
 		DeductBalance:   true,
 		DeductionType:   payment.DeductionTypeBalance,
-		BalanceToDeduct: 40,
+		BalanceToDeduct: 44,
 	}
 
 	recordPreparedRefundForTest(t, ctx, client, plan)
@@ -369,12 +371,13 @@ func TestFinishRefundPendingMarksOrderPendingAndRollsBackDeduction(t *testing.T)
 	require.NotNil(t, result)
 	require.False(t, result.Success)
 	require.Contains(t, result.Warning, "pending confirmation")
-	require.Equal(t, 40.0, rolledBack)
+	require.Equal(t, 44.0, rolledBack)
 	require.Zero(t, plan.BalanceToDeduct)
 
 	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
 	require.NoError(t, err)
 	require.Equal(t, payment.OrderStatusRefundPending, reloaded.Status)
+	require.Equal(t, 110.0, reloaded.RechargeSnapshot.CreditedAmount)
 	require.Equal(t, 40.0, reloaded.RefundAmount)
 	require.NotNil(t, reloaded.RefundReason)
 	require.Equal(t, "gateway accepted but not final", *reloaded.RefundReason)
@@ -406,6 +409,7 @@ func TestFinishRefundSuccessStatusesFinalize(t *testing.T) {
 			require.NoError(t, err)
 
 			order, err := client.PaymentOrder.Create().
+				SetRechargeSnapshot(&billing.RechargeSnapshot{IdentityCode: "bonus_10", BaseAmount: 100, BonusRate: 0.1, BonusAmount: 10, CreditedAmount: 110}).
 				SetUserID(user.ID).
 				SetUserEmail(user.Email).
 				SetUserName(user.Username).
@@ -434,7 +438,7 @@ func TestFinishRefundSuccessStatusesFinalize(t *testing.T) {
 				Reason:          "final success",
 				DeductBalance:   true,
 				DeductionType:   payment.DeductionTypeBalance,
-				BalanceToDeduct: 100,
+				BalanceToDeduct: 110,
 			}
 
 			recordPreparedRefundForTest(t, ctx, client, plan)
@@ -442,7 +446,7 @@ func TestFinishRefundSuccessStatusesFinalize(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.True(t, result.Success)
-			require.Equal(t, 100.0, result.BalanceDeducted)
+			require.Equal(t, 110.0, result.BalanceDeducted)
 
 			reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
 			require.NoError(t, err)

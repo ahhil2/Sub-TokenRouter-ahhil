@@ -44,6 +44,7 @@ func (s *OrderStore) CreateCheckout(ctx context.Context, draft payment.CheckoutD
 	selectedProviderKey := payment.RefundStringValue(draft.Order.ProviderKey)
 	providerSnapshot := draft.Order.ProviderSnapshot
 	b := tx.PaymentOrder.Create().
+		SetRechargeSnapshot(draft.Order.RechargeSnapshot).
 		SetUserID(draft.Order.UserID).
 		SetUserEmail(draft.Order.UserEmail).
 		SetUserName(draft.Order.UserName).

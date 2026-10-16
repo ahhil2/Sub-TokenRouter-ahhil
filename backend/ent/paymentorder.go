@@ -20,6 +20,8 @@ type PaymentOrder struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int64 `json:"id,omitempty"`
+	// RechargeSnapshot holds the value of the "recharge_snapshot" field.
+	RechargeSnapshot *billing.RechargeSnapshot `json:"recharge_snapshot,omitempty"`
 	// UserID holds the value of the "user_id" field.
 	UserID int64 `json:"user_id,omitempty"`
 	// UserEmail holds the value of the "user_email" field.
@@ -145,7 +147,7 @@ func (*PaymentOrder) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case paymentorder.FieldBillingSnapshot, paymentorder.FieldPlanSnapshot, paymentorder.FieldProviderSnapshot:
+		case paymentorder.FieldRechargeSnapshot, paymentorder.FieldBillingSnapshot, paymentorder.FieldPlanSnapshot, paymentorder.FieldProviderSnapshot:
 			values[i] = new([]byte)
 		case paymentorder.FieldForceRefund:
 			values[i] = new(sql.NullBool)
@@ -177,7 +179,15 @@ func (_m *PaymentOrder) assignValues(columns []string, values []any) error {
 			if !ok {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
-			_m.ID = value.Int64
+			_m.ID = int64(value.Int64)
+		case paymentorder.FieldRechargeSnapshot:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field recharge_snapshot", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.RechargeSnapshot); err != nil {
+					return fmt.Errorf("unmarshal field recharge_snapshot: %w", err)
+				}
+			}
 		case paymentorder.FieldUserID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field user_id", values[i])
@@ -529,6 +539,9 @@ func (_m *PaymentOrder) String() string {
 	var builder strings.Builder
 	builder.WriteString("PaymentOrder(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("recharge_snapshot=")
+	builder.WriteString(fmt.Sprintf("%v", _m.RechargeSnapshot))
+	builder.WriteString(", ")
 	builder.WriteString("user_id=")
 	builder.WriteString(fmt.Sprintf("%v", _m.UserID))
 	builder.WriteString(", ")

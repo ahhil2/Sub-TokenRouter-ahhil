@@ -116,15 +116,24 @@ func (s *RefundWorkflow) QueryAndFinalizeRefund(ctx context.Context, id int64) (
 }
 
 func (s *RefundWorkflow) FinalizePendingRefundSuccess(ctx context.Context, p *RefundPlan) (*RefundResult, error) {
-	return s.store.CompleteRefund(ctx, p, nil, ApplyRefundDeduction)
+	return s.store.CompleteRefund(ctx, p, nil, func(ctx context.Context, rights RefundRights, plan *RefundPlan) error {
+		return applyRefundDeduction(ctx, rights, plan, true)
+	})
 }
 
 // ApplyRefundDeduction 只使用当前事务的权益参与能力，保留非负实际扣减及到期撤销。
 func ApplyRefundDeduction(ctx context.Context, rights RefundRights, p *RefundPlan) error {
+	return applyRefundDeduction(ctx, rights, p, p.Force)
+}
+
+func applyRefundDeduction(ctx context.Context, rights RefundRights, p *RefundPlan, allowPartial bool) error {
 	if p.DeductionType == DeductionTypeBalance && p.BalanceToDeduct > 0 {
 		actual, err := rights.DeductBalance(ctx, p.Order.UserID, p.BalanceToDeduct)
 		if err != nil {
 			return fmt.Errorf("deduction: %w", err)
+		}
+		if !allowPartial && actual < p.BalanceToDeduct {
+			return apperror.BadRequest("BALANCE_NOT_ENOUGH", "refund amount exceeds balance")
 		}
 		p.BalanceToDeduct = actual
 	}

@@ -1,5 +1,7 @@
 # 身份与租户
 
+用户的运营身份分组见[用户身份分组](user_identity_groups.md#membership)。它与邮箱、OAuth 等登录认证身份分别存储。
+
 本文说明用户、登录身份、会话、管理员权限和团队之间的关系，以及认证和归属变更需要遵守的约束。端点格式和配置见 [HTTP 接口](../interfaces/http_api.md)和[配置](../interfaces/configuration.md)。
 
 ## 章节导航

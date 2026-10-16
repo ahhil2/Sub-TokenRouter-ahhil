@@ -45,8 +45,10 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 		groupDefault := apiKey.Group.RateMultiplier
 		subscriptionMultiplier = groupDefault
 		balanceMultiplier = groupDefault
-		if subscription == nil {
-			balanceMultiplier = s.resolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
+		var rateErr error
+		balanceMultiplier, rateErr = s.resolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
+		if rateErr != nil {
+			return rateErr
 		}
 	}
 	if apiKey.GroupID != nil && apiKey.Group != nil && subscription == nil {
@@ -121,6 +123,7 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 		SubscriptionRateMultiplier:      subscriptionMultiplier,
 		SubscriptionRateMultiplierScale: subscriptionMultiplierScale,
 		BalanceRateMultiplier:           balanceMultiplier,
+		RateMultipliersResolved:         true,
 		QuotaUpdates:                    input.QuotaUpdates,
 	})
 
@@ -269,8 +272,10 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	if apiKey.GroupID != nil && apiKey.Group != nil {
 		subscriptionMultiplier = apiKey.Group.RateMultiplier
 		balanceMultiplier = apiKey.Group.RateMultiplier
-		if subscription == nil {
-			balanceMultiplier = s.resolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
+		var rateErr error
+		balanceMultiplier, rateErr = s.resolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
+		if rateErr != nil {
+			return rateErr
 		}
 	}
 	if apiKey.GroupID != nil && apiKey.Group != nil && subscription == nil {
@@ -500,6 +505,7 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 			SubscriptionRateMultiplier:      subscriptionMultiplier,
 			SubscriptionRateMultiplierScale: subscriptionMultiplierScale,
 			BalanceRateMultiplier:           balanceMultiplier,
+			RateMultipliersResolved:         true,
 			QuotaUpdates:                    input.QuotaUpdates,
 			BillingBaseAmountUSD:            billingBaseAmountUSD,
 		})
