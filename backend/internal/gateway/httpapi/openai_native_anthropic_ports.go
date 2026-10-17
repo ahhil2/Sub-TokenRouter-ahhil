@@ -24,8 +24,8 @@ type openAINativeAnthropicAdapter struct {
 	kind forward.NativeAnthropicKind
 }
 
-func (p *openAINativeAnthropicAdapter) errorWriter() func(*gin.Context, int, string, string) {
-	switch p.kind {
+func (adapter *openAINativeAnthropicAdapter) errorWriter() func(*gin.Context, int, string, string) {
+	switch adapter.kind {
 	case forward.NativeResponses:
 		return writeTextResponsesError
 	case forward.NativeChat:
@@ -35,94 +35,98 @@ func (p *openAINativeAnthropicAdapter) errorWriter() func(*gin.Context, int, str
 	}
 }
 
-func (p *openAINativeAnthropicAdapter) Profile() forward.MessagesProfile {
-	return forward.MessagesProfile{Profile: openAIForwardProfile(p.provider), ID: p.provider.Record.ID}
+func (adapter *openAINativeAnthropicAdapter) Profile() forward.MessagesProfile {
+	return forward.MessagesProfile{Profile: openAIForwardProfile(adapter.provider), ID: adapter.provider.Record.ID}
 }
 
-func (p *openAINativeAnthropicAdapter) Error(status int, kind, message string) {
-	p.errorWriter()(p.c, status, kind, message)
+func (adapter *openAINativeAnthropicAdapter) Error(status int, kind, message string) {
+	adapter.errorWriter()(adapter.c, status, kind, message)
 }
 
-func (p *openAINativeAnthropicAdapter) NormalizeThinking(body []byte, model string) ([]byte, bool) {
+func (adapter *openAINativeAnthropicAdapter) NormalizeThinking(body []byte, model string) ([]byte, bool) {
 	return gatewayprovider.NormalizeGLM53AnthropicThinking(body, model)
 }
 
-func (p *openAINativeAnthropicAdapter) ThinkingFallback(effort *string, body []byte, model string) *string {
+func (adapter *openAINativeAnthropicAdapter) ThinkingFallback(effort *string, body []byte, model string) *string {
 	return gatewayprovider.ApplyThinkingEnabledFallback(effort, body, model)
 }
 
-func (p *openAINativeAnthropicAdapter) StripEmpty(body []byte) []byte {
+func (adapter *openAINativeAnthropicAdapter) StripEmpty(body []byte) []byte {
 	return protocolanthropic.StripEmptyTextBlocks(body)
 }
 
-func (p *openAINativeAnthropicAdapter) FilterSearch(body []byte, model string) []byte {
+func (adapter *openAINativeAnthropicAdapter) FilterSearch(body []byte, model string) []byte {
 	return searchtools.FilterWebSearchHistoryBlocks(body, modelidentity.ResolveThinkingProtocol(model) == modelidentity.ThinkingProtocolPassbackRequired)
 }
 
-func (p *openAINativeAnthropicAdapter) CacheLimit(body []byte) []byte {
+func (adapter *openAINativeAnthropicAdapter) CacheLimit(body []byte) []byte {
 	return anthropic.EnforceCacheControlLimit(body)
 }
 
-func (p *openAINativeAnthropicAdapter) Log(format string, args ...any) {
+func (adapter *openAINativeAnthropicAdapter) Log(format string, args ...any) {
 	logging.LegacyPrintf("service.gateway", format, args...)
 }
 
-func (p *openAINativeAnthropicAdapter) ProtocolAPIKey() string {
-	return p.provider.View().GetOpenAIProtocolAPIKey()
+func (adapter *openAINativeAnthropicAdapter) ProtocolAPIKey() string {
+	return adapter.provider.View().GetOpenAIProtocolAPIKey()
 }
 
-func (p *openAINativeAnthropicAdapter) TargetURL() (string, error) {
-	return p.s.Requests.AnthropicURL(p.provider)
+func (adapter *openAINativeAnthropicAdapter) TargetURL() (string, error) {
+	return adapter.s.Requests.AnthropicURL(adapter.provider)
 }
 
-func (p *openAINativeAnthropicAdapter) StreamContext(ctx context.Context, stream bool) (context.Context, context.CancelFunc) {
+func (adapter *openAINativeAnthropicAdapter) StreamContext(ctx context.Context, stream bool) (context.Context, context.CancelFunc) {
 	return gatewayprovider.DetachStreamUpstreamContext(ctx, stream)
 }
 
-func (p *openAINativeAnthropicAdapter) BuildNative(ctx context.Context, body []byte, key, url string) (*http.Request, error) {
-	r, _, err := p.s.Requests.BuildAnthropic(ctx, p.c, p.provider, body, key, url)
+func (adapter *openAINativeAnthropicAdapter) BuildNative(ctx context.Context, body []byte, key, url string) (*http.Request, error) {
+	r, _, err := adapter.s.Requests.BuildAnthropic(ctx, adapter.c, adapter.provider, body, key, url)
 	return r, err
 }
 
-func (p *openAINativeAnthropicAdapter) SendNative(r *http.Request) (*http.Response, error) {
-	resetResponseModel(p.c)
-	return p.s.Requests.Transport.Do(r, p.proxyURL, p.provider.Record.ID, p.provider.Record.Concurrency)
+func (adapter *openAINativeAnthropicAdapter) SendNative(r *http.Request) (*http.Response, error) {
+	resetResponseModel(adapter.c)
+	return adapter.s.Requests.Transport.Do(r, adapter.proxyURL, adapter.provider.Record.ID, adapter.provider.Record.Concurrency)
 }
 
-func (p *openAINativeAnthropicAdapter) TransportErrorNative(ctx context.Context, err error) error {
-	return p.s.Requests.Failure.Handle(ctx, p.c, p.provider, err, true)
+func (adapter *openAINativeAnthropicAdapter) TransportErrorNative(ctx context.Context, err error) error {
+	return adapter.s.Requests.Failure.Handle(ctx, adapter.c, adapter.provider, err, true)
 }
 
-func (p *openAINativeAnthropicAdapter) DirectOptions() forward.NativeAnthropicOptions {
-	return p.s.Output.AnthropicDirectOptions(p.c, p.provider)
+func (adapter *openAINativeAnthropicAdapter) InspectResponse(ctx context.Context, response *http.Response) error {
+	return gatewayprovider.CheckAnthropicSemanticError(ctx, adapter.s.Output.Observer, adapter.provider, response)
 }
 
-func (p *openAINativeAnthropicAdapter) AdaptResponsesTools(body []byte) ([]byte, bridge.ResponsesClientToolMapping, error) {
+func (adapter *openAINativeAnthropicAdapter) DirectOptions() forward.NativeAnthropicOptions {
+	return adapter.s.Output.AnthropicDirectOptions(adapter.c, adapter.provider)
+}
+
+func (adapter *openAINativeAnthropicAdapter) AdaptResponsesTools(body []byte) ([]byte, bridge.ResponsesClientToolMapping, error) {
 	return protocolforward.AdaptResponsesClientToolsForAnthropic(body)
 }
 
-func (p *openAINativeAnthropicAdapter) ResponsesToAnthropic(r *protocolopenai.ResponsesRequest) (*protocolanthropic.AnthropicRequest, error) {
+func (adapter *openAINativeAnthropicAdapter) ResponsesToAnthropic(r *protocolopenai.ResponsesRequest) (*protocolanthropic.AnthropicRequest, error) {
 	return bridge.ResponsesToAnthropicRequest(r)
 }
 
-func (p *openAINativeAnthropicAdapter) ChatToResponses(r *protocolopenai.ChatCompletionsRequest) (*protocolopenai.ResponsesRequest, error) {
+func (adapter *openAINativeAnthropicAdapter) ChatToResponses(r *protocolopenai.ChatCompletionsRequest) (*protocolopenai.ResponsesRequest, error) {
 	return bridge.ChatCompletionsToResponses(r, protocolforward.ConversionOptionsForModel(r.Model))
 }
 
-func (p *openAINativeAnthropicAdapter) ResponsesEffort(body []byte, models ...string) *string {
+func (adapter *openAINativeAnthropicAdapter) ResponsesEffort(body []byte, models ...string) *string {
 	return protocolforward.ExtractEffort(body, false, capability.NormalizeRecordedOpenAIEffortForModel, models...)
 }
 
-func (p *openAINativeAnthropicAdapter) ChatEffort(body []byte, models ...string) *string {
+func (adapter *openAINativeAnthropicAdapter) ChatEffort(body []byte, models ...string) *string {
 	return protocolforward.ExtractEffort(body, true, capability.NormalizeRecordedOpenAIEffortForModel, models...)
 }
 
-func (p *openAINativeAnthropicAdapter) MapStatus(status int) int {
+func (adapter *openAINativeAnthropicAdapter) MapStatus(status int) int {
 	return protocolforward.MapStatus(status)
 }
 
-func (p *openAINativeAnthropicAdapter) OutputOptions() forward.AnthropicOutputOptions {
-	return p.s.Output.AnthropicOptions(p.c, p.errorWriter())
+func (adapter *openAINativeAnthropicAdapter) OutputOptions() forward.AnthropicOutputOptions {
+	return adapter.s.Output.AnthropicOptions(adapter.c, adapter.errorWriter())
 }
 
 // writeTextResponsesError 保留转换入口的原响应提交与错误形状。

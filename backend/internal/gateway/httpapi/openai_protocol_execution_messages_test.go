@@ -2562,6 +2562,40 @@ func TestNativeAnthropicPassthroughRecordsOutputConfigEffort(t *testing.T) {
 	require.Equal(t, "low", *result.ReasoningEffort)
 }
 
+func TestNativeAnthropicSemanticErrorBeforeOutput(test *testing.T) {
+	const errorText = "[No upstream account is currently available. Please retry later.]"
+	for _, clientStream := range []bool{false, true} {
+		for _, path := range []string{"/v1/messages", "/v1/chat/completions", "/v1/responses"} {
+			response := nativeAnthropicStreamResponse()
+			original, err := io.ReadAll(response.Body)
+			require.NoError(test, err)
+			require.NoError(test, response.Body.Close())
+			response.Body = io.NopCloser(strings.NewReader(strings.ReplaceAll(string(original), "pong", errorText)))
+			transport := &auxiliaryHTTPRecorder{resp: response}
+			service := newResponsesFixture(responsesFixtureInputs{options: protocolHTTPOptions(), transport: transport})
+			target := nativeAnthropicTestProvider()
+			target.Record.Extra = map[string]any{providercore.SemanticErrorExtraKey: providercore.SemanticErrorPolicy{
+				Enabled: true, Texts: []string{errorText}, CooldownMinutes: 5,
+			}}
+			body := []byte(fmt.Sprintf(`{"model":"k3","max_tokens":32,"stream":%t,"messages":[{"role":"user","content":"hello"}]}`, clientStream))
+			invoke := service.Text.NativeMessages
+			if path == "/v1/chat/completions" {
+				invoke = service.Text.NativeChat
+			} else if path == "/v1/responses" {
+				body = []byte(fmt.Sprintf(`{"model":"k3","max_output_tokens":32,"stream":%t,"input":"hello"}`, clientStream))
+				invoke = service.Text.NativeResponses
+			}
+			boundary := adaptiveProtocolTestContext(path, body)
+			result, err := invoke(context.Background(), boundary, target, body, "")
+			var failure *forwardcore.UpstreamFailoverError
+			require.ErrorAs(test, err, &failure, path)
+			require.Equal(test, forwardcore.GatewayFailureReason("upstream_semantic_error"), failure.Reason)
+			require.Nil(test, result)
+			require.False(test, boundary.Writer.Written())
+		}
+	}
+}
+
 func TestNativeAnthropicPassthroughThinkingEnabledFallback(t *testing.T) {
 	// 启用 thinking 且省略 effort 时，passback-required 白名单中的 k3 使用 high。
 	body := []byte(`{"model":"k3","max_tokens":32,"stream":false,` +

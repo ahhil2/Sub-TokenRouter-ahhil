@@ -1,6 +1,17 @@
 export default {
 // Providers Management
     providers: {
+      semanticError: {
+        section: '故障处理',
+        title: '识别响应中的错误文本',
+        hint: '用于 HTTP 200 但回复实际是错误提示的 Anthropic Messages 上游。默认关闭，按提供商单独生效。',
+        texts: '完整错误文本',
+        textsHint: '每行一条，最多 10 条，每条 8 至 512 个字符。忽略大小写及连续空白，完整回复相同时才命中。不要填写常见短语。',
+        cooldown: '临时停调时长（分钟）',
+        action: '命中后切换同组的其他可用提供商，并在设定时间内暂停此提供商的调度。不会重试同一提供商，也不会改动手动调度开关。',
+        limits: '检查响应开头最多 64 KiB、最长 2 秒。普通回答、工具调用和思考内容及时放行；超出检查窗口后不再识别，已输出的回复不会重放。',
+        invalid: '请填写 1 至 10 条完整错误文本（每条 8 至 512 个字符），停调时长应为 1 至 1440 的整数。'
+      },
       clientClass: {
         title: '请求来源（Client Class）',
         any: '不限',
@@ -1204,6 +1215,12 @@ export default {
       loadFactorHint: '提高负载因子可以提高对提供商的调度频率',
       priority: '优先级',
       priorityHint: '优先级越小的提供商优先使用',
+      editPriority: '编辑优先级',
+      increasePriority: '增加优先级数值',
+      decreasePriority: '减少优先级数值',
+      savingPriority: '正在保存优先级',
+      priorityInvalid: '优先级必须是 1 至 2,147,483,647 之间的整数',
+      prioritySaveFailed: '优先级保存失败',
       billingRateMultiplier: '提供商计费倍率',
       billingRateMultiplierHint: '0 表示不计费，仅影响提供商计费',
       expiresAt: '过期时间',

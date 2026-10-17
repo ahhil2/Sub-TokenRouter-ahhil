@@ -80,24 +80,13 @@
       </div>
 
       <div class="card p-4">
-        <div class="flex items-center justify-between gap-2">
+        <div class="flex flex-wrap items-end gap-2" data-testid="usage-filter-toolbar">
           <FilterDropdown :active-count="activeFilterCount" :columns="3" keep-mounted @reset="resetCurrentFilters">
             <!-- 请求 ID 同时筛选使用记录和错误请求，生效后查询不限日期范围 -->
             <RequestIdFilterField v-model="filters.request_id" @search="applyFilters" />
             <template v-if="activeTab === 'errors'">
               <FilterField :label="t('usage.errors.keyName')">
                 <Select v-model="errorFilter.api_key_id" :options="errorKeyOptions" @change="applyErrorFilters" />
-              </FilterField>
-              <FilterField :label="t('usage.errors.model')">
-                <Select
-                  v-model="errorFilter.model"
-                  :options="errorModelOptions"
-                  searchable
-                  creatable
-                  clearable
-                  :placeholder="t('usage.errors.modelPlaceholder')"
-                  @change="applyErrorFilters"
-                />
               </FilterField>
               <FilterField :label="t('usage.errors.category')">
                 <Select v-model="errorFilter.category" :options="errorCategoryOptions" @change="applyErrorFilters" />
@@ -109,12 +98,6 @@
             <template v-else>
               <FilterField :label="t('usage.apiKeyFilter')">
                 <Select v-model="filters.api_key_id" :options="apiKeyOptions" @change="applyFilters" />
-              </FilterField>
-              <FilterField :label="t('usage.model')">
-                <Select v-model="filters.model" :options="modelOptions" searchable @change="applyFilters" />
-              </FilterField>
-              <FilterField :label="t('admin.usage.group')">
-                <Select v-model="filters.group_id" :options="groupOptions" searchable @change="applyFilters" />
               </FilterField>
               <FilterField :label="t('usage.type')">
                 <Select v-model="filters.request_type" :options="requestTypeOptions" @change="applyFilters" />
@@ -131,7 +114,27 @@
             </template>
           </FilterDropdown>
 
-          <div class="flex flex-wrap items-center justify-end gap-2">
+          <FilterField v-if="activeTab === 'errors'" class="w-44" data-usage-quick-filter="model" :label="t('usage.errors.model')">
+            <Select
+              v-model="errorFilter.model"
+              :options="errorModelOptions"
+              searchable
+              creatable
+              clearable
+              :placeholder="t('usage.errors.modelPlaceholder')"
+              @change="applyErrorFilters"
+            />
+          </FilterField>
+          <template v-else>
+            <FilterField class="w-44" data-usage-quick-filter="model" :label="t('usage.model')">
+              <Select v-model="filters.model" :options="modelOptions" searchable @change="applyFilters" />
+            </FilterField>
+            <FilterField class="w-44" data-usage-quick-filter="group" :label="t('admin.usage.group')">
+              <Select v-model="filters.group_id" :options="groupOptions" searchable @change="applyFilters" />
+            </FilterField>
+          </template>
+
+          <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
             <button type="button" @click="refreshData" :disabled="activeTab === 'errors' ? errorLoading : loading" class="btn btn-secondary btn-icon" :title="t('common.refresh')">
               <Icon
                 name="refresh"
@@ -379,10 +382,9 @@ let teamStatsReqSeq = 0
 const formatLocalDate = (date: Date): string =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 
-const getLast24HoursRangeDates = () => {
-  const end = new Date()
-  const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
-  return { start: formatLocalDate(start), end: formatLocalDate(end) }
+const getTodayRangeDates = () => {
+  const today = formatLocalDate(new Date())
+  return { start: today, end: today }
 }
 
 const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
@@ -391,7 +393,7 @@ const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
   return Math.ceil((endTime - startTime) / (1000 * 60 * 60 * 24)) <= 1 ? 'hour' : 'day'
 }
 
-const defaultRange = getLast24HoursRangeDates()
+const defaultRange = getTodayRangeDates()
 const startDate = ref(defaultRange.start)
 const endDate = ref(defaultRange.end)
 const granularity = ref<'day' | 'hour'>(getGranularityForRange(startDate.value, endDate.value))

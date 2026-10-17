@@ -204,6 +204,58 @@ describe('admin UsageView 路由筛选', () => {
     vi.useRealTimers()
   })
 
+  it.each([0, 23])('defaults to today at local hour %i for the picker and data requests', async (hour) => {
+    vi.setSystemTime(new Date(2026, 9, 17, hour, 5))
+    const wrapper = mountRouteFilteredUsageView()
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'DateRangePicker' }).props()).toMatchObject({
+      startDate: '2026-10-17', endDate: '2026-10-17',
+    })
+    const range = { start_date: '2026-10-17', end_date: '2026-10-17' }
+    expect(list).toHaveBeenCalledWith(expect.objectContaining(range), expect.anything())
+    expect(getStats).toHaveBeenCalledWith(expect.objectContaining(range), expect.anything())
+    expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ ...range, granularity: 'hour' }))
+    wrapper.unmount()
+  })
+
+  it('uses explicit route dates instead of today', async () => {
+    vi.setSystemTime(new Date(2026, 9, 17, 12))
+    routeQuery.start_date = '2026-10-01'
+    routeQuery.end_date = '2026-10-07'
+    const wrapper = mountRouteFilteredUsageView()
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'DateRangePicker' }).props()).toMatchObject({
+      startDate: '2026-10-01', endDate: '2026-10-07',
+    })
+    const range = { start_date: '2026-10-01', end_date: '2026-10-07' }
+    expect(list).toHaveBeenCalledWith(expect.objectContaining(range), expect.anything())
+    expect(getStats).toHaveBeenCalledWith(expect.objectContaining(range), expect.anything())
+    expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ ...range, granularity: 'day' }))
+    wrapper.unmount()
+  })
+
+  it('resets the date range to the current local day after midnight', async () => {
+    vi.setSystemTime(new Date(2026, 9, 17, 23, 55))
+    const wrapper = mountRouteFilteredUsageView()
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+    vi.setSystemTime(new Date(2026, 9, 18, 0, 5))
+    wrapper.findComponent(UsageFiltersStub).vm.$emit('reset')
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'DateRangePicker' }).props()).toMatchObject({
+      startDate: '2026-10-18', endDate: '2026-10-18',
+    })
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
+      start_date: '2026-10-18', end_date: '2026-10-18',
+    }), expect.anything())
+    wrapper.unmount()
+  })
+
   it('端点图按需加载，切换时取消旧请求且复用已加载结果', async () => {
     const wrapper = mountRouteFilteredUsageView()
     await flushPromises()
@@ -500,9 +552,8 @@ describe('admin UsageView distribution metric toggles', () => {
 
     expect(getSnapshotV2).toHaveBeenCalledTimes(1)
     const now = new Date()
-    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
     expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({
-      start_date: formatLocalDate(yesterday),
+      start_date: formatLocalDate(now),
       end_date: formatLocalDate(now),
       granularity: 'hour'
     }))

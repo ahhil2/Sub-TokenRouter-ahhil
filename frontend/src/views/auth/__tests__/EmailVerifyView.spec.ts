@@ -2,6 +2,7 @@ import { defineComponent, h } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EmailVerifyView from '@/views/auth/EmailVerifyView.vue'
+import zhCommon from '@/i18n/locales/zh/common'
 
 const {
   pushMock,
@@ -61,6 +62,8 @@ vi.mock('vue-i18n', () => ({
   }),
   useI18n: () => ({
     t: (key: string, params?: Record<string, string | number>) => {
+      if (key === 'auth.verificationDeliveryHintPrefix') return zhCommon.auth.verificationDeliveryHintPrefix
+      if (key === 'auth.spamFolder') return zhCommon.auth.spamFolder
       if (key === 'auth.accountCreatedSuccess') {
         return `Account created for ${params?.siteName ?? 'TokenRouter'}`
       }
@@ -131,6 +134,33 @@ describe('EmailVerifyView', () => {
     sendPendingOAuthVerifyCodeMock.mockResolvedValue({ countdown: 60 })
     setTokenMock.mockResolvedValue({})
   })
+
+  it('shows the delivery hint below the email with a larger spam-folder label', async () => {
+    sessionStorage.setItem('register_data', JSON.stringify({
+      email: 'recipient@example.com',
+      password: 'secret-123',
+    }))
+    const wrapper = mount(EmailVerifyView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: true,
+          TurnstileWidget: true,
+          transition: false,
+        },
+      },
+    })
+    await flushPromises()
+
+    const hint = wrapper.get('[data-testid="email-spam-hint"]')
+    expect(hint.text()).toBe('15秒内邮箱没收到验证码请查看垃圾箱')
+    expect(hint.classes()).toContain('text-sm')
+    expect(hint.get('span').text()).toBe('垃圾箱')
+    expect(hint.get('span').classes()).toContain('text-lg')
+    expect(hint.element.previousElementSibling?.textContent).toContain('recipient@example.com')
+    expect(sendVerifyCodeMock).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  }, 60_000)
 
   it('acquires a fresh Tencent proof for each resend action', async () => {
     getPublicSettingsMock.mockResolvedValue({

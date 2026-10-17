@@ -525,9 +525,63 @@
           </div>
         </div>
 
+        <fieldset v-if="showCreateModal && !showEditModal" data-tour="key-form-provider">
+          <legend class="input-label">{{ t('keys.providerLabel') }}</legend>
+          <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <label
+              v-for="provider in createProviderOptions"
+              :key="provider.value"
+              class="relative min-w-0"
+              :class="provider.count === 0 ? 'cursor-not-allowed' : 'cursor-pointer'"
+            >
+              <input
+                type="radio"
+                name="key-group-provider"
+                :value="provider.value"
+                :checked="createProvider === provider.value"
+                :disabled="provider.count === 0"
+                class="peer sr-only"
+                :data-testid="`key-provider-${provider.value}`"
+                :data-group-count="provider.count"
+                @change="selectCreateProvider(provider.value)"
+              />
+              <span
+                class="flex h-full flex-col items-center gap-2 rounded-control border border-gray-200 bg-white px-2 py-3 text-center transition-colors peer-checked:border-primary-500 peer-checked:bg-primary-50/60 peer-checked:ring-1 peer-checked:ring-primary-500 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary-500 peer-disabled:opacity-40 dark:border-dark-600 dark:bg-dark-800 dark:peer-checked:border-primary-500 dark:peer-checked:bg-primary-500/10"
+                :class="provider.count > 0 && 'hover:border-primary-300 dark:hover:border-primary-700'"
+              >
+                <span class="flex h-8 items-center justify-center gap-1.5" aria-hidden="true">
+                  <span
+                    v-for="platform in KEY_GROUP_PROVIDER_ICONS[provider.value]"
+                    :key="platform"
+                    class="flex h-8 w-8 items-center justify-center rounded-control"
+                    :class="platformBadgeLightClass(platform)"
+                  >
+                    <PlatformIcon :platform="platform" size="lg" />
+                  </span>
+                </span>
+                <span class="text-sm font-semibold text-gray-800 dark:text-gray-100">{{ provider.label }}</span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('keys.providerGroupCount', { count: provider.count }) }}
+                </span>
+              </span>
+              <span
+                v-if="createProvider === provider.value"
+                class="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary-500 text-white"
+                aria-hidden="true"
+              >
+                <Icon name="check" size="xs" :stroke-width="3" />
+              </span>
+            </label>
+          </div>
+          <p class="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400" aria-live="polite">
+            {{ t(`keys.providerHints.${createProvider}`) }}
+          </p>
+        </fieldset>
+
         <div v-if="!formData.is_composite">
           <label class="input-label">{{ t('keys.groupLabel') }}</label>
           <Select
+            :key="showEditModal ? 'edit' : createProvider"
             v-model="formData.group_id"
             :options="formGroupOptions"
             :placeholder="t('keys.selectGroup')"
@@ -576,6 +630,7 @@
           <template #row="{ item: binding, index }">
             <div class="grid min-w-0 grid-cols-1 items-start gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(7rem,0.65fr)]">
               <Select
+                :key="`${showEditModal ? 'edit' : createProvider}-${binding.local_id}`"
                 v-model="binding.group_id"
                 :options="formGroupOptions"
                 :placeholder="t('keys.selectGroup')"
@@ -1256,6 +1311,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+	import PlatformIcon from '@/components/common/PlatformIcon.vue'
 	import ScopeDropdown, { type DataScope } from '@/components/team/ScopeDropdown.vue'
 	import type {
 	  ApiKey,
@@ -1278,6 +1334,13 @@ import {
   type ModelMappingRow
 } from '@/utils/modelMappingRules'
 import { resolveProviderBrand } from '@/utils/providerBrand'
+import { platformBadgeLightClass } from '@/utils/platformColors'
+import {
+  KEY_GROUP_PROVIDERS,
+  KEY_GROUP_PROVIDER_ICONS,
+  getKeyGroupProvider,
+  type KeyGroupProvider
+} from '@/utils/keyGroupProviders'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import {
   buildCcSwitchImportDeeplink,
@@ -1502,6 +1565,7 @@ const filterGroupId = ref<string | number>('')
 
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
+const createProvider = ref<KeyGroupProvider>('anthropic')
 const showDeleteDialog = ref(false)
 const rotationKey = ref<ApiKey | null>(null)
 const rotatedKey = ref<ApiKey | null>(null)
@@ -1723,8 +1787,55 @@ const buildGroupOptions = (source: Group[]) =>
     userRate: userGroupRates.value[group.id] ?? null,
   }))
 
+const createProviderOptions = computed(() => KEY_GROUP_PROVIDERS.map((value) => ({
+  value,
+  label: t(`keys.providers.${value}`),
+  count: formGroups.value.filter((group) => getKeyGroupProvider(group) === value).length
+})))
+
+const formGroupOptions = computed(() => {
+  const availableGroups = showEditModal.value
+    ? formGroups.value
+    : formGroups.value.filter((group) => getKeyGroupProvider(group) === createProvider.value)
+  return buildGroupOptions(availableGroups)
+})
+
+const clearCreateGroupSelection = () => {
+  formData.value.group_id = null
+  formData.value.composite_groups = formData.value.composite_groups.map((binding) => ({
+    ...binding,
+    group_id: null
+  }))
+}
+
+const selectCreateProvider = (provider: KeyGroupProvider) => {
+  if (createProvider.value === provider) return
+  createProvider.value = provider
+  clearCreateGroupSelection()
+}
+
+watch([showCreateModal, createProviderOptions], ([isOpen, providers], [wasOpen]) => {
+  if (!isOpen) return
+
+  const currentProvider = providers.find((provider) => provider.value === createProvider.value)
+  if (!wasOpen || !currentProvider || currentProvider.count === 0) {
+    const nextProvider = providers.find((provider) => provider.count > 0)?.value ?? 'anthropic'
+    if (nextProvider !== createProvider.value) selectCreateProvider(nextProvider)
+  }
+
+  const allowedGroupIDs = new Set(formGroups.value
+    .filter((group) => getKeyGroupProvider(group) === createProvider.value)
+    .map((group) => group.id))
+  if (formData.value.group_id !== null && !allowedGroupIDs.has(formData.value.group_id)) {
+    formData.value.group_id = null
+  }
+  formData.value.composite_groups = formData.value.composite_groups.map((binding) => ({
+    ...binding,
+    group_id: binding.group_id !== null && allowedGroupIDs.has(binding.group_id) ? binding.group_id : null
+  }))
+})
+
 // 指定订阅时仅使用服务端返回的权限与套餐分组交集。
-const formGroupOptions = computed(() => buildGroupOptions(formGroups.value))
 const allGroupOptions = computed(() => buildGroupOptions(groups.value))
 
 // 切换复合模式时保留普通 Key 的原分组，前缀仍要求用户明确填写。
@@ -2042,6 +2153,7 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 }
 
 const openCreateModal = () => {
+  createProvider.value = 'anthropic'
   showCreateModal.value = true
   void Promise.all([loadBillingOptions(), loadFormGroups()])
 }

@@ -226,6 +226,8 @@ export default {
     clickToResend: 'Click to resend code',
     resendCode: 'Resend verification code',
     sendCodeDesc: "We'll send a verification code to",
+    verificationDeliveryHintPrefix: "If you don't receive the code within 15 seconds, check your ",
+    spamFolder: 'spam folder',
     codeSentSuccess: 'Verification code sent! Please check your inbox.',
     verifying: 'Verifying...',
     verifyAndCreate: 'Verify & Create Account',

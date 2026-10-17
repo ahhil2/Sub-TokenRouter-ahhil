@@ -116,6 +116,77 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+describe('UsageFilters quick filters', () => {
+  it.each(['usage', 'errors', 'ranking'] as const)('keeps four ordered filters outside the panel in %s mode', async mode => {
+    const wrapper = mountFilters()
+    await wrapper.setProps({ mode })
+    await flushPromises()
+
+    const fields = wrapper.findAll('[data-usage-quick-filter]')
+    expect(fields.map(field => field.attributes('data-usage-quick-filter'))).toEqual(['model', 'user', 'provider', 'group'])
+    for (const field of fields) {
+      expect(field.isVisible()).toBe(true)
+      expect(field.element.closest('[role="dialog"]')).toBeNull()
+    }
+    expect(wrapper.get('[role="dialog"]').findAll('[data-usage-quick-filter]')).toHaveLength(0)
+    expect(wrapper.get('[data-testid="usage-filter-toolbar"]').classes()).toContain('flex-wrap')
+    wrapper.unmount()
+  }, 60_000)
+
+  it('updates quick selections and resets them with the panel filters', async () => {
+    const filters = { ...defaultFilters(), user_id: 7, provider_id: 8, start_date: '2026-10-17', end_date: '2026-10-17' }
+    const wrapper = mountFilters(filters as unknown as ReturnType<typeof defaultFilters>)
+    await wrapper.setProps({ startDate: '2026-10-17', endDate: '2026-10-17' })
+    await flushPromises()
+
+    const model = wrapper.get('[data-usage-quick-filter="model"]').findComponent({ name: 'Select' })
+    model.vm.$emit('update:modelValue', 'claude-test')
+    model.vm.$emit('change')
+    const group = wrapper.get('[data-usage-quick-filter="group"]').findComponent({ name: 'Select' })
+    group.vm.$emit('update:modelValue', 3)
+    group.vm.$emit('change')
+    await flushPromises()
+
+    expect(filters.model).toBe('claude-test')
+    expect(filters.group_id).toBe(3)
+    expect(wrapper.emitted('change')).toHaveLength(2)
+    await wrapper.get('[data-testid="filter-reset"]').trigger('click')
+    for (const field of ['model', 'user_id', 'provider_id', 'group_id'] as const) {
+      expect(filters[field]).toBeUndefined()
+    }
+    expect(filters.start_date).toBe('2026-10-17')
+    expect(filters.end_date).toBe('2026-10-17')
+    wrapper.unmount()
+  }, 60_000)
+
+  it('searches, selects and clears a provider from the toolbar', async () => {
+    vi.useFakeTimers()
+    mockProvidersList.mockClear()
+    mockProvidersList.mockResolvedValueOnce({ items: [{ id: 7, name: 'Part' }] })
+    const filters = defaultFilters()
+    const wrapper = mountFilters(filters)
+    try {
+      await flushPromises()
+      const field = wrapper.get('[data-usage-quick-filter="provider"]')
+      const input = field.get('input')
+      await input.trigger('focus')
+      await input.setValue('part')
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+      expect(mockProvidersList).toHaveBeenCalledWith(1, 20, { search: 'part' })
+      await field.get('button.dropdown-item').trigger('click')
+      expect(filters.provider_id).toBe(7)
+      expect((input.element as HTMLInputElement).value).toBe('Part')
+      await field.get('[aria-label="Clear provider filter"]').trigger('click')
+      expect(filters.provider_id).toBeUndefined()
+      expect((input.element as HTMLInputElement).value).toBe('')
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  }, 60_000)
+})
+
 describe('UsageFilters — user search dropdown', () => {
   beforeEach(() => {
     vi.useFakeTimers()

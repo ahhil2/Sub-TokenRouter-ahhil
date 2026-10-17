@@ -42,6 +42,11 @@ describe('AppHeader positioning', () => {
 })
 
 describe('AppHeader user menu', () => {
+  it('removes the GitHub link from the user menu', () => {
+    expect(componentSource).not.toContain('https://github.com/TokenFlux/TokenRouter')
+    expect(componentSource).not.toContain("t('nav.github')")
+  })
+
   it('filters optional entries with the same feature flags as the sidebar', () => {
     expect(componentSource).toContain("settings?.team_enabled !== false && { path: '/team'")
     expect(componentSource).toContain("paymentEnabled && { path: '/purchase'")

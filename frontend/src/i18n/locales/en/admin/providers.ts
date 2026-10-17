@@ -1,6 +1,17 @@
 export default {
 // Providers
     providers: {
+      semanticError: {
+        section: 'Failure handling',
+        title: 'Detect error text in responses',
+        hint: 'For Anthropic Messages upstreams that return error text with HTTP 200. Off by default; configured per provider.',
+        texts: 'Complete error texts',
+        textsHint: 'One text per line, up to 10 entries of 8 to 512 characters. Matches the entire reply, ignoring case and repeated whitespace. Avoid common phrases.',
+        cooldown: 'Scheduling cooldown (minutes)',
+        action: 'On a match, switch to another available provider in the group and pause scheduling for this provider. The failed provider is not retried. The manual scheduling switch is unchanged.',
+        limits: 'Inspects at most the first 64 KiB for 2 seconds. Normal replies, tool calls and thinking pass through promptly. Detection stops after this window; replies already sent are never replayed.',
+        invalid: 'Enter 1 to 10 complete error texts of 8 to 512 characters and an integer cooldown of 1 to 1440 minutes.'
+      },
       clientClass: {
         title: 'Request source (Client Class)',
         any: 'Unrestricted',
@@ -1132,6 +1143,12 @@ export default {
       loadFactorHint: 'Higher load factor increases scheduling frequency',
       priority: 'Priority',
       priorityHint: 'Lower value providers are used first',
+      editPriority: 'Edit priority',
+      increasePriority: 'Increase priority value',
+      decreasePriority: 'Decrease priority value',
+      savingPriority: 'Saving priority',
+      priorityInvalid: 'Priority must be an integer between 1 and 2,147,483,647',
+      prioritySaveFailed: 'Failed to save priority',
       billingRateMultiplier: 'Billing Rate Multiplier',
       billingRateMultiplierHint: '0 = free, affects provider billing only',
       expiresAt: 'Expires At',

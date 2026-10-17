@@ -99,6 +99,11 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 			return upstream.AttemptResult{}, err
 		}
 	}
+	if target.Response.InspectResponse != nil {
+		if err := target.Response.InspectResponse(ctx, resp); err != nil {
+			return upstream.AttemptResult{}, err
+		}
+	}
 	if target.Accepted != nil {
 		target.Accepted()
 	}

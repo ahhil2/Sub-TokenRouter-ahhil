@@ -56,6 +56,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 import EditProviderModal from '../EditProviderModal.vue'
+import { defaultSemanticErrorText } from '@/utils/semanticErrorPolicy'
 
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
@@ -349,6 +350,66 @@ describe('EditProviderModal', () => {
     getWebSearchEmulationConfigMock.mockResolvedValue({ enabled: false, providers: [] })
     listTLSProfilesMock.mockResolvedValue([])
   })
+
+  it('saves response error rules and preserves other provider settings', async () => {
+    const provider = { ...buildProvider(), platform: 'anthropic', extra: { retained: true } }
+    updateProviderMock.mockResolvedValue(provider)
+    const wrapper = mountModal(provider)
+    await flushPromises()
+    expect(isSwitchOn(wrapper.get('[data-testid="semantic-error-enabled"]'))).toBe(false)
+    await setSwitch(wrapper.get('[data-testid="semantic-error-enabled"]'), true)
+    await flushPromises()
+    expect((wrapper.get('[data-testid="semantic-error-texts"]').element as HTMLTextAreaElement).value).toBe(defaultSemanticErrorText)
+    await wrapper.get('[data-testid="semantic-error-cooldown"]').setValue('10')
+    await wrapper.get('form#edit-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateProviderMock).toHaveBeenCalledTimes(1)
+    expect(updateProviderMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      retained: true,
+      semantic_error: { enabled: true, texts: [defaultSemanticErrorText], cooldown_minutes: 10 }
+    })
+    wrapper.unmount()
+  }, 60_000)
+
+  it('restores response error rules and rejects invalid text', async () => {
+    const provider = { ...buildProvider(), platform: 'anthropic', extra: {
+      semantic_error: { enabled: true, texts: [defaultSemanticErrorText], cooldown_minutes: 7 }
+    } }
+    const wrapper = mountModal(provider)
+    await flushPromises()
+    expect(isSwitchOn(wrapper.get('[data-testid="semantic-error-enabled"]'))).toBe(true)
+    expect((wrapper.get('[data-testid="semantic-error-cooldown"]').element as HTMLInputElement).value).toBe('7')
+    await wrapper.get('[data-testid="semantic-error-texts"]').setValue('error')
+    await wrapper.get('form#edit-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateProviderMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  }, 60_000)
+
+  it('hides response error rules for non-Anthropic and Bedrock providers', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="semantic-error-enabled"]').exists()).toBe(false)
+    await wrapper.setProps({ provider: { ...buildProvider(), platform: 'anthropic', type: 'bedrock' } })
+    expect(wrapper.find('[data-testid="semantic-error-enabled"]').exists()).toBe(false)
+    wrapper.unmount()
+  }, 60_000)
+
+  it('can disable response error rules without deleting their texts', async () => {
+    const provider = { ...buildProvider(), platform: 'anthropic', extra: {
+      semantic_error: { enabled: true, texts: [defaultSemanticErrorText], cooldown_minutes: 7 }
+    } }
+    updateProviderMock.mockResolvedValue(provider)
+    const wrapper = mountModal(provider)
+    await flushPromises()
+    await setSwitch(wrapper.get('[data-testid="semantic-error-enabled"]'), false)
+    await wrapper.get('form#edit-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateProviderMock.mock.calls[0]?.[1]?.extra?.semantic_error).toEqual({
+      enabled: false, texts: [defaultSemanticErrorText], cooldown_minutes: 7
+    })
+    wrapper.unmount()
+  }, 60_000)
 
   it.each(['any', 'codex', 'non-codex'] as const)('saves and restores OpenAI client class %s', async (mode) => {
     const provider = { ...buildProvider(), platform: 'openai', extra: { openai_client_class: 'codex', retained: true } }

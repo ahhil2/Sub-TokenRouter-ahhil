@@ -58,6 +58,9 @@ func (r *Runtime) streamOptions(output HTTPBoundary, state *AttemptState, target
 func (r *Runtime) responseOptions(ctx context.Context, output HTTPBoundary, state *AttemptState, target *gatewayadapter.ExecutionProvider, model string, passthrough bool) anthropic.ResponseOptions {
 	options := anthropic.ResponseOptions{
 		StreamOptions: r.streamOptions(output, state, target),
+		InspectResponse: func(ctx context.Context, response *http.Response) error {
+			return gatewayadapter.CheckAnthropicSemanticError(ctx, r.dependencies.Health, target, response)
+		},
 		ReadBody: func(reader io.Reader) ([]byte, error) {
 			return output.ReadResponseBody(reader, r.options.ResponseReadLimit, MessagesBody)
 		},

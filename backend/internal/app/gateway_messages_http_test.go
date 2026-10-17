@@ -186,7 +186,7 @@ func gatewaySessionResponse(status int, stream bool) *http.Response {
 }
 
 // newGatewaySessionLimitFixture 使用调度、Forward 和 handler 的完成处理，外部上游、Redis 和账单依赖使用替身。
-func newGatewaySessionLimitFixture(t *testing.T, providerType string, failover bool, upstream *gatewaySessionUpstreamStub) (*messageEndpointsFixture, *apikey.APIKey, *gatewaySessionLimitCacheStub) {
+func newGatewaySessionLimitFixture(t *testing.T, providerType string, failover bool, upstream *gatewaySessionUpstreamStub, semanticPolicy ...providercore.SemanticErrorPolicy) (*messageEndpointsFixture, *apikey.APIKey, *gatewaySessionLimitCacheStub) {
 	t.Helper()
 	groupID := int64(11)
 	group := &routing.Group{ID: groupID, Hydrated: true, Status: billing.StatusActive}
@@ -203,6 +203,10 @@ func newGatewaySessionLimitFixture(t *testing.T, providerType string, failover b
 		second.Record.ID, second.Record.Priority = 13, 1
 		second.Record.ProviderGroups = []providercore.GroupMembership{{ProviderID: second.Record.ID, GroupID: groupID}}
 		providers = append(providers, &second)
+	}
+	if len(semanticPolicy) > 0 {
+		providers[0].Record.Extra = providercore.CloneValues(providers[0].Record.Extra)
+		providers[0].Record.Extra[providercore.SemanticErrorExtraKey] = semanticPolicy[0]
 	}
 	sessions := &gatewaySessionLimitCacheStub{registered: make(map[int64][]string), unregistered: make(map[int64][]string)}
 	cfg := &config.Config{}
@@ -297,6 +301,33 @@ func TestGatewayHandlerMessages_SessionSlotLifecycle(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestGatewayHandlerMessages_SemanticErrorFailover(test *testing.T) {
+	const failureText = "[No upstream account is currently available. Please retry later.]"
+	for _, stream := range []bool{false, true} {
+		upstream := &gatewaySessionUpstreamStub{respond: func(providerID int64) (*http.Response, error) {
+			response := gatewaySessionResponse(http.StatusOK, stream)
+			if providerID == 12 {
+				body, err := io.ReadAll(response.Body)
+				require.NoError(test, err)
+				require.NoError(test, response.Body.Close())
+				text := strings.ReplaceAll(string(body), `"text":"ok"`, `"text":"`+failureText+`"`)
+				text = strings.ReplaceAll(text, `"output_tokens":1`, `"output_tokens":0`)
+				response.Body = io.NopCloser(strings.NewReader(text))
+			}
+			return response, nil
+		}}
+		policy := providercore.SemanticErrorPolicy{Enabled: true, Texts: []string{failureText}, CooldownMinutes: 5}
+		handler, key, sessions := newGatewaySessionLimitFixture(test, capability.ProviderTypeOAuth, true, upstream, policy)
+		response := serveGatewaySessionMessage(handler, key, stream)
+		require.Equal(test, http.StatusOK, response.Code, response.Body.String())
+		require.Equal(test, []int64{12, 13}, upstream.called)
+		require.NotContains(test, response.Body.String(), failureText)
+		require.Contains(test, response.Body.String(), `"text":"ok"`)
+		require.Equal(test, sessions.registered[12], sessions.unregistered[12])
+		require.Empty(test, sessions.unregistered[13])
 	}
 }
 

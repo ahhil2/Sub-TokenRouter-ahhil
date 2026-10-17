@@ -88,8 +88,9 @@ function mountView() {
         ProviderCapacityCell: true,
         ProviderStatusIndicator: true,
         ProviderTodayStatsCell: true,
-        ProviderGroupsCell: true,
-        ProviderUsageCell: true,
+      ProviderGroupsCell: true,
+      ProviderUsageCell: true,
+      ProviderPriorityCell: true,
         HelpTooltip: true,
         Icon: true,
         Teleport: true

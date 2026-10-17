@@ -10,6 +10,9 @@
           {{ t('auth.sendCodeDesc') }}
           <span class="font-medium text-gray-700 dark:text-gray-300">{{ email }}</span>
         </p>
+        <p class="mt-2 text-sm text-gray-500 dark:text-dark-400" data-testid="email-spam-hint">
+          {{ t('auth.verificationDeliveryHintPrefix') }}<span class="whitespace-nowrap text-lg font-semibold">{{ t('auth.spamFolder') }}</span>
+        </p>
       </div>
 
       <!-- No Data Warning -->

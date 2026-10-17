@@ -1,53 +1,13 @@
 <template>
   <div :class="flat ? 'p-4' : 'card p-6'">
     <div class="space-y-4">
-      <div class="flex items-center justify-between gap-2">
+      <div class="flex flex-wrap items-end gap-2" data-testid="usage-filter-toolbar">
         <!-- 未设置的条件可能是 undefined，统一按 null 显示，才能匹配各下拉框的“全部”选项 -->
         <FilterDropdown :active-count="activeFilterCount" :columns="3" keep-mounted @reset="resetPanelFilters">
           <!-- 请求 ID 生效后查询不限日期范围，用户排行不按它筛选 -->
           <RequestIdFilterField v-if="mode !== 'ranking'" v-model="filters.request_id" @search="emitChange" />
           <FilterField v-if="mode === 'usage'" :label="t('admin.usage.teamFilter')">
             <Select :model-value="filters.team_id ?? null" @update:model-value="filters.team_id = $event" :options="teamOptions" searchable @change="emitChange" />
-          </FilterField>
-
-          <!-- 用户搜索 -->
-          <FilterField :label="t('admin.usage.userFilter')" :value-text="filters.user_id ? userKeyword || `#${filters.user_id}` : ''" @clear="clearUser">
-            <div ref="userSearchRef" class="usage-filter-dropdown relative">
-              <input
-                v-model="userKeyword"
-                type="text"
-                class="input pr-8"
-                :placeholder="t('admin.usage.searchUserPlaceholder')"
-                @input="debounceUserSearch"
-                @focus="showUserDropdown = true"
-              />
-              <button
-                v-if="filters.user_id"
-                type="button"
-                @click="clearUser"
-                class="absolute right-2 top-0 flex h-9 items-center text-gray-400 hover:text-gray-600 dark:text-dark-400 dark:hover:text-dark-200"
-                aria-label="Clear user filter"
-              >
-                <Icon name="x" size="sm" />
-              </button>
-              <MotionTransition name="dropdown-fade">
-                <div
-                  v-if="showUserDropdown && (userResults.length > 0 || userKeyword)" :inert="!(showUserDropdown && (userResults.length > 0 || userKeyword)) || undefined"
-                  class="dropdown z-50 mt-1 max-h-menu-sm w-full overflow-auto py-0"
-                >
-                  <button
-                    v-for="u in userResults"
-                    :key="u.id"
-                    type="button"
-                    @click="selectUser(u)"
-                    class="dropdown-item"
-                  >
-                    <span>{{ u.email }}<span v-if="u.deleted" class="ml-1 text-xs text-gray-400">（{{ t('admin.usage.userDeletedBadge') }}）</span></span>
-                    <span class="text-xs text-gray-400">#{{ u.id }}</span>
-                  </button>
-                </div>
-              </MotionTransition>
-            </div>
           </FilterField>
 
           <!-- API 密钥搜索 -->
@@ -90,51 +50,6 @@
             </div>
           </FilterField>
 
-          <!-- 模型筛选 -->
-          <FilterField :label="t('usage.model')">
-            <Select :model-value="filters.model ?? null" @update:model-value="filters.model = $event" :options="modelOptions" searchable @change="emitChange" />
-          </FilterField>
-
-          <!-- 提供商搜索 -->
-          <FilterField :label="t('admin.usage.provider')" :value-text="filters.provider_id ? providerKeyword || `#${filters.provider_id}` : ''" @clear="clearProvider">
-            <div ref="providerSearchRef" class="usage-filter-dropdown relative">
-              <input
-                v-model="providerKeyword"
-                type="text"
-                class="input pr-8"
-                :placeholder="t('admin.usage.searchProviderPlaceholder')"
-                @input="debounceProviderSearch"
-                @focus="showProviderDropdown = true"
-              />
-              <button
-                v-if="filters.provider_id"
-                type="button"
-                @click="clearProvider"
-                class="absolute right-2 top-0 flex h-9 items-center text-gray-400 hover:text-gray-600 dark:text-dark-400 dark:hover:text-dark-200"
-                aria-label="Clear provider filter"
-              >
-                <Icon name="x" size="sm" />
-              </button>
-              <MotionTransition name="dropdown-fade">
-                <div
-                  v-if="showProviderDropdown && (providerResults.length > 0 || providerKeyword)" :inert="!(showProviderDropdown && (providerResults.length > 0 || providerKeyword)) || undefined"
-                  class="dropdown z-50 mt-1 max-h-menu-sm w-full overflow-auto py-0"
-                >
-                  <button
-                    v-for="a in providerResults"
-                    :key="a.id"
-                    type="button"
-                    @click="selectProvider(a)"
-                    class="dropdown-item"
-                  >
-                    <span class="truncate">{{ a.name }}</span>
-                    <span class="text-xs text-gray-400">#{{ a.id }}</span>
-                  </button>
-                </div>
-              </MotionTransition>
-            </div>
-          </FilterField>
-
           <!-- 请求类型筛选，仅用于用量列表。 -->
           <FilterField v-if="mode !== 'errors'" :label="t('usage.type')">
             <Select :model-value="filters.request_type ?? null" @update:model-value="filters.request_type = $event" :options="requestTypeOptions" @change="emitChange" />
@@ -170,13 +85,97 @@
             <Select :model-value="filters.status_code ?? null" @update:model-value="filters.status_code = $event" :options="statusCodeOptions" @change="emitChange" />
           </FilterField>
 
-          <!-- 分组筛选 -->
-          <FilterField :label="t('admin.usage.group')">
-            <Select :model-value="filters.group_id ?? null" @update:model-value="filters.group_id = $event" :options="groupOptions" searchable @change="emitChange" />
-          </FilterField>
         </FilterDropdown>
 
-        <div v-if="showActions" class="flex flex-wrap items-center justify-end gap-2">
+        <FilterField class="w-40" data-usage-quick-filter="model" :label="t('usage.model')">
+          <Select :model-value="filters.model ?? null" @update:model-value="filters.model = $event" :options="modelOptions" searchable @change="emitChange" />
+        </FilterField>
+
+        <FilterField class="w-48" data-usage-quick-filter="user" :label="t('admin.usage.userFilter')" :value-text="filters.user_id ? userKeyword || `#${filters.user_id}` : ''" @clear="clearUser">
+          <div ref="userSearchRef" class="usage-filter-dropdown relative">
+            <input
+              v-model="userKeyword"
+              type="text"
+              class="input pr-8"
+              :aria-label="t('admin.usage.userFilter')"
+              :placeholder="t('admin.usage.searchUserPlaceholder')"
+              @input="debounceUserSearch"
+              @focus="showUserDropdown = true"
+            />
+            <button
+              v-if="filters.user_id"
+              type="button"
+              @click="clearUser"
+              class="absolute right-2 top-0 flex h-9 items-center text-gray-400 hover:text-gray-600 dark:text-dark-400 dark:hover:text-dark-200"
+              aria-label="Clear user filter"
+            >
+              <Icon name="x" size="sm" />
+            </button>
+            <MotionTransition name="dropdown-fade">
+              <div
+                v-if="showUserDropdown && (userResults.length > 0 || userKeyword)" :inert="!(showUserDropdown && (userResults.length > 0 || userKeyword)) || undefined"
+                class="dropdown z-50 mt-1 max-h-menu-sm w-full overflow-auto py-0"
+              >
+                <button
+                  v-for="user in userResults"
+                  :key="user.id"
+                  type="button"
+                  @click="selectUser(user)"
+                  class="dropdown-item"
+                >
+                  <span>{{ user.email }}<span v-if="user.deleted" class="ml-1 text-xs text-gray-400">（{{ t('admin.usage.userDeletedBadge') }}）</span></span>
+                  <span class="text-xs text-gray-400">#{{ user.id }}</span>
+                </button>
+              </div>
+            </MotionTransition>
+          </div>
+        </FilterField>
+
+        <FilterField class="w-48" data-usage-quick-filter="provider" :label="t('admin.usage.provider')" :value-text="filters.provider_id ? providerKeyword || `#${filters.provider_id}` : ''" @clear="clearProvider">
+          <div ref="providerSearchRef" class="usage-filter-dropdown relative">
+            <input
+              v-model="providerKeyword"
+              type="text"
+              class="input pr-8"
+              :aria-label="t('admin.usage.provider')"
+              :placeholder="t('admin.usage.searchProviderPlaceholder')"
+              @input="debounceProviderSearch"
+              @focus="showProviderDropdown = true"
+            />
+            <button
+              v-if="filters.provider_id"
+              type="button"
+              @click="clearProvider"
+              class="absolute right-2 top-0 flex h-9 items-center text-gray-400 hover:text-gray-600 dark:text-dark-400 dark:hover:text-dark-200"
+              aria-label="Clear provider filter"
+            >
+              <Icon name="x" size="sm" />
+            </button>
+            <MotionTransition name="dropdown-fade">
+              <div
+                v-if="showProviderDropdown && (providerResults.length > 0 || providerKeyword)" :inert="!(showProviderDropdown && (providerResults.length > 0 || providerKeyword)) || undefined"
+                class="dropdown z-50 mt-1 max-h-menu-sm w-full overflow-auto py-0"
+              >
+                <button
+                  v-for="provider in providerResults"
+                  :key="provider.id"
+                  type="button"
+                  @click="selectProvider(provider)"
+                  class="dropdown-item"
+                >
+                  <span class="truncate">{{ provider.name }}</span>
+                  <span class="text-xs text-gray-400">#{{ provider.id }}</span>
+                </button>
+              </div>
+            </MotionTransition>
+          </div>
+        </FilterField>
+
+        <FilterField class="w-40" data-usage-quick-filter="group" :label="t('admin.usage.group')">
+          <Select :model-value="filters.group_id ?? null" @update:model-value="filters.group_id = $event" :options="groupOptions" searchable @change="emitChange" />
+        </FilterField>
+
+        <div v-if="showActions" class="ml-auto flex flex-wrap items-center justify-end gap-2">
           <button type="button" @click="$emit('refresh')" class="btn btn-secondary btn-icon" :title="t('common.refresh')">
             <Icon name="refresh" size="sm" />
           </button>

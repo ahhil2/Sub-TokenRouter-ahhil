@@ -125,6 +125,19 @@ describe('AppSidebar admin personal menu', () => {
     expect(dashboardIndex).toBeLessThan(modelsIndex)
   })
 
+  it('places the message shortcut in the admin personal menu only', () => {
+    const personalNavItemsBlock = componentSource.match(
+      /const personalNavItems = computed\(\(\): NavItem\[\] => \{[\s\S]*?const adminNavItems = computed/
+    )?.[0] ?? ''
+    const adminNavItemsBlock = componentSource.match(
+      /const adminNavItems = computed\(\(\): NavItem\[\] => \{[\s\S]*?function closeMobile/
+    )?.[0] ?? ''
+
+    expect(personalNavItemsBlock).toContain("path: '/messages', label: t('messages.title'), icon: 'chat'")
+    expect(adminNavItemsBlock).not.toContain("path: '/messages'")
+    expect(componentSource.match(/path: '\/messages'/g)).toHaveLength(2)
+  })
+
   it('uses the public feature switch for team entries', () => {
     // 普通用户与管理员入口共用功能开关判断。
     expect(componentSource).toContain("const flagTeamAccess = () => appStore.cachedPublicSettings?.team_enabled !== false")

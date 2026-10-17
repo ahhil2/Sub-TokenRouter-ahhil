@@ -16,6 +16,8 @@ const {
   getTeamKeys,
   getTeamMembers,
   getTeamMemberUsage,
+  listMyErrorRequests,
+  publicSettings,
   showError,
   showWarning,
   showSuccess,
@@ -31,6 +33,8 @@ const {
   getTeamKeys: vi.fn(),
   getTeamMembers: vi.fn(),
   getTeamMemberUsage: vi.fn(),
+  listMyErrorRequests: vi.fn(),
+  publicSettings: { allow_user_view_error_requests: false },
   showError: vi.fn(),
   showWarning: vi.fn(),
   showSuccess: vi.fn(),
@@ -96,7 +100,7 @@ vi.mock('@/api', () => ({
     getStats,
     getDashboardModels,
     getDashboardSnapshotV2,
-    listMyErrorRequests: vi.fn().mockResolvedValue({ items: [], total: 0, pages: 0 }),
+    listMyErrorRequests,
   },
   keysAPI: {
     list,
@@ -116,7 +120,7 @@ vi.mock('@/api/team', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showError, showWarning, showSuccess, showInfo }),
+  useAppStore: () => ({ showError, showWarning, showSuccess, showInfo, cachedPublicSettings: publicSettings }),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -191,6 +195,8 @@ function mountUsageView() {
 describe('user UsageView', () => {
   beforeEach(() => {
     localStorage.clear()
+    publicSettings.allow_user_view_error_requests = false
+    listMyErrorRequests.mockReset().mockResolvedValue({ items: [], total: 0, pages: 0 })
     query.mockReset()
     getStats.mockReset()
     getDashboardModels.mockReset()
@@ -240,6 +246,67 @@ describe('user UsageView', () => {
     getTeamMembers.mockResolvedValue([])
     getTeamMemberUsage.mockResolvedValue([])
   })
+
+  it.each([0, 23])('defaults to today at local hour %i for the picker and data requests', async (hour) => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 17, hour, 5))
+    try {
+      const wrapper = mountUsageView()
+      await flushPromises()
+
+      expect(wrapper.findComponent({ name: 'DateRangePicker' }).props()).toMatchObject({
+        startDate: '2026-10-17', endDate: '2026-10-17',
+      })
+      const range = { start_date: '2026-10-17', end_date: '2026-10-17' }
+      expect(query).toHaveBeenCalledWith(expect.objectContaining(range), expect.anything())
+      expect(getStats).toHaveBeenCalledWith(expect.objectContaining(range))
+      expect(getDashboardSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ ...range, granularity: 'hour' }))
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  }, 60_000)
+
+  it('shows model and group quick filters without administrator-only fields', async () => {
+    const wrapper = mountUsageView()
+    await flushPromises()
+    const fields = wrapper.findAll('[data-usage-quick-filter]')
+    expect(fields.map(field => field.attributes('data-usage-quick-filter'))).toEqual(['model', 'group'])
+    for (const field of fields) {
+      expect(field.isVisible()).toBe(true)
+      expect(field.element.closest('[role="dialog"]')).toBeNull()
+    }
+    const model = fields[0].findComponent({ name: 'Select' })
+    model.vm.$emit('update:modelValue', 'gpt-5.4')
+    model.vm.$emit('change')
+    await flushPromises()
+    const group = fields[1].findComponent({ name: 'Select' })
+    group.vm.$emit('update:modelValue', 1)
+    group.vm.$emit('change')
+    await flushPromises()
+    expect(query).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'gpt-5.4', group_id: 1 }), expect.anything())
+    await wrapper.get('[data-testid="filter-reset"]').trigger('click')
+    await flushPromises()
+    expect(query.mock.lastCall?.[0].model).toBeUndefined()
+    expect(query.mock.lastCall?.[0].group_id).toBeUndefined()
+  }, 60_000)
+
+  it('keeps the error-model filter outside the panel when switching tabs', async () => {
+    publicSettings.allow_user_view_error_requests = true
+    const wrapper = mountUsageView()
+    await flushPromises()
+    const errorsTab = wrapper.findAll('button.tab').find(button => button.text() === 'usage.tabs.errors')
+    await errorsTab!.trigger('click')
+    await flushPromises()
+    const fields = wrapper.findAll('[data-usage-quick-filter]')
+    expect(fields.map(field => field.attributes('data-usage-quick-filter'))).toEqual(['model'])
+    expect(fields[0].element.closest('[role="dialog"]')).toBeNull()
+    const model = fields[0].findComponent({ name: 'Select' })
+    model.vm.$emit('update:modelValue', 'claude')
+    model.vm.$emit('change')
+    await flushPromises()
+    expect(listMyErrorRequests.mock.lastCall?.[0].model).toBe('claude')
+  }, 60_000)
 
   it('loads logs, stats, model stats, and snapshot on first render', async () => {
     mountUsageView()

@@ -258,6 +258,7 @@ const userNavItems = computed((): NavItem[] => {
 const personalNavItems = computed((): NavItem[] => {
   const items: NavItem[] = [
     { path: '/dashboard', label: t('nav.dashboard'), icon: 'dashboard' as const },
+    { path: '/messages', label: t('messages.title'), icon: 'chat' as const },
     { path: '/models', label: t('nav.modelMarketplace'), icon: 'modelMarketplace' as const },
     { path: '/monitor', label: t('channelMonitor.title'), icon: 'chart' as const },
     { path: '/pelican-showcase', label: t('pelican.title'), icon: 'creative' as const },
@@ -330,7 +331,6 @@ const adminNavItems = computed((): NavItem[] => {
       ? [{ path: '/admin/ops', label: t('nav.ops'), icon: 'chart' as const }]
       : []),
     { path: '/admin/users', label: t('nav.users'), icon: 'users' as const },
-    { path: '/messages', label: t('messages.title'), icon: 'chat' as const },
     { path: '/admin/teams', label: t('nav.teams'), icon: 'users' as const, featureFlag: flagTeamAccess },
     { path: '/admin/groups', label: t('nav.groups'), icon: 'folder' as const },
     { path: '/monitor', label: t('channelMonitor.title'), icon: 'chart' as const },

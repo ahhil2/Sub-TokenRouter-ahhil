@@ -456,6 +456,11 @@
 
           <TempUnschedFields v-model:enabled="tempUnschedEnabled" v-model:rules="tempUnschedRules" />
 
+          <SemanticErrorFields
+            v-if="provider.platform === 'anthropic' && provider.type !== 'bedrock'"
+            v-model="semanticErrorPolicy"
+          />
+
           <PoolModeFields
             v-if="provider.type === 'apikey' || provider.type === 'bedrock'"
             v-model:enabled="poolModeEnabled"
@@ -903,6 +908,8 @@ import ModelRestrictionFields from '@/components/provider/form/ModelRestrictionF
 import PoolModeFields from '@/components/provider/form/PoolModeFields.vue'
 import QuotaLimitFields from '@/components/provider/form/QuotaLimitFields.vue'
 import TempUnschedFields from '@/components/provider/form/TempUnschedFields.vue'
+import SemanticErrorFields from '@/components/provider/form/SemanticErrorFields.vue'
+import { readSemanticErrorPolicy, isSemanticErrorPolicyValid } from '@/utils/semanticErrorPolicy'
 import TLSFingerprintFields from '@/components/provider/form/TLSFingerprintFields.vue'
 import { bindQuotaLimits } from '@/components/provider/form/quotaLimit'
 import {
@@ -1192,6 +1199,7 @@ const antigravityWhitelistModels = ref<string[]>([])
 const antigravityModelMappings = ref<ModelMappingRow[]>([])
 const isSyncingAntigravityUpstream = ref(false)
 const tempUnschedEnabled = ref(false)
+const semanticErrorPolicy = ref(readSemanticErrorPolicy(undefined))
 const providerSchedulingThresholdOverrideEnabled = ref(false)
 const providerSchedulingThresholdOverrideValue = ref(100)
 const PROVIDER_SCHEDULING_THRESHOLD_CREDENTIAL_KEY = 'provider_scheduling_threshold'
@@ -1642,6 +1650,7 @@ const syncFormFromProvider = (newProvider: Provider | null) => {
   autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
   autoPause7dDisabled.value = extra?.auto_pause_7d_disabled === true
 	upstreamRequestIdHeader.value = readUpstreamRequestIdHeader(extra)
+  semanticErrorPolicy.value = readSemanticErrorPolicy(extra)
 
   // 加载 OpenAI OAuth、SetupToken 和 API Key 提供商的透传设置。
   openaiPassthroughEnabled.value = false
@@ -3083,6 +3092,17 @@ const handleSubmit = async () => {
         delete newExtra.upstream_request_id_header
       }
       updatePayload.extra = newExtra
+    }
+
+    if (props.provider.platform === 'anthropic' && props.provider.type !== 'bedrock') {
+      const policy = { ...semanticErrorPolicy.value, texts: semanticErrorPolicy.value.texts.map(text => text.trim()).filter(Boolean) }
+      if (!isSemanticErrorPolicyValid(policy)) {
+        failAt(t('admin.providers.semanticError.invalid'), 'semantic-error')
+        return
+      }
+      if (JSON.stringify(policy) !== JSON.stringify(readSemanticErrorPolicy(props.provider.extra))) {
+        updatePayload.extra = { ...(updatePayload.extra || props.provider.extra || {}), semantic_error: policy }
+      }
     }
 
     await submitUpdateProvider(providerID, updatePayload)

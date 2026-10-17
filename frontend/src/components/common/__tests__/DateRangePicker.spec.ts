@@ -42,6 +42,18 @@ const formatLocalDate = (date: Date): string => {
 const waitForTransition = () => new Promise((resolve) => window.setTimeout(resolve, 250))
 
 describe('DateRangePicker', () => {
+  it('recognizes a same-day range as Today', () => {
+    const today = formatLocalDate(new Date())
+    const wrapper = mount(DateRangePicker, {
+      props: { startDate: today, endDate: today },
+      global: { stubs: { Icon: true } },
+    })
+
+    expect(wrapper.get('.input-trigger').text()).toContain('Today')
+    expect(wrapper.get('.input-trigger').text()).not.toContain('Last 24 Hours')
+    wrapper.unmount()
+  })
+
   it('uses last 24 hours as the default recognized preset', () => {
     const now = new Date()
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)

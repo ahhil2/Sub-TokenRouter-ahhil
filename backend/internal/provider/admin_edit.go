@@ -15,6 +15,9 @@ import (
 )
 
 func (s *Admin) UpdateProvider(ctx context.Context, id int64, input *UpdateProviderInput) (*Record, error) {
+	if err := ValidateSemanticErrorExtra(input.Extra); err != nil {
+		return nil, err
+	}
 	if err := ValidateClientClassExtra(input.Extra); err != nil {
 		return nil, err
 	}
@@ -356,6 +359,9 @@ func (s *Admin) UpdateProvider(ctx context.Context, id int64, input *UpdateProvi
 
 // UpdateProviderExtra 按键合并 Extra JSONB，其余运行状态和配置字段保持当前值。
 func (s *Admin) UpdateProviderExtra(ctx context.Context, id int64, updates map[string]any) error {
+	if err := ValidateSemanticErrorExtra(updates); err != nil {
+		return err
+	}
 	if err := ValidateClientClassExtra(updates); err != nil {
 		return err
 	}
@@ -395,6 +401,9 @@ func (s *Admin) UpdateProviderExtra(ctx context.Context, id int64, updates map[s
 // BulkUpdateProviders 在单次请求中更新多个提供商。
 // 凭据和 extra 使用键级合并，不覆盖整个对象。
 func (s *Admin) BulkUpdateProviders(ctx context.Context, input *BulkUpdateProvidersInput) (*BulkUpdateProvidersResult, error) {
+	if err := ValidateSemanticErrorExtra(input.Extra); err != nil {
+		return nil, err
+	}
 	if err := ValidateClientClassExtra(input.Extra); err != nil {
 		return nil, err
 	}

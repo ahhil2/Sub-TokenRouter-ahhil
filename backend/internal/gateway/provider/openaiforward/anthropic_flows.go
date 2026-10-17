@@ -101,6 +101,9 @@ func ForwardNativeMessages(ctx context.Context, body []byte, defaultMappedModel 
 		return p.ErrorResponse(resp, billingModel)
 	}
 
+	if err := p.InspectResponse(ctx, resp); err != nil {
+		return nil, err
+	}
 	if clientStream {
 		result, err := NativeAnthropicStreaming(ctx, resp, upstream.NewDeferredOutputContext(p.Sink()), p.DirectOptions(), originalModel, billingModel, upstreamModel, reasoningEffort, startTime)
 		if result != nil {
@@ -210,6 +213,9 @@ func ForwardNativeResponses(ctx context.Context, body []byte, defaultMappedModel
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 	}
 
+	if err := p.InspectResponse(ctx, resp); err != nil {
+		return nil, err
+	}
 	if clientStream {
 		return ResponsesFromAnthropicStreaming(resp, upstream.NewDeferredOutputContext(p.Sink()), p.OutputOptions(), originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
 	}
@@ -307,6 +313,9 @@ func ForwardNativeChat(ctx context.Context, body []byte, defaultMappedModel stri
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 	}
 
+	if err := p.InspectResponse(ctx, resp); err != nil {
+		return nil, err
+	}
 	reasoningEffort := p.ChatEffort(body, upstreamModel, billingModel, originalModel)
 	reasoningEffort = p.ThinkingFallback(reasoningEffort, body, billingModel)
 

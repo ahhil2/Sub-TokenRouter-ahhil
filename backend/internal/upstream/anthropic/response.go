@@ -17,6 +17,7 @@ import (
 
 type ResponseOptions struct {
 	StreamOptions
+	InspectResponse     func(context.Context, *http.Response) error
 	ReadBody            func(io.Reader) ([]byte, error)
 	InvalidJSON         func(context.Context, *http.Response, []byte, error) error
 	PreserveContentType bool

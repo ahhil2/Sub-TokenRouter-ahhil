@@ -150,6 +150,20 @@ export default {
     nameLabel: 'Name',
     namePlaceholder: 'My API Key',
     groupLabel: 'Group',
+    providerLabel: 'Provider',
+    providerGroupCount: '{count} groups',
+    providers: {
+      anthropic: 'Anthropic',
+      openai: 'OpenAI',
+      domestic: 'Domestic models',
+      other: 'Other'
+    },
+    providerHints: {
+      anthropic: 'Choose an available Anthropic / Claude group',
+      openai: 'Choose an available OpenAI / GPT group',
+      domestic: 'DeepSeek, Kimi, Zhipu, Alibaba, Baidu, iFlytek, Tencent, and other domestic brands',
+      other: 'Gemini, Grok, Antigravity, Qoder, mixed groups, and custom brands'
+    },
     selectGroup: 'Select a group',
     composite: {
       label: 'Composite key',

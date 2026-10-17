@@ -34,6 +34,7 @@ type NativeAnthropicPorts interface {
 	StreamContext(ctx context.Context, stream bool) (context.Context, context.CancelFunc)
 	BuildNative(ctx context.Context, body []byte, key, url string) (*http.Request, error)
 	SendNative(r *http.Request) (*http.Response, error)
+	InspectResponse(context.Context, *http.Response) error
 	TransportErrorNative(ctx context.Context, err error) error
 	DirectOptions() NativeAnthropicOptions
 	AdaptResponsesTools(body []byte) ([]byte, bridge.ResponsesClientToolMapping, error)

@@ -61,6 +61,16 @@ const messages: Record<string, string> = {
   'keys.expiresAt': 'Expires',
   'keys.group': 'Group',
   'keys.groupRequired': 'Group required',
+  'keys.providerLabel': 'Provider',
+  'keys.providerGroupCount': '{count} groups',
+  'keys.providers.anthropic': 'Anthropic',
+  'keys.providers.openai': 'OpenAI',
+  'keys.providers.domestic': 'Domestic models',
+  'keys.providers.other': 'Other',
+  'keys.providerHints.anthropic': 'Anthropic groups',
+  'keys.providerHints.openai': 'OpenAI groups',
+  'keys.providerHints.domestic': 'Domestic groups',
+  'keys.providerHints.other': 'Other groups',
   'keys.selectGroup': 'Select a group',
   'keys.composite.label': 'Composite key',
   'keys.composite.hint': 'Choose a group with a prefix/model ID.',
@@ -348,6 +358,7 @@ const mountView = async (settle = true) => {
         EndpointPopover: true,
         GroupBadge: true,
         GroupOptionItem: GroupOptionItemStub,
+        PlatformIcon: true,
         Teleport: true,
       },
     },
@@ -805,6 +816,75 @@ describe('user KeysView column settings', () => {
     expect(select?.props('options')[0].label).toBe('English group')
   })
 
+  it('按展示品牌筛选创建密钥的分组并显示四个厂商卡片', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 1, name: 'claude', display_brand: 'Anthropic', rate_multiplier: 1 },
+      { id: 2, name: 'gpt', display_brand: 'OpenAI', rate_multiplier: 1 },
+      { id: 3, name: 'deepseek', display_brand: 'DeepSeek', rate_multiplier: 1 },
+      { id: 4, name: 'gemini', display_brand: 'Gemini', rate_multiplier: 1 },
+    ])
+
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    await nextTick()
+
+    expect(wrapper.findAll('input[data-testid^="key-provider-"]')).toHaveLength(4)
+    expect(wrapper.find('input[data-testid="key-provider-anthropic"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('input[data-testid="key-provider-domestic"]').attributes('disabled')).toBeUndefined()
+
+    const groupSelect = wrapper.findAllComponents({ name: 'Select' }).find(
+      (select) => select.attributes('data-tour') === 'key-form-group'
+    )!
+    expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([1])
+
+    await groupSelect.vm.$emit('update:modelValue', 1)
+    await wrapper.get('input[data-testid="key-provider-domestic"]').setValue('domestic')
+    await nextTick()
+
+    const domesticGroupSelect = wrapper.findAllComponents({ name: 'Select' }).find(
+      (select) => select.attributes('data-tour') === 'key-form-group'
+    )!
+    expect(domesticGroupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([3])
+    expect(domesticGroupSelect.props('modelValue')).toBeNull()
+    expect(wrapper.get('input[data-testid="key-provider-domestic"]').attributes('data-group-count')).toBe('1')
+  })
+
+  it('disables provider cards without available groups', async () => {
+    getAvailableGroups.mockResolvedValue([{ id: 1, name: 'Claude', display_brand: 'Anthropic', rate_multiplier: 1 }])
+    const wrapper = await mountView()
+
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    await nextTick()
+
+    for (const provider of ['openai', 'domestic', 'other']) {
+      expect(wrapper.get(`input[data-testid="key-provider-${provider}"]`).attributes('disabled')).toBeDefined()
+    }
+  })
+
+  it('keeps all available groups visible when editing an API key', async () => {
+    listKeys.mockResolvedValueOnce({
+      items: [{ ...createApiKey(), group_id: 1 }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    getAvailableGroups.mockResolvedValue([
+      { id: 1, name: 'Claude', display_brand: 'Anthropic', rate_multiplier: 1 },
+      { id: 2, name: 'GPT', display_brand: 'OpenAI', rate_multiplier: 1 },
+    ])
+    const wrapper = await mountView()
+
+    await getButtonByText(wrapper, 'Edit').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('input[data-testid^="key-provider-"]')).toHaveLength(0)
+    const groupSelect = wrapper.findAllComponents({ name: 'Select' }).find(
+      (select) => select.attributes('data-tour') === 'key-form-group'
+    )!
+    expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([1, 2])
+  })
+
   it('用户侧分组选择器不展示或投影容量数据', async () => {
     getAvailableGroups.mockResolvedValueOnce([{
       id: 42,
@@ -1005,8 +1085,8 @@ describe('user KeysView column settings', () => {
 
   it('creates a composite key with ordered group prefix mappings', async () => {
     getAvailableGroups.mockResolvedValueOnce([
-      { id: 42, name: 'OpenAI', platform: 'openai', rate_multiplier: 1 },
-      { id: 43, name: 'Claude', platform: 'anthropic', rate_multiplier: 1 },
+      { id: 42, name: 'Claude', display_brand: 'Anthropic', rate_multiplier: 1 },
+      { id: 43, name: 'Claude secondary', display_brand: 'Anthropic', rate_multiplier: 1 },
     ])
     const wrapper = await mountView()
 
@@ -1036,6 +1116,30 @@ describe('user KeysView column settings', () => {
         { group_id: 43, prefix: 'Claude' },
       ],
     }))
+  })
+
+  it('filters composite key mappings by provider and clears mappings on provider change', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 42, name: 'Claude', display_brand: 'Anthropic', rate_multiplier: 1 },
+      { id: 43, name: 'DeepSeek', display_brand: 'DeepSeek', rate_multiplier: 1 },
+    ])
+    const wrapper = await mountView()
+
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('composite-filter-key')
+    await wrapper.get('[data-test="composite-key-toggle"]').trigger('click')
+    await nextTick()
+
+    const initialGroupSelect = wrapper.get('[data-test="composite-group-editor"]').findComponent({ name: 'Select' })
+    expect(initialGroupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([42])
+    await initialGroupSelect.vm.$emit('update:modelValue', 42)
+
+    await wrapper.get('input[data-testid="key-provider-domestic"]').setValue('domestic')
+    await nextTick()
+
+    const domesticGroupSelect = wrapper.get('[data-test="composite-group-editor"]').findComponent({ name: 'Select' })
+    expect(domesticGroupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([43])
+    expect(domesticGroupSelect.props('modelValue')).toBeNull()
   })
 
   it('shows composite mappings in the group column and opens full editing', async () => {

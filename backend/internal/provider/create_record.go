@@ -13,6 +13,9 @@ type CreationOptions struct {
 }
 
 func BuildProviderForCreate(input *CreateProviderInput, providerExtra map[string]any, options CreationOptions) (*Record, error) {
+	if err := ValidateSemanticErrorExtra(providerExtra); err != nil {
+		return nil, err
+	}
 	if err := ValidateClientClassExtra(providerExtra); err != nil {
 		return nil, err
 	}

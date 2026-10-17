@@ -399,8 +399,12 @@
               {{ (row.rate_multiplier ?? 1).toFixed(2) }}x
             </span>
           </template>
-          <template #cell-priority="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
+          <template #cell-priority="{ row }">
+            <ProviderPriorityCell
+              :provider="row"
+              @updated="handleProviderUpdated"
+              @error="appStore.showError($event)"
+            />
           </template>
           <template #header-scheduler_score="{ column }">
             <div class="flex items-center">
@@ -551,6 +555,7 @@ import ProviderUsageCell from '@/components/provider/ProviderUsageCell.vue'
 import ProviderTodayStatsCell from '@/components/provider/ProviderTodayStatsCell.vue'
 import ProviderGroupsCell from '@/components/provider/ProviderGroupsCell.vue'
 import ProviderCapacityCell from '@/components/provider/ProviderCapacityCell.vue'
+import ProviderPriorityCell from '@/components/admin/provider/ProviderPriorityCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'

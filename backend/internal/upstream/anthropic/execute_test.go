@@ -98,6 +98,42 @@ func TestExecuteNonStreamObservedZero(t *testing.T) {
 	}
 }
 
+func TestExecuteSemanticErrorBeforeOutput(test *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, passthrough := range []bool{false, true} {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				body := `{"type":"message","content":[{"type":"text","text":"` + semanticFixture + `"}],"usage":{"input_tokens":100,"output_tokens":0}}`
+				if stream {
+					body = semanticStream(semanticFixture)
+				}
+				_, _ = io.WriteString(writer, body)
+			}))
+			var closed atomic.Int32
+			target := executionTarget(server, stream, passthrough, &closed)
+			expected := errors.New("semantic response failure")
+			target.Response.InspectResponse = func(ctx context.Context, response *http.Response) error {
+				matched, err := DetectSemanticError(ctx, response, []string{semanticFixture})
+				if matched {
+					return expected
+				}
+				return err
+			}
+			accepted := false
+			target.Accepted = func() { accepted = true }
+			sink := &executionSink{}
+			result, err := (Executor{}).Execute(context.Background(), executeInput(target, stream), sink)
+			require.ErrorIs(test, err, expected)
+			require.False(test, accepted)
+			require.False(test, result.Served)
+			require.False(test, result.HasUsage)
+			require.Empty(test, sink.events)
+			require.Zero(test, result.Usage.InputTokens)
+			require.EqualValues(test, 1, closed.Load())
+			server.Close()
+		}
+	}
+}
+
 func TestExecuteStreamingProgressAndPartialFailure(t *testing.T) {
 	for _, pass := range []bool{false, true} {
 		for _, partial := range []bool{false, true} {

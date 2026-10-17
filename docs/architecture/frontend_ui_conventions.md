@@ -81,6 +81,7 @@
   - 头部是标题、条件数和「重置」，没有生效的条件时「重置」置灰。有生效条件时，头部下方列出已选条件标签（字段名、当前取值和 ×），顺序和字段一致，点 × 只移除这一项。再往下是可滚动的字段栅格。
   - `FilterField` 里的 `Select` 会自动上报当前选项：第一项的值为空或 `'all'` 时视为「全部」，其他情况按空值判断；默认值不是第一项时（例如运维看板时间范围的 `1h`），传 `empty-value`。文本输入、远程搜索这类非 `Select` 字段，由调用方传 `value-text` 并监听 `clear`。
   - 字段标签用中性灰 `text-xs`，和表单的 `.input-label` 区分开；占满一整行的字段传 `full`。
+  - 使用记录的常用条件显示在漏斗按钮右侧，窄屏换行。管理员按模型、用户、提供商、分组排列；普通用户的用量明细显示模型和分组，使用个人可查询的维度。其余条件放在面板内。快捷筛选和面板共用筛选对象，漏斗上的条件数和重置覆盖全部条件。
   - `columns` 取 1、2、3，对应面板宽 18、34、48rem，窄屏都退回单列：两三个条件用 1，四个左右用 2，更多用 3。
   - 面板默认左边缘对齐触发按钮，右侧放不下时向左平移，水平方向的夹取复用 `getFloatingPanelPosition`。有生效条件时，按钮换成品牌色描边并显示数量角标。
   - 面板里有输入框状态，或者测试需要直接访问字段时，传 `keep-mounted`；运维看板这类自定义按钮样式用 `trigger-class` 覆盖。
@@ -91,6 +92,8 @@
 - 遮罩透明度有两档，都来自 CSS 变量：浅色模式在 `:root` 定义常规遮罩 `--overlay-bg`（black/50）和媒体灯箱等使用的强遮罩 `--overlay-bg-strong`（black/70）；深色模式在 `html.dark` 中整体加深为 black/70 和 black/85。模板写 `bg-[var(--overlay-bg)]`，`bg-black/50` 这类字面值会被门禁拦截。
 - 浮层面板的最大高度有三档，来自 `:root` 的 `--max-h-menu-sm`（15rem）、`--max-h-menu`（20rem）、`--max-h-panel`（26.25rem），模板里对应 `max-h-menu-sm/menu/panel`。像素任意值 `max-h-[Npx]` 会被门禁拦截，局部特例（例如告警表的 520px）加 `check-ui-allow` 并写明原因。vh、dvh、calc 等相对视口的值含义不同，不归入这三档，门禁也不拦截。
 - 挂载到 body 的浮层，定位只有一个实现：`utils/floatingPanel.ts` 的 `getFloatingPanelPosition`。翻转、对齐、夹取和窄屏行为都通过 options 控制：固定高度的菜单用 `fixedHeight`，左对齐面板用 `align: 'left'`，菜单类传 `pinLeftOnMobile: false`。组件里自己计算 rect 和 spaceBelow 做翻转，会和这个实现产生分歧。JS 侧的面板尺寸常量在 `constants/overlay.ts`（`SELECT_PANEL_MAX_HEIGHT`、`MIN_COMFORTABLE_PANEL_HEIGHT`），和样式档位取值一致。
+
+管理员和普通用户的使用记录页初始日期范围是浏览器本地日历的“今天”，起止日期相同。管理员页面链接携带 `start_date` 或 `end_date` 时，按链接中的日期查询。
 
 ## 断点
 

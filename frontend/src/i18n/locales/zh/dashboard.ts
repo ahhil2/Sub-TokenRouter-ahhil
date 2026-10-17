@@ -150,6 +150,20 @@ export default {
     nameLabel: '名称',
     namePlaceholder: '我的 API 密钥',
     groupLabel: '分组',
+    providerLabel: '厂商',
+    providerGroupCount: '{count} 个分组',
+    providers: {
+      anthropic: 'Anthropic',
+      openai: 'OpenAI',
+      domestic: '国产模型',
+      other: '其他'
+    },
+    providerHints: {
+      anthropic: '选择 Anthropic / Claude 的可用分组',
+      openai: '选择 OpenAI / GPT 的可用分组',
+      domestic: '按展示品牌识别 DeepSeek、Kimi、智谱、阿里、百度、讯飞、腾讯等分组',
+      other: '包含 Gemini、Grok、Antigravity、Qoder、混合分组和自定义品牌'
+    },
     selectGroup: '选择分组',
     composite: {
       label: '复合 Key',
