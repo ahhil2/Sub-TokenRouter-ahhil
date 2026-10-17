@@ -81,8 +81,8 @@ func TestDetectSemanticError(test *testing.T) {
 
 func TestDetectSemanticErrorTimeoutReplaysPendingRead(test *testing.T) {
 	reader, writer := io.Pipe()
-	defer reader.Close()
-	defer writer.Close()
+	test.Cleanup(func() { require.NoError(test, reader.Close()) })
+	test.Cleanup(func() { require.NoError(test, writer.Close()) })
 	response := &http.Response{StatusCode: 200, Body: reader}
 	matched, err := detectSemanticError(context.Background(), response, []string{semanticFixture}, 10*time.Millisecond)
 	require.NoError(test, err)
@@ -99,8 +99,8 @@ func TestDetectSemanticErrorTimeoutReplaysPendingRead(test *testing.T) {
 
 func TestDetectSemanticErrorCancelledAndDisabled(test *testing.T) {
 	reader, writer := io.Pipe()
-	defer reader.Close()
-	defer writer.Close()
+	test.Cleanup(func() { require.NoError(test, reader.Close()) })
+	test.Cleanup(func() { require.NoError(test, writer.Close()) })
 	response := &http.Response{StatusCode: 200, Body: reader}
 	matched, err := DetectSemanticError(context.Background(), response, nil)
 	require.NoError(test, err)
@@ -113,8 +113,8 @@ func TestDetectSemanticErrorCancelledAndDisabled(test *testing.T) {
 
 func TestDetectSemanticErrorNormalTextDoesNotWaitForTerminal(test *testing.T) {
 	reader, writer := io.Pipe()
-	defer reader.Close()
-	defer writer.Close()
+	test.Cleanup(func() { require.NoError(test, reader.Close()) })
+	test.Cleanup(func() { require.NoError(test, writer.Close()) })
 	response := &http.Response{StatusCode: 200, Body: reader}
 	first := "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n"
 	go func() { _, _ = io.WriteString(writer, first) }()
@@ -131,8 +131,8 @@ func TestDetectSemanticErrorNormalTextDoesNotWaitForTerminal(test *testing.T) {
 
 func TestDetectSemanticErrorHTTPFailureUntouched(test *testing.T) {
 	reader, writer := io.Pipe()
-	defer reader.Close()
-	defer writer.Close()
+	test.Cleanup(func() { require.NoError(test, reader.Close()) })
+	test.Cleanup(func() { require.NoError(test, writer.Close()) })
 	for _, status := range []int{400, 429, 502} {
 		response := &http.Response{StatusCode: status, Body: reader}
 		matched, err := DetectSemanticError(context.Background(), response, []string{semanticFixture})

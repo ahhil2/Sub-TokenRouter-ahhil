@@ -2579,9 +2579,10 @@ func TestNativeAnthropicSemanticErrorBeforeOutput(test *testing.T) {
 			}}
 			body := []byte(fmt.Sprintf(`{"model":"k3","max_tokens":32,"stream":%t,"messages":[{"role":"user","content":"hello"}]}`, clientStream))
 			invoke := service.Text.NativeMessages
-			if path == "/v1/chat/completions" {
+			switch path {
+			case "/v1/chat/completions":
 				invoke = service.Text.NativeChat
-			} else if path == "/v1/responses" {
+			case "/v1/responses":
 				body = []byte(fmt.Sprintf(`{"model":"k3","max_output_tokens":32,"stream":%t,"input":"hello"}`, clientStream))
 				invoke = service.Text.NativeResponses
 			}

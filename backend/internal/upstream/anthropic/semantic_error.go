@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -233,12 +234,7 @@ func (probe *semanticProbe) matches() bool {
 	if text == "" {
 		return false
 	}
-	for _, candidate := range probe.texts {
-		if candidate == text {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(probe.texts, text)
 }
 
 func normalizeSemanticText(text string) string {
