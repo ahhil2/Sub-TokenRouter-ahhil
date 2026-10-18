@@ -121,7 +121,7 @@ type Public struct {
 	UserNotFound           error
 	EnsureKey              func(context.Context, int64, int64) (int64, error)
 	GroupMapping           func(context.Context, int64, string) routing.GroupMappingResult
-	ImageUnitPrice         func(context.Context, *GroupView, string, string) (float64, bool)
+	ImageQuote             func(context.Context, *GroupView, string, string) (billing.ImageQuote, bool)
 	SubscriptionMultiplier func(context.Context, int64, *GroupView, float64) (float64, bool)
 	Moderation             Moderator
 	RequestID              func(context.Context) string
@@ -312,7 +312,7 @@ func (s *Public) ListModels(ctx context.Context, userID int64) (*CreativeModelsR
 			}
 			capabilities := CreativeCapabilitiesForModel(routes[model].Platform, finalModel)
 			pricingModel := s.BillingModel(ctx, group, model, finalModel)
-			if _, ok := s.ImageUnitPrice(ctx, group, pricingModel, imageSizes[0]); !ok {
+			if _, ok := s.ImageQuote(ctx, group, pricingModel, imageSizes[0]); !ok {
 				continue
 			}
 			out.Data = append(out.Data, CreativeModelPublic{
@@ -397,11 +397,14 @@ func (s *Public) CreativeModelSettings(ctx context.Context) []CreativeModelSetti
 
 // CreativePrice 展示固定单张价，分组倍率与模型广场一致。
 func (s *Public) CreativePrice(ctx context.Context, group *GroupView, model, imageSize string) float64 {
-	unit, ok := s.ImageUnitPrice(ctx, group, model, imageSize)
+	quote, ok := s.ImageQuote(ctx, group, model, imageSize)
 	if !ok {
 		return 0
 	}
-	return unit * group.RateMultiplier
+	if quote.IndependentPricing {
+		return quote.UnitPrice
+	}
+	return quote.UnitPrice * group.RateMultiplier
 }
 
 // CreativeOperationsForPlatform 保留各平台已支持的生成、编辑与局部重绘能力。
@@ -1244,9 +1247,15 @@ func (s *Public) ResolveCreativePricing(ctx context.Context, userID int64, valid
 	baseUnitPrice := 0.0
 	estimatedCost := 0.0
 	pricingModel := s.BillingModel(ctx, group, validated.Model, validated.FinalModel)
-	if resolvedUnitPrice, ok := s.ImageUnitPrice(ctx, group, pricingModel, validated.ImageSize); ok {
-		baseUnitPrice = resolvedUnitPrice
-		estimatedCost = resolvedUnitPrice * float64(validated.OutputCount) * effective
+	if quote, ok := s.ImageQuote(ctx, group, pricingModel, validated.ImageSize); ok {
+		if quote.IndependentPricing {
+			subscriptionRate = 1
+			balanceRate = 1
+			effective = 1
+			planGroupRateEnabled = false
+		}
+		baseUnitPrice = quote.UnitPrice
+		estimatedCost = quote.UnitPrice * float64(validated.OutputCount) * effective
 	} else {
 		return nil, billing.ErrImageTaskPricingMissing
 	}

@@ -102,6 +102,13 @@ func BuildHoldCommand(job *BatchImageJob, requestID string, actualAmount float64
 		command.BalanceRateMultiplier = math.Max(job.BalanceRateMultiplier, 0) * scale
 		command.SettlementRateScale = settlementScale
 		command.DisablePlanGroupRateMultiplier = !job.PlanGroupRateEnabled
+		if job.PricingSnapshotVersion == IndependentPricingSnapshotVersion {
+			command.SubscriptionRateMultiplier = 1
+			command.SubscriptionRateMultiplierScale = 1
+			command.BalanceRateMultiplier = 1
+			command.SettlementRateScale = 1
+			command.DisablePlanGroupRateMultiplier = true
+		}
 	}
 	return command, nil
 }

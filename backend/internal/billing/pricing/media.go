@@ -72,3 +72,26 @@ func DefaultVideoPrice(price *CatalogModelPricing, resolution string) (float64, 
 	value, ok := price.VideoPrices[NormalizeVideoBillingResolutionOrDefault(resolution)]
 	return value, ok
 }
+
+func VideoDisplayPricing(resolved *ResolvedPricing, catalog *CatalogModelPricing, rateMultiplier float64) (ModelDisplayPricing, bool) {
+	if resolved == nil && (catalog == nil || len(catalog.VideoPrices) == 0) {
+		return ModelDisplayPricing{}, false
+	}
+	if resolved != nil && (resolved.Mode != BillingModeVideo || resolved.IsUnpriced()) {
+		return ModelDisplayPricing{}, false
+	}
+	result := ModelDisplayPricing{PricingMode: "video", PriceStatus: "priced", VideoPrices: make(MediaPrices)}
+	for _, resolution := range []string{"480p", "720p", "1080p"} {
+		var value float64
+		var found bool
+		if resolved != nil {
+			value, found = ResolveRequestUnitPrice(resolved, resolution, nil)
+		} else {
+			value, found = DefaultVideoPrice(catalog, resolution)
+		}
+		if found {
+			result.VideoPrices[resolution] = value * max(rateMultiplier, 0)
+		}
+	}
+	return result, len(result.VideoPrices) > 0
+}

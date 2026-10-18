@@ -39,6 +39,7 @@ type ModelPricingEntry struct {
 	PricingConfigID    int64       `json:"pricing_config_id,omitempty"`
 	Models             []string    `json:"models"`
 	BillingMode        BillingMode `json:"billing_mode"`
+	IndependentPricing bool        `json:"independent_pricing,omitempty"`
 	PriceMultiplier    *float64    `json:"price_multiplier"`     // 最终定价倍率；nil 表示不调整价格
 	FastModeMultiplier *float64    `json:"fast_mode_multiplier"` // OpenAI Fast 模式收费倍率；nil 表示沿用模型默认 Fast 定价
 	// FastMultiplier 是新的通用 Fast/priority 倍率；为空时兼容旧字段。

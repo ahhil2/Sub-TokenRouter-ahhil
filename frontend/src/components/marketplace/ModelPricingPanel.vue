@@ -18,6 +18,9 @@
     <!-- 收起后保留上下文区间和 fast mode，退出期间同步折叠高度。 -->
     <Collapse :open="expanded">
       <div class="pt-3">
+        <p v-if="model.pricing.independent_pricing" class="mb-3 text-xs text-gray-500 dark:text-dark-400">
+          {{ t('marketplace.independentPricingHint') }}
+        </p>
         <!-- 右上角：上下文区间、fast mode、推理档位和分时切换，定价行随选择联动。 -->
         <div
           v-if="selectableIntervals.length > 0 || hasFastPricing || hasMaxEffortPricing || timeOptions.length > 0"
@@ -142,7 +145,7 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { formatCompactTokenRange } from '@/utils/formatters'
-import { formatPriceNumber, pricingKind } from '@/utils/marketplacePricing'
+import { formatPriceNumber, pricingKind, videoPricingTiers } from '@/utils/marketplacePricing'
 import type { MarketplaceModel, MarketplaceModelPricing, MarketplacePricingInterval } from '@/types'
 
 // 完整定价面板在卡片内展开、收起，并提供上下文区间与 fast mode 切换。
@@ -287,6 +290,13 @@ const activeSource = computed<MarketplaceModelPricing | MarketplacePricingInterv
 )
 
 const standardRows = computed<PricingRow[]>(() => {
+  if (pricingKind(props.model.pricing) === 'video') {
+    return videoPricingTiers(props.model.pricing).map(({ resolution, price }) => ({
+      key: resolution,
+      label: resolution,
+      value: `${formatPrice(price)} ${t('marketplace.perSecond')}`,
+    }))
+  }
   if (pricingKind(props.model.pricing) === 'image') {
     return imagePricingRows(props.model.pricing)
   }

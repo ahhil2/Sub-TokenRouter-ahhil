@@ -97,6 +97,28 @@ const unpricedPricing: MarketplaceModelPricing = {
 }
 
 describe('ModelPricingPanel', () => {
+  it('explains independent prices in the expanded details', async () => {
+    const wrapper = mountPanel(marketplaceModel('custom-image', {
+      pricing_mode: 'image', price_status: 'priced', independent_pricing: true, image_price_1k: 0.065,
+    }))
+    await wrapper.get('[data-testid="model-pricing-toggle"]').trigger('click')
+    expect(wrapper.text()).toContain('marketplace.independentPricingHint')
+    expect(wrapper.get('[data-testid="pricing-rows"]').text()).toContain('0.0650')
+  })
+  it('shows video prices per second and omits missing resolutions', async () => {
+    const wrapper = mountPanel(marketplaceModel('grok-imagine-video-1.5', {
+      pricing_mode: 'video', price_status: 'priced', video_prices: { '480p': 0, '720p': 0.0162 },
+    }))
+    await wrapper.get('[data-testid="model-pricing-toggle"]').trigger('click')
+    const rows = wrapper.get('[data-testid="pricing-rows"]')
+    expect(rows.text()).toContain('480p')
+    expect(rows.text()).toContain('0.0000 点 marketplace.perSecond')
+    expect(rows.text()).toContain('0.0162 点 marketplace.perSecond')
+    expect(rows.text()).not.toContain('1080p')
+    expect(rows.text()).not.toContain('marketplace.perImage')
+    expect(wrapper.find('[data-testid="pricing-fast-switch"]').exists()).toBe(false)
+  })
+
   afterEach(() => {
     vi.useRealTimers()
   })

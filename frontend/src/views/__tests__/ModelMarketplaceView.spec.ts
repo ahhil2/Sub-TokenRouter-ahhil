@@ -9,6 +9,7 @@ const getMarketplaceModels = vi.hoisted(() => vi.fn())
 const checkAuth = vi.hoisted(() => vi.fn())
 const fetchPublicSettings = vi.hoisted(() => vi.fn())
 const copyToClipboard = vi.hoisted(() => vi.fn())
+const authState = vi.hoisted(() => ({ isAuthenticated: true }))
 
 vi.mock('@/api/marketplace', () => ({
   getMarketplaceModels,
@@ -20,7 +21,7 @@ vi.mock('@/composables/useClipboard', () => ({
 
 vi.mock('@/stores', () => ({
   useAuthStore: () => ({
-    isAuthenticated: true,
+    isAuthenticated: authState.isAuthenticated,
     isAdmin: false,
     checkAuth,
   }),
@@ -59,6 +60,9 @@ vi.mock('vue-i18n', async () => {
         }
         if (key === 'marketplace.maxDiscountOff') {
           return `marketplace.maxDiscountOff ${params?.percent || ''}`
+        }
+        if (key === 'marketplace.resultCount') {
+          return `${params?.groups} groups · ${params?.models} model entries`
         }
 
         return key
@@ -212,6 +216,7 @@ function visibleTooltips() {
 describe('ModelMarketplaceView', () => {
   beforeEach(() => {
     localStorage.clear()
+    authState.isAuthenticated = true
     getMarketplaceModels.mockResolvedValue(marketplaceFixture())
     checkAuth.mockClear()
     fetchPublicSettings.mockClear()
@@ -238,6 +243,140 @@ describe('ModelMarketplaceView', () => {
     expect(wrapper.findAll('[data-testid="marketplace-group-section"]')).toHaveLength(4)
   })
 
+  it('shows provider counts, normalizes brand aliases and retains custom brands', async () => {
+    const fixture = [
+      { ...marketplaceGroup(1, 'GPT', [marketplaceModel('gpt-5.5', 'GPT', tokenPricing)]), display_brand: 'OpenAI' },
+      { ...marketplaceGroup(2, 'Claude standard', [marketplaceModel('claude-sonnet', 'Sonnet', tokenPricing)]), display_brand: 'Anthropic' },
+      { ...marketplaceGroup(3, 'Claude discount', [marketplaceModel('claude-opus', 'Opus', tokenPricing)]), display_brand: 'Claude' },
+      { ...marketplaceGroup(4, 'Gemini', [marketplaceModel('gemini-flash', 'Flash', tokenPricing)]), display_brand: 'Gemini' },
+      { ...marketplaceGroup(5, 'Grok', [marketplaceModel('grok', 'Grok', tokenPricing)]), display_brand: 'xAI' },
+      { ...marketplaceGroup(6, 'DeepSeek', [marketplaceModel('deepseek-v3', 'DeepSeek', tokenPricing)]), display_brand: 'DeepSeek' },
+      { ...marketplaceGroup(7, 'Custom', [marketplaceModel('custom', 'Custom', tokenPricing)]), display_brand: '自定义渠道' },
+    ]
+    getMarketplaceModels.mockResolvedValue(fixture)
+    const wrapper = await mountMarketplace()
+    const sidebar = wrapper.get('[data-testid="marketplace-filter-sidebar"]')
+    expect(wrapper.get('[data-testid="marketplace-browser"]').classes()).toContain('xl:grid-cols-[18.75rem_minmax(0,1fr)]')
+    expect(sidebar.classes()).toContain('font-sans')
+    expect(sidebar.findAll('[data-testid="marketplace-provider-option"]')).toHaveLength(6)
+    expect(sidebar.get('[data-provider="Anthropic"]').text()).toContain('2')
+    expect(sidebar.get('[data-provider="Google"]').text()).toContain('Gemini / Google')
+    expect(sidebar.get('[data-provider="xAI"]').text()).toContain('Grok / xAI')
+    expect(sidebar.get('[data-provider="DeepSeek"]').exists()).toBe(true)
+    expect(sidebar.get('[data-provider="自定义渠道"]').exists()).toBe(true)
+
+    await sidebar.get('[data-provider="Anthropic"]').trigger('click')
+    expect(sidebar.findAll('[data-testid="marketplace-group-option"]').map((option) => option.attributes('data-group-id'))).toEqual(['2', '3'])
+    expect(wrapper.findAll('[data-testid="marketplace-group-section"]')).toHaveLength(2)
+    expect(sidebar.get('[data-provider="Anthropic"]').attributes('aria-pressed')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('shows video prices per second and combines video, provider and group filters', async () => {
+    const fixture = marketplaceFixture()
+    fixture.push({
+      ...marketplaceGroup(21, 'Super Grok Heavy', [
+        marketplaceModel('grok-imagine-video-1.5', 'Grok Imagine Video 1.5', {
+          pricing_mode: 'video', price_status: 'priced', video_prices: { '480p': 0, '720p': 0.0162, '1080p': 0.0324 },
+        }),
+        marketplaceModel('grok-imagine-video', 'Grok Imagine Video', unpricedPricing),
+        marketplaceModel('grok-imagine-image-2.0', 'Grok Imagine Image 2.0', imagePricing),
+      ]),
+      display_brand: 'xAI', rate_multiplier: 0.18,
+    })
+    getMarketplaceModels.mockResolvedValue(fixture)
+    const wrapper = await mountMarketplace()
+    const sidebar = wrapper.get('[data-testid="marketplace-filter-sidebar"]')
+    await sidebar.get('[data-provider="xAI"]').trigger('click')
+    await sidebar.get('[data-group-id="21"]').trigger('click')
+    await sidebar.get('[data-pricing-mode="video"]').trigger('click')
+    expect(wrapper.findAll('article')).toHaveLength(1)
+    const card = wrapper.get('article')
+    expect(card.text()).toContain('Grok Imagine Video 1.5')
+    expect(card.text()).toContain('0.0162')
+    expect(card.text()).toContain('0.0324')
+    expect(card.text()).toContain('marketplace.perSecond')
+    expect(card.text()).not.toContain('marketplace.perImage')
+    expect(wrapper.get('[data-testid="select-option-video"]').exists()).toBe(true)
+  })
+
+  it('marks independent prices separately from the group rate', async () => {
+    getMarketplaceModels.mockResolvedValue([{
+      ...marketplaceGroup(21, 'Independent group', [
+        marketplaceModel('custom-image', 'Custom Image', { ...imagePricing, independent_pricing: true, image_price_1k: 0.065 }),
+      ]),
+      rate_multiplier: 0.18, official_price_ratio: 0.18,
+    }])
+    const wrapper = await mountMarketplace()
+    expect(wrapper.get('[data-testid="independent-pricing-badge"]').text()).toContain('marketplace.independentPricing')
+    expect(wrapper.text()).toContain('0.0650')
+    expect(wrapper.find('[data-testid="group-max-discount-tag"]').exists()).toBe(false)
+  })
+
+  it('filters by group and clears an incompatible selection when switching providers', async () => {
+    getMarketplaceModels.mockResolvedValue([
+      { ...marketplaceGroup(1, 'Free', [marketplaceModel('gpt', 'GPT', tokenPricing)]), rate_multiplier: 0 },
+      { ...marketplaceGroup(2, 'Claude', [marketplaceModel('claude', 'Claude', tokenPricing)]), display_brand: 'Anthropic' },
+    ])
+    const wrapper = await mountMarketplace()
+    const sidebar = wrapper.get('[data-testid="marketplace-filter-sidebar"]')
+    expect(sidebar.get('[data-group-id="1"]').text()).toContain('×0')
+    await sidebar.get('[data-group-id="1"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="marketplace-group-section"]')).toHaveLength(1)
+    expect(sidebar.get('[data-group-id="1"]').attributes('aria-pressed')).toBe('true')
+
+    await sidebar.get('[data-provider="Anthropic"]').trigger('click')
+    await nextTick()
+    expect(sidebar.get('[data-testid="marketplace-group-all"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('[data-testid="marketplace-group-section"]').text()).toContain('Claude')
+    expect(wrapper.find('[data-testid="select-option-1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="select-option-2"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('combines sidebar filters with search and pricing and resets an empty result', async () => {
+    const wrapper = await mountMarketplace()
+    const sidebar = wrapper.get('[data-testid="marketplace-filter-sidebar"]')
+    await sidebar.get('[data-provider="OpenAI"]').trigger('click')
+    await sidebar.get('[data-group-id="1"]').trigger('click')
+    await sidebar.get('[data-pricing-mode="unpriced"]').trigger('click')
+    await wrapper.get('[data-testid="marketplace-search"]').setValue('legacy')
+    expect(wrapper.get('[data-testid="marketplace-result-count"]').text()).toBe('1 groups · 1 model entries')
+    expect(wrapper.get('[data-testid="marketplace-group-section"]').findAll('article')).toHaveLength(1)
+
+    await wrapper.get('[data-testid="select-option-token"]').trigger('click')
+    expect(sidebar.get('[data-pricing-mode="token"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.text()).toContain('marketplace.emptyTitle')
+    expect(sidebar.exists()).toBe(true)
+
+    await sidebar.get('[data-testid="marketplace-sidebar-reset"]').trigger('click')
+    expect((wrapper.get('[data-testid="marketplace-search"]').element as HTMLInputElement).value).toBe('')
+    expect(sidebar.get('[data-testid="marketplace-provider-all"]').attributes('aria-pressed')).toBe('true')
+    expect(sidebar.get('[data-pricing-mode="all"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.findAll('[data-testid="marketplace-group-section"]')).toHaveLength(4)
+    expect(wrapper.get('[data-testid="marketplace-result-count"]').text()).toBe('4 groups · 5 model entries')
+    wrapper.unmount()
+  })
+
+  it('makes the sidebar available to guests with an accessible mobile toggle', async () => {
+    authState.isAuthenticated = false
+    const wrapper = await mountMarketplace()
+    const toggle = wrapper.get('[data-testid="marketplace-filter-toggle"]')
+    const panel = wrapper.get('[data-testid="marketplace-filter-panel"]')
+    expect(toggle.attributes('aria-controls')).toBe(panel.attributes('id'))
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(panel.classes()).toContain('hidden')
+    expect(panel.classes()).toContain('xl:block')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(panel.classes()).not.toContain('hidden')
+    await wrapper.get('[data-testid="marketplace-group-option"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="marketplace-group-section"]')).toHaveLength(1)
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    wrapper.unmount()
+  })
+
   it('用户侧不展示分组容量，并将可用率状态条靠右放置', async () => {
     const fixture = marketplaceFixture()
     fixture[0] = {
@@ -256,7 +395,7 @@ describe('ModelMarketplaceView', () => {
     const wrapper = await mountMarketplace()
 
     expect(wrapper.findAll('[data-testid="group-capacity"]')).toHaveLength(0)
-    expect(wrapper.get('[data-testid="marketplace-group-availability"]').classes()).toContain('xl:w-[560px]')
+    expect(wrapper.get('[data-testid="marketplace-group-availability"]').classes()).toContain('2xl:w-1/2')
   })
 
   it('分组头部用最高优惠标签替换模型数标签，无有效折扣的分组不渲染', async () => {

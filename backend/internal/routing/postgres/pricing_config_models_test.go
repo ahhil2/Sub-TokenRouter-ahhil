@@ -18,7 +18,7 @@ import (
 var configPricingTimeColumns = []string{
 	"id", "pricing_config_id", "models", "billing_mode", "price_multiplier", "fast_mode_multiplier", "fast_multiplier", "flex_multiplier", "max_reasoning_effort_multiplier",
 	"input_price", "output_price", "cache_write_price", "cache_write_1h_price", "cache_read_price", "image_input_price", "image_output_price",
-	"per_request_price", "time_pricing", "created_at", "updated_at",
+	"per_request_price", "time_pricing", "created_at", "updated_at", "independent_pricing",
 }
 
 func TestEscapeLike(t *testing.T) {
@@ -127,7 +127,7 @@ func TestConfigPricingTimeRoundTrip(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows(configPricingTimeColumns).AddRow(
 			int64(11), int64(7), `["gpt-5"]`, routing.BillingModeToken, nil, nil, nil, nil, nil,
 			nil, nil, nil, nil, nil, nil, nil, nil, `{"timezone":"Asia/Shanghai","periods":[{"start_time":"09:00","end_time":"12:00","multiplier":2}]}`,
-			created, created,
+			created, created, false,
 		))
 	mock.ExpectQuery(`SELECT id, pricing_id, min_tokens, max_tokens, tier_label`).
 		WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id"}))
@@ -152,11 +152,34 @@ func TestConfigPricingTimeCreateWritesJSON(t *testing.T) {
 			Periods:  []routing.TimePricingPeriod{{StartTime: "09:00", EndTime: "12:00", Multiplier: 2}},
 		},
 	}
-	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO pricing_config_model_pricing (pricing_config_id, models, billing_mode, price_multiplier, fast_mode_multiplier, fast_multiplier, flex_multiplier, max_reasoning_effort_multiplier, input_price, output_price, cache_write_price, cache_write_1h_price, cache_read_price, image_input_price, image_output_price, per_request_price, time_pricing)")).
-		WithArgs(int64(7), []byte(`["gpt-5"]`), routing.BillingModeToken, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, `{"timezone":"Asia/Shanghai","periods":[{"start_time":"09:00","end_time":"12:00","multiplier":2}]}`).
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO pricing_config_model_pricing (pricing_config_id, models, billing_mode, price_multiplier, fast_mode_multiplier, fast_multiplier, flex_multiplier, max_reasoning_effort_multiplier, input_price, output_price, cache_write_price, cache_write_1h_price, cache_read_price, image_input_price, image_output_price, per_request_price, time_pricing, independent_pricing)")).
+		WithArgs(int64(7), []byte(`["gpt-5"]`), routing.BillingModeToken, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, `{"timezone":"Asia/Shanghai","periods":[{"start_time":"09:00","end_time":"12:00","multiplier":2}]}`, false).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at"}).AddRow(int64(11), time.Time{}, time.Time{}))
 
 	require.NoError(t, repo.CreateModelPricing(context.Background(), pricing))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestConfigIndependentPricingPersistence(t *testing.T) {
+	repo, mock := newConfigPricingTimeRepo(t)
+	price := 0.065
+	entry := &routing.ModelPricingEntry{ID: 11, Models: []string{"custom-image"}, BillingMode: routing.BillingModePerRequest, PerRequestPrice: &price, IndependentPricing: true}
+	mock.ExpectExec(`(?s)UPDATE pricing_config_model_pricing.*independent_pricing = \$18.*WHERE id = \$17`).
+		WithArgs([]byte(`["custom-image"]`), routing.BillingModePerRequest, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, price, nil, int64(11), true).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, repo.UpdateModelPricing(context.Background(), entry))
+	mock.ExpectQuery(`(?s)SELECT .*independent_pricing.*FROM pricing_config_model_pricing`).
+		WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows(configPricingTimeColumns).AddRow(
+		int64(11), int64(7), `["custom-image"]`, routing.BillingModePerRequest, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, price, nil, time.Time{}, time.Time{}, true,
+	))
+	mock.ExpectQuery(`SELECT id, pricing_id, min_tokens, max_tokens, tier_label`).
+		WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	entries, err := repo.ListModelPricing(context.Background(), 7)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.True(t, entries[0].IndependentPricing)
+	require.Equal(t, price, *entries[0].PerRequestPrice)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

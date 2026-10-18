@@ -17,6 +17,20 @@ func TestPricingConfigToResponse_NilInput(t *testing.T) {
 	require.Nil(t, pricingConfigToResponse(nil))
 }
 
+func TestIndependentPricingRequestResponse(t *testing.T) {
+	entries := pricingRequestToService([]modelPricingRequest{{
+		Models: []string{"custom-image"}, BillingMode: "per_request", IndependentPricing: true, PerRequestPrice: float64Ptr(0.065),
+	}})
+	require.Len(t, entries, 1)
+	require.True(t, entries[0].IndependentPricing)
+	cloned := entries[0].Clone()
+	response := pricingToResponse(&cloned)
+	require.True(t, response.IndependentPricing)
+	require.InDelta(t, 0.065, *response.PerRequestPrice, 1e-12)
+	legacy := pricingRequestToService([]modelPricingRequest{{Models: []string{"legacy"}}})
+	require.False(t, legacy[0].IndependentPricing)
+}
+
 func TestPricingConfigToResponse_FullPricingConfig(t *testing.T) {
 	now := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
 	ch := &routing.PricingConfig{

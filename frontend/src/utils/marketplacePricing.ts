@@ -10,17 +10,30 @@ function hasImagePricing(pricing: MarketplaceModelPricing): boolean {
 }
 
 // pricingKind 根据定价状态和模式返回展示分类。
-export function pricingKind(pricing: MarketplaceModelPricing): 'token' | 'image' | 'unpriced' {
+export function pricingKind(pricing: MarketplaceModelPricing): 'token' | 'image' | 'video' | 'unpriced' {
   if (pricing.price_status !== 'priced') {
     return 'unpriced'
   }
   if (pricing.pricing_mode === 'image' && hasImagePricing(pricing)) {
     return 'image'
   }
+  if (pricing.pricing_mode === 'video' && videoPricingTiers(pricing).length > 0) {
+    return 'video'
+  }
   if (pricing.pricing_mode === 'token') {
     return 'token'
   }
   return 'unpriced'
+}
+
+export function videoPricingTiers(pricing: MarketplaceModelPricing): { resolution: string; price: number }[] {
+  const resolutions = ['480p', '720p', '1080p'] as const
+  return resolutions.flatMap((resolution) => {
+    const price = pricing.video_prices?.[resolution]
+    return typeof price === 'number' && Number.isFinite(price) && price >= 0
+      ? [{ resolution, price }]
+      : []
+  })
 }
 
 // formatPriceNumber 按金额大小选择小数位，并使用浏览器的数字格式。

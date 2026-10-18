@@ -56,6 +56,21 @@ function mountCard(showFastModeMultiplier: boolean) {
 }
 
 describe('PricingEntryCard', () => {
+  it('客户价卡支持独立售价，切回 token 时清除', async () => {
+    const wrapper = mount(PricingEntryCard, {
+      props: { entry: makeEntry({ billing_mode: 'image' }), enableIndependentPricing: true },
+      global: { stubs: { Icon: true, IntervalRow: true, ModelTagInput: true, Select: true } },
+    })
+    const selects = wrapper.findAllComponents({ name: 'Select' })
+    expect(wrapper.find('[data-testid="independent-pricing-select"]').exists()).toBe(true)
+    selects[1]!.vm.$emit('update:modelValue', 'independent')
+    expect(wrapper.emitted('update')?.[0]?.[0]).toMatchObject({ independent_pricing: true })
+    await wrapper.setProps({ entry: makeEntry({ billing_mode: 'image', independent_pricing: true }) })
+    selects[0]!.vm.$emit('update:modelValue', 'token')
+    expect(wrapper.emitted('update')?.[1]?.[0]).toMatchObject({ billing_mode: 'token', independent_pricing: false })
+    await wrapper.setProps({ enableIndependentPricing: false })
+    expect(wrapper.find('[data-testid="independent-pricing-select"]').exists()).toBe(false)
+  })
   it('仅在显式启用时展示 Fast 模式倍率输入框', () => {
     expect(mountCard(true).find('[data-testid="fast-mode-multiplier"]').exists()).toBe(true)
     expect(mountCard(false).find('[data-testid="fast-mode-multiplier"]').exists()).toBe(false)

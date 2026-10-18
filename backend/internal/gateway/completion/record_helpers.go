@@ -88,6 +88,9 @@ func optionalSubscriptionID(subscription *billing.UserSubscription) *int64 {
 }
 
 func RatesForMode(apiKey *KeySnapshot, cost *CostBreakdown, subscriptionBase, balanceBase float64, pricingAt time.Time) (subscriptionRate, balanceRate, scale float64) {
+	if cost != nil && cost.IndependentPricing {
+		return 1, 1, 1
+	}
 	scale = 1
 	if cost == nil || cost.BillingMode == "" || cost.BillingMode == string(BillingModeToken) {
 		if apiKey != nil && apiKey.Group != nil {

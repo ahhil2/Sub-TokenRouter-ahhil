@@ -13,6 +13,7 @@ export function pricingEntryFromAPI(entry: ModelPricingEntry): PricingFormEntry 
   return {
     models: [...(entry.models || [])],
     billing_mode: entry.billing_mode || 'token',
+    independent_pricing: entry.independent_pricing ?? false,
     price_multiplier: entry.price_multiplier ?? null,
     fast_mode_multiplier: entry.fast_multiplier == null ? entry.fast_mode_multiplier ?? null : null,
     fast_multiplier: entry.fast_multiplier ?? null,
@@ -36,6 +37,7 @@ export function pricingEntryToAPI(entry: PricingFormEntry): ModelPricingEntry {
   return {
     models: entry.models.map(model => model.trim()),
     billing_mode: entry.billing_mode,
+    independent_pricing: entry.independent_pricing ?? false,
     price_multiplier: toNullableNumber(entry.price_multiplier),
     fast_mode_multiplier: toNullableNumber(entry.fast_mode_multiplier),
     fast_multiplier: toNullableNumber(entry.fast_multiplier),
@@ -71,6 +73,9 @@ export function validatePricingForm(entries: PricingFormEntry[], t: TranslateFn)
 }
 
 function validatePricingEntry(entry: PricingFormEntry, t: TranslateFn): string | null {
+  if (entry.independent_pricing && entry.billing_mode === 'token') {
+    return t('admin.pricing.form.independentPricingUnsupportedMode')
+  }
   const prices = [entry.price_multiplier, entry.fast_mode_multiplier, entry.input_price,
     entry.output_price, entry.cache_write_price, entry.cache_write_1h_price,
     entry.cache_read_price, entry.image_input_price, entry.image_output_price, entry.per_request_price]
@@ -81,6 +86,9 @@ function validatePricingEntry(entry: PricingFormEntry, t: TranslateFn): string |
     ...interval, input_multiplier: null, output_multiplier: null, cache_write_multiplier: null, cache_read_multiplier: null,
   })) })
   const models = entry.models.join(', ')
+  if (entry.independent_pricing && !explicitPrice) {
+    return t('admin.pricing.form.independentPricingRequiresPrice')
+  }
   if (entry.billing_mode !== 'token' && entry.per_request_price == null && entry.intervals.length === 0) {
     return t('admin.pricing.form.perRequestPriceRequired')
   }

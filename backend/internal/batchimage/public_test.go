@@ -256,6 +256,23 @@ func TestBatchImagePricingSnapshotUsesOneGroupVersion(t *testing.T) {
 	require.InDelta(t, 6.0, snapshot.HoldUnitPrice, 1e-12)
 }
 
+func TestBatchImageIndependentPricingSnapshot(t *testing.T) {
+	group := &batchimage.GroupView{ID: 7, AllowBatchImageGeneration: true, RateMultiplier: 0.18, BatchImageDiscountMultiplier: 0.5, BatchImageHoldMultiplier: 0.6}
+	groups := &changingMediaPricingGroupRepo{oldGroup: group, newGroup: group}
+	svc := newBatchPublicFixture(nil, nil, nil, groups, nil, nil, nil, &fakeBatchImagePricingResolver{unitPrice: 0.065, independentPricing: true}, nil, nil, nil)
+	provider := (&batchProviderFixture{}).project(&providercore.Record{RateMultiplier: testPtrFloat64(3)})
+	snapshot, err := svc.ResolvePricingSnapshot(context.Background(), batchimage.BatchImageOwner{UserID: 11, APIKeyID: 22, GroupID: &group.ID, BillingMode: apikey.APIKeyBillingModeBalance}, batchimage.BatchImageSubmitRequest{Model: "custom-image", ImageSize: "1K"}, "gemini_api", provider)
+	require.NoError(t, err)
+	require.Equal(t, batchimage.IndependentPricingSnapshotVersion, snapshot.Version)
+	require.Equal(t, 3.0, snapshot.ProviderRateMultiplier)
+	require.Equal(t, 1.0, snapshot.GroupRateMultiplier)
+	require.Equal(t, 1.0, snapshot.SubscriptionRateMultiplier)
+	require.Equal(t, 1.0, snapshot.BalanceRateMultiplier)
+	require.False(t, snapshot.PlanGroupRateEnabled)
+	require.InDelta(t, 0.065, snapshot.BillableUnitPrice, 1e-12)
+	require.InDelta(t, 0.065, snapshot.HoldUnitPrice, 1e-12)
+}
+
 func TestBatchImagePublicService_Submit(t *testing.T) {
 	ctx := context.Background()
 

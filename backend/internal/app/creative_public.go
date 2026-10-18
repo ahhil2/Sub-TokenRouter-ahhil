@@ -104,8 +104,8 @@ func provideCreativePublic(requests *requestlog.Service, repo creative.CreativeR
 			return key.ID, nil
 		},
 		GroupMapping: modelConfigs.ResolveGroupMapping,
-		ImageUnitPrice: func(ctx context.Context, g *creative.GroupView, model, size string) (float64, bool) {
-			price, err := pricing.ResolveImageUnitPrice(ctx, billing.PricingInput{
+		ImageQuote: func(ctx context.Context, g *creative.GroupView, model, size string) (billing.ImageQuote, bool) {
+			price, err := pricing.ResolveImageQuote(ctx, billing.PricingInput{
 				Model:   model,
 				GroupID: &g.ID,
 			}, size)

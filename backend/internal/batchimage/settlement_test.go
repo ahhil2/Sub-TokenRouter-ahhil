@@ -307,6 +307,33 @@ func TestBatchImageSettlementService_UsesSubmittedPricingSnapshot(t *testing.T) 
 	require.InDelta(t, 0.55, billing.captures[0].HoldAmount, 1e-12)
 }
 
+func TestBatchImageIndependentSettlementUsesSnapshot(t *testing.T) {
+	repo := newFakeBatchImageRepository()
+	job := testSettlingBatchImageJob("independent-snapshot")
+	job.PricingSnapshotVersion = batchimage.IndependentPricingSnapshotVersion
+	job.SuccessCount, job.FailCount, job.ItemCount = 2, 0, 2
+	job.BaseUnitPrice, job.BillableUnitPrice, job.HoldUnitPrice = 0.065, 0.065, 0.065
+	job.GroupRateMultiplier, job.SubscriptionRateMultiplier, job.BalanceRateMultiplier = 1, 1, 1
+	job.ProviderRateMultiplier = 3
+	job.BatchDiscountMultiplier, job.HoldMultiplier = 1, 1
+	job.PlanGroupRateEnabled = false
+	job.EstimatedCost, job.BalanceHoldAmount = 0.13, 0.13
+	job.HoldAmount = &job.EstimatedCost
+	repo.jobs[job.BatchID] = job
+	funds := &fakeBatchImageBillingRepo{}
+	logs := &resultUsageRepository{}
+	prices := &fakeBatchImagePricingResolver{unitPrice: 9, err: errors.New("price must not be read after submission")}
+	svc := newBatchSettlementFixture(repo, funds, logs, prices, nil, nil)
+	result, err := svc.Settle(context.Background(), job.BatchID)
+	require.NoError(t, err)
+	require.InDelta(t, 0.13, result.ActualCost, 1e-12)
+	require.Empty(t, prices.models)
+	require.Len(t, funds.captures, 1)
+	require.True(t, funds.captures[0].DisablePlanGroupRateMultiplier)
+	require.Equal(t, 1.0, logs.lastLog.RateMultiplier)
+	require.Equal(t, 3.0, *logs.lastLog.ProviderRateMultiplier)
+}
+
 func TestBatchImageSettlementService_BillingFailureLeavesSettlingAndRecordsError(t *testing.T) {
 	repo := newFakeBatchImageRepository()
 	job := testSettlingBatchImageJob("imgbatch_billing_fail")

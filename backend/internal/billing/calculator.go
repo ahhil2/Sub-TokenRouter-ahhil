@@ -189,6 +189,9 @@ func (s *Calculator) DisplayPricing(model string, rateMultiplier float64) ModelD
 	if rateMultiplier < 0 {
 		rateMultiplier = 0
 	}
+	if quote, found := purepricing.VideoDisplayPricing(nil, s.RawModelPricing(model), rateMultiplier); found {
+		return quote
+	}
 
 	if mediaPricing, found := s.imageDisplayPricing(model, rateMultiplier); found {
 		return mediaPricing
@@ -204,6 +207,9 @@ func (s *Calculator) DisplayPricing(model string, rateMultiplier float64) ModelD
 
 // DisplayPricingWithResolvedMultipliers 优先使用已解析的共享价格配置价格计算展示价格。
 func (s *Calculator) DisplayPricingWithResolvedMultipliers(model string, rateMultiplier float64, resolved *ResolvedPricing) ModelDisplayPricing {
+	if resolved.UsesIndependentPricing() {
+		rateMultiplier = 1
+	}
 	if rateMultiplier < 0 {
 		rateMultiplier = 0
 	}
@@ -213,7 +219,7 @@ func (s *Calculator) DisplayPricingWithResolvedMultipliers(model string, rateMul
 		}
 		return unknownDisplayPricing()
 	}
-	if resolved != nil && resolved.Mode == purepricing.BillingModePerRequest {
+	if resolved != nil && (resolved.Mode == purepricing.BillingModePerRequest || resolved.Mode == purepricing.BillingModeVideo) {
 		if quote, ok := displayPricingFromResolved(model, rateMultiplier, resolved); ok {
 			return quote
 		}
@@ -222,6 +228,9 @@ func (s *Calculator) DisplayPricingWithResolvedMultipliers(model string, rateMul
 	if resolved.IsUnpriced() {
 		// 未配置价卡时，token 缺价不代表完整型号的独立按张报价也缺失。
 		if resolved.ConfigPricing == nil {
+			if quote, found := purepricing.VideoDisplayPricing(nil, s.RawModelPricing(model), rateMultiplier); found {
+				return quote
+			}
 			if mediaPricing, found := s.imageDisplayPricing(model, rateMultiplier); found {
 				return mediaPricing
 			}

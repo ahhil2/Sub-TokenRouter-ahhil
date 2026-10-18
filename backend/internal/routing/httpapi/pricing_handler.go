@@ -46,6 +46,7 @@ type updatePricingConfigRequest struct {
 }
 
 type modelPricingRequest struct {
+	IndependentPricing           bool                     `json:"independent_pricing"`
 	Models                       []string                 `json:"models" binding:"required,min=1,max=100"`
 	BillingMode                  string                   `json:"billing_mode" binding:"omitempty,oneof=token per_request image video"`
 	PriceMultiplier              *float64                 `json:"price_multiplier" binding:"omitempty,min=0"`
@@ -119,6 +120,7 @@ type pricingConfigResponse struct {
 }
 
 type modelPricingResponse struct {
+	IndependentPricing           bool                      `json:"independent_pricing"`
 	ID                           int64                     `json:"id"`
 	Models                       []string                  `json:"models"`
 	BillingMode                  string                    `json:"billing_mode"`
@@ -260,6 +262,7 @@ func pricingToResponse(p *routing.ModelPricingEntry) modelPricingResponse {
 
 		Models:                       models,
 		BillingMode:                  billingMode,
+		IndependentPricing:           p.IndependentPricing,
 		PriceMultiplier:              p.PriceMultiplier,
 		FastModeMultiplier:           p.FastModeMultiplier,
 		FastMultiplier:               firstNonNilFloat(p.FastMultiplier, p.FastModeMultiplier),
@@ -346,6 +349,7 @@ func pricingRequestToService(reqs []modelPricingRequest) []routing.ModelPricingE
 		result = append(result, routing.ModelPricingEntry{
 			Models:                       r.Models,
 			BillingMode:                  billingMode,
+			IndependentPricing:           r.IndependentPricing,
 			PriceMultiplier:              r.PriceMultiplier,
 			FastModeMultiplier:           r.FastModeMultiplier,
 			FastMultiplier:               firstNonNilFloat(r.FastMultiplier, r.FastModeMultiplier),

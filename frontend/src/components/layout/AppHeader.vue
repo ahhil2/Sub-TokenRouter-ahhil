@@ -80,7 +80,7 @@
 
           <LocaleSwitcher variant="status" />
 
-          <!-- 登录后主题切换收进用户菜单，未登录时仍在顶栏保留入口。 -->
+          <!-- 登录后可从侧栏或用户菜单切换主题，未登录时仍在顶栏保留入口。 -->
           <button
             v-if="!user"
             type="button"

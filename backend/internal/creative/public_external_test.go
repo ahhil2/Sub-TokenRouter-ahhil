@@ -36,6 +36,27 @@ type creativePricingConfigFixture struct {
 	platform string
 }
 
+func TestCreativeIndependentPricingSnapshot(t *testing.T) {
+	group := &creative.GroupView{ID: 1, RateMultiplier: 0.18}
+	svc := &creative.Public{
+		ImageQuote: func(context.Context, *creative.GroupView, string, string) (billing.ImageQuote, bool) {
+			return billing.ImageQuote{UnitPrice: 0.065, IndependentPricing: true}, true
+		},
+		SubscriptionMultiplier: func(context.Context, int64, *creative.GroupView, float64) (float64, bool) {
+			return 0, true
+		},
+	}
+	require.InDelta(t, 0.065, svc.CreativePrice(context.Background(), group, "custom-image", "1K"), 1e-12)
+	snapshot, err := svc.ResolveCreativePricing(context.Background(), 1, &creative.ValidatedCreativeParams{
+		Group: group, Model: "custom-image", ImageSize: "1K", OutputCount: 2,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1.0, snapshot.SubscriptionRateMultiplier)
+	require.Equal(t, 1.0, snapshot.BalanceRateMultiplier)
+	require.False(t, snapshot.PlanGroupRateEnabled)
+	require.InDelta(t, 0.13, snapshot.EstimatedCost, 1e-12)
+}
+
 // TestCreativeCatalogueIncludesGroupMappingTargets 空白名单提供商可展示分组映射中的具体图片目标。
 func TestCreativeCatalogueIncludesGroupMappingTargets(t *testing.T) {
 	for _, source := range []string{"draw-alias", "draw-*"} {
@@ -280,7 +301,7 @@ func TestCreativeListModelsFiltersAndContent(t *testing.T) {
 // 分组未配置 image_price_* 时使用平台默认尺寸档位并按默认价计费。
 func TestCreativeListModelsFallbacks(t *testing.T) {
 	svc := newCreativeTestService()
-	svc.ImageUnitPrice = creativePriceFixture(newCreativeMediaCalculator(), nil)
+	svc.ImageQuote = creativePriceFixture(newCreativeMediaCalculator(), nil)
 	ctx := context.Background()
 	groupRepo := testassert.MustType[*creativeFakeGroupRepo](testassert.MustType[creativeGroupReader](svc.GroupRepo).source)
 	providerRepo := testassert.MustType[*creativeFakeProviderRepo](testassert.MustType[
@@ -508,7 +529,7 @@ func TestCreativePricingUsesResolvedPricingConfigPrice(t *testing.T) {
 		PerRequestPrice: &price,
 	}})
 	svc := newCreativeTestService()
-	svc.ImageUnitPrice = creativePriceFixture(nil, resolver)
+	svc.ImageQuote = creativePriceFixture(nil, resolver)
 	group := newCreativeTestGroup()
 	group.ID = 100
 
@@ -528,7 +549,7 @@ func TestCreativePricingUsesResolvedPricingConfigPrice(t *testing.T) {
 			PerRequestPrice: &price512,
 		}},
 	}})
-	svc.ImageUnitPrice = creativePriceFixture(nil, resolver)
+	svc.ImageQuote = creativePriceFixture(nil, resolver)
 	geminiGroup := newCreativeTestGroup()
 	geminiGroup.ID = 100
 
@@ -538,7 +559,7 @@ func TestCreativePricingUsesResolvedPricingConfigPrice(t *testing.T) {
 		BillingMode:     routing.BillingModeImage,
 		PerRequestPrice: &defaultPrice,
 	}})
-	svc.ImageUnitPrice = creativePriceFixture(nil, resolver)
+	svc.ImageQuote = creativePriceFixture(nil, resolver)
 	require.InDelta(t, defaultPrice, svc.CreativePrice(context.Background(), creativeGroupProjection(geminiGroup), "gemini-3.1-flash-image", "512"), 1e-9)
 }
 
@@ -994,7 +1015,7 @@ func TestCreativeModelSettingsFilterAndCreateValidation(t *testing.T) {
 // TestCreativeUnpricedModelDoesNotReserve 检查缺价型号的目录过滤和创建拒绝。
 func TestCreativeUnpricedModelDoesNotReserve(t *testing.T) {
 	svc := newCreativeTestService()
-	svc.ImageUnitPrice = creativePriceFixture(billingtestkit.Calculator(nil, nil), nil)
+	svc.ImageQuote = creativePriceFixture(billingtestkit.Calculator(nil, nil), nil)
 	listed, err := svc.ListModels(context.Background(), 7)
 	require.NoError(t, err)
 	require.Empty(t, listed.Data)

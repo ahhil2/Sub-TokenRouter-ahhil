@@ -492,7 +492,7 @@ export type ProtocolID =
   | 'qoder_chat'
   | 'gemini_batch_generate_content'
   | 'vertex_batch_prediction'
-export type MarketplacePricingMode = 'token' | 'image' | 'unknown'
+export type MarketplacePricingMode = 'token' | 'image' | 'video' | 'unknown'
 export type MarketplacePriceStatus = 'priced' | 'unpriced'
 
 export interface MarketplacePricingInterval {
@@ -526,6 +526,7 @@ export interface MarketplaceTimePricing {
 }
 
 export interface MarketplaceModelPricing {
+  independent_pricing?: boolean
   pricing_mode: MarketplacePricingMode
   price_status: MarketplacePriceStatus
   input_price_per_token?: number
@@ -550,6 +551,7 @@ export interface MarketplaceModelPricing {
   image_price_1k?: number
   image_price_2k?: number
   image_price_4k?: number
+  video_prices?: Partial<Record<'480p' | '720p' | '1080p', number>>
 }
 
 // 模型能力模态：模型广场接口从定价元数据下发，缺省时前端按模型 ID 规则兜底。

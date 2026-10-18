@@ -269,7 +269,9 @@ func (s *Settlement) RecordUsageLog(ctx context.Context, job *BatchImageJob, act
 		allocations = []billing.BillingAllocation{{Type: billing.BillingAllocationTypeBalance, AmountUSD: actualCost}}
 	}
 	rateMultiplier := job.GroupRateMultiplier * job.BatchDiscountMultiplier
-	if job.PricingSnapshotVersion >= 2 && job.SuccessCount > 0 && job.BaseUnitPrice > 0 && providerRateMultiplier > 0 {
+	if job.PricingSnapshotVersion == IndependentPricingSnapshotVersion {
+		rateMultiplier = 1
+	} else if job.PricingSnapshotVersion >= 2 && job.SuccessCount > 0 && job.BaseUnitPrice > 0 && providerRateMultiplier > 0 {
 		// 混合结算没有单一来源倍率，日志记录本次实际生效的等效分组倍率。
 		rateMultiplier = actualCost / (job.BaseUnitPrice * float64(job.SuccessCount) * providerRateMultiplier)
 	}

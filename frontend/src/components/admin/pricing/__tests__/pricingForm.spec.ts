@@ -5,7 +5,7 @@ import type { ModelPricingEntry } from '@/api/admin/pricing'
 // 使用包含零价、区间和各类倍率的完整 API 价卡，验证两处管理页的共同往返合同。
 export function fullPricing(): ModelPricingEntry {
   return {
-    models: ['gpt-test'], billing_mode: 'token', price_multiplier: 1.2,
+    models: ['gpt-test'], billing_mode: 'token', independent_pricing: false, price_multiplier: 1.2,
     fast_mode_multiplier: null, fast_multiplier: 1.5, flex_multiplier: 0.4, max_reasoning_effort_multiplier: 2,
     input_price: 0, output_price: 0.000003, cache_write_price: 0.000004,
     cache_write_1h_price: 0.000005, cache_read_price: 0.0000001,
@@ -21,6 +21,17 @@ export function fullPricing(): ModelPricingEntry {
 const t = (key: string) => key
 
 describe('共享价格卡', () => {
+  it('独立售价可往返保存，旧价卡默认关闭', () => {
+    const api = { ...fullPricing(), billing_mode: 'per_request' as const, independent_pricing: true, per_request_price: 0.065,
+      intervals: [], time_pricing: null, fast_multiplier: null, flex_multiplier: null, max_reasoning_effort_multiplier: null }
+    const form = pricingEntryFromAPI(api)
+    expect(validatePricingForm([form], t)).toBeNull()
+    expect(pricingEntryToAPI(form)).toEqual(api)
+    expect(pricingEntryFromAPI({ ...api, independent_pricing: undefined }).independent_pricing).toBe(false)
+    expect(validatePricingForm([{ ...form, billing_mode: 'token' }], t)).toContain('independentPricingUnsupportedMode')
+    expect(validatePricingForm([{ ...form, per_request_price: 0 }], t)).toBeNull()
+    expect(validatePricingForm([{ ...form, per_request_price: null }], t)).toContain('independentPricingRequiresPrice')
+  })
   it('完整保留各类价格、倍率、区间和时区，并隔离输入对象', () => {
     const api = fullPricing()
     const form = pricingEntryFromAPI(api)

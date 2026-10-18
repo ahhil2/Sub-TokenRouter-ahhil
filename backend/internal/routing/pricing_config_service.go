@@ -515,6 +515,12 @@ func validatePricingBillingMode(pricing []ModelPricingEntry) error {
 }
 
 func CheckBillingModeRequirements(p ModelPricingEntry) error {
+	if p.IndependentPricing && p.BillingMode != BillingModePerRequest && p.BillingMode != BillingModeImage && p.BillingMode != BillingModeVideo {
+		return infraerrors.BadRequest("INDEPENDENT_PRICING_UNSUPPORTED_MODE", "independent pricing requires per_request, image or video billing mode")
+	}
+	if p.IndependentPricing && !hasExplicitPricingPrice(p) {
+		return infraerrors.BadRequest("INDEPENDENT_PRICING_MISSING_PRICE", "independent pricing requires an explicit unit price")
+	}
 	if p.BillingMode == BillingModePerRequest || p.BillingMode == BillingModeImage || p.BillingMode == BillingModeVideo {
 		if p.PerRequestPrice == nil && len(p.Intervals) == 0 {
 			return infraerrors.BadRequest(
@@ -608,6 +614,9 @@ func checkPricesNotNegative(p ModelPricingEntry) error {
 // ProviderStatsPricing 校验提供商统计定价，并拒绝仅用于实际请求计费的 Fast 倍率。
 func (v PricingConfigValidation) ProviderStatsPricing(pricing []ModelPricingEntry) error {
 	for _, p := range pricing {
+		if p.IndependentPricing {
+			return infraerrors.BadRequest("PROVIDER_STATS_INDEPENDENT_PRICING_UNSUPPORTED", "independent pricing is only supported for customer prices")
+		}
 		if p.FastModeMultiplier != nil {
 			return infraerrors.BadRequest(
 				"PROVIDER_STATS_FAST_MODE_MULTIPLIER_UNSUPPORTED",

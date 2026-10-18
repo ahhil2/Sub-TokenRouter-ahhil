@@ -131,6 +131,24 @@
       </template>
     </nav>
 
+    <div class="shrink-0 border-t border-primary-900/10 px-3 py-3 dark:border-dark-600">
+      <button
+        type="button"
+        data-testid="sidebar-theme-toggle"
+        class="sidebar-link w-full text-left"
+        :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
+        :aria-label="isDark ? t('nav.lightMode') : t('nav.darkMode')"
+        :title="isDark ? t('nav.lightMode') : t('nav.darkMode')"
+        @click="toggleTheme"
+      >
+        <Icon :name="isDark ? 'sun' : 'moon'" size="md" class="flex-shrink-0" />
+        <span
+          class="sidebar-label"
+          :class="{ 'sidebar-label-collapsed': sidebarCollapsed }"
+          :aria-hidden="sidebarCollapsed ? 'true' : 'false'"
+        >{{ isDark ? t('nav.lightMode') : t('nav.darkMode') }}</span>
+      </button>
+    </div>
   </aside>
 
   <!-- Mobile Overlay -->
@@ -155,6 +173,7 @@ import { useI18n } from 'vue-i18n'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
+import { useTheme } from '@/composables/useTheme'
 
 interface NavItem {
   path: string
@@ -174,6 +193,7 @@ const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
+const { isDark, toggleTheme } = useTheme()
 
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)

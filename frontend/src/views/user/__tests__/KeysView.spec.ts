@@ -861,7 +861,69 @@ describe('user KeysView column settings', () => {
     }
   })
 
-  it('keeps all available groups visible when editing an API key', async () => {
+  it.each(['ordinary', 'composite'] as const)('sorts %s key creation groups by effective rate within the selected provider', async (keyType) => {
+    const availableGroups = [
+      { id: 42, name: 'Claude high', display_brand: 'Anthropic', rate_multiplier: 10 },
+      { id: 43, name: 'Claude free override', display_brand: 'Anthropic', rate_multiplier: 0.5 },
+      { id: 44, name: 'Claude discounted', display_brand: 'Anthropic', rate_multiplier: 1 },
+      { id: 45, name: 'Claude standard', display_brand: 'Anthropic', rate_multiplier: 0.2 },
+      { id: 46, name: 'Claude higher override', display_brand: 'Anthropic', rate_multiplier: 0.1 },
+      { id: 47, name: 'Claude middle', display_brand: 'Anthropic', rate_multiplier: 0.3 },
+      { id: 48, name: 'Claude free', display_brand: 'Anthropic', rate_multiplier: 0 },
+      { id: 49, name: 'GPT', display_brand: 'OpenAI', rate_multiplier: 0.01 },
+    ]
+    const originalGroupIds = availableGroups.map((group) => group.id)
+    getAvailableGroups.mockResolvedValue(availableGroups)
+    getUserGroupRates.mockResolvedValue({ 43: 0, 44: 0.2, 46: 2 })
+    const wrapper = await mountView()
+
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    if (keyType === 'composite') {
+      await wrapper.get('[data-test="composite-key-toggle"]').trigger('click')
+    }
+    await nextTick()
+
+    const groupSelect = keyType === 'composite'
+      ? wrapper.get('[data-test="composite-group-editor"]').findComponent({ name: 'Select' })
+      : wrapper.findAllComponents({ name: 'Select' }).find(
+        (select) => select.attributes('data-tour') === 'key-form-group'
+      )!
+    const options = groupSelect.props('options')
+    expect(options.map((option: { value: number }) => option.value)).toEqual([43, 48, 44, 45, 47, 46, 42])
+    expect(options.map((option: { rate: number; userRate: number | null }) => option.userRate ?? option.rate))
+      .toEqual([0, 0, 0.2, 0.2, 0.3, 2, 10])
+    expect(availableGroups.map((group) => group.id)).toEqual(originalGroupIds)
+    wrapper.unmount()
+  })
+
+  it('reorders creation groups when effective rates finish loading', async () => {
+    let resolveRates!: (rates: Record<number, number>) => void
+    getUserGroupRates.mockReturnValue(new Promise<Record<number, number>>((resolve) => {
+      resolveRates = resolve
+    }))
+    getAvailableGroups.mockResolvedValue([
+      { id: 42, name: 'Claude standard', display_brand: 'Anthropic', rate_multiplier: 0.2 },
+      { id: 43, name: 'Claude premium', display_brand: 'Anthropic', rate_multiplier: 1 },
+    ])
+    const wrapper = await mountView()
+
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    await nextTick()
+    const groupSelect = wrapper.findAllComponents({ name: 'Select' }).find(
+      (select) => select.attributes('data-tour') === 'key-form-group'
+    )!
+    expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([42, 43])
+    await groupSelect.vm.$emit('update:modelValue', 42)
+
+    resolveRates({ 43: 0.1 })
+    await flushPromises()
+
+    expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([43, 42])
+    expect(groupSelect.props('modelValue')).toBe(42)
+    wrapper.unmount()
+  })
+
+  it('keeps all available groups in their original order when editing an API key', async () => {
     listKeys.mockResolvedValueOnce({
       items: [{ ...createApiKey(), group_id: 1 }],
       total: 1,
@@ -871,7 +933,7 @@ describe('user KeysView column settings', () => {
     })
     getAvailableGroups.mockResolvedValue([
       { id: 1, name: 'Claude', display_brand: 'Anthropic', rate_multiplier: 1 },
-      { id: 2, name: 'GPT', display_brand: 'OpenAI', rate_multiplier: 1 },
+      { id: 2, name: 'GPT', display_brand: 'OpenAI', rate_multiplier: 0.1 },
     ])
     const wrapper = await mountView()
 

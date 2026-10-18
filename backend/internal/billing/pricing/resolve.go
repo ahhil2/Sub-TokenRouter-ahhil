@@ -82,6 +82,11 @@ func ApplyPricingModifiers(resolved *ResolvedPricing, config *ModelPricingEntry)
 	ApplyResolvedFastModeMultiplier(resolved, &merged)
 }
 
+func (r *ResolvedPricing) UsesIndependentPricing() bool {
+	return r != nil && r.ConfigPricing != nil && r.ConfigPricing.IndependentPricing &&
+		r.Source == PricingSourceConfig && (r.Mode == BillingModePerRequest || r.Mode == BillingModeImage || r.Mode == BillingModeVideo)
+}
+
 func (r *ResolvedPricing) IsUnpriced() bool {
 	if r == nil {
 		return false

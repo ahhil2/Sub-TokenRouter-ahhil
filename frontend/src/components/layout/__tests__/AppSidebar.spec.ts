@@ -12,9 +12,8 @@ const layoutPath = resolve(dirname(fileURLToPath(import.meta.url)), '../AppLayou
 const layoutSource = readFileSync(layoutPath, 'utf8')
 
 describe('AppSidebar layout controls', () => {
-  it('removes the footer controls and uses the narrower expanded width', () => {
+  it('keeps collapse control in the header and uses the narrower expanded width', () => {
     // 同时检查侧栏宽度和内容偏移。
-    expect(componentSource).not.toContain('@click="toggleTheme"')
     expect(componentSource).not.toContain('@click="toggleSidebar"')
     expect(componentSource).toContain("sidebarCollapsed ? 'w-[var(--sidebar-w-collapsed)]' : 'w-[var(--sidebar-w)]'")
     expect(layoutSource).toContain("'lg:ml-[var(--sidebar-w-collapsed)]'")

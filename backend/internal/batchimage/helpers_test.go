@@ -131,10 +131,11 @@ type fakeBatchImageRepository struct {
 type resultProviderFixture struct{ provider *providercore.Record }
 
 type fakeBatchImagePricingResolver struct {
-	unitPrice     float64
-	missingModels map[string]bool
-	err           error
-	models        []string
+	independentPricing bool
+	unitPrice          float64
+	missingModels      map[string]bool
+	err                error
+	models             []string
 }
 
 type fakeBatchImageBillingRepo struct {
@@ -282,7 +283,8 @@ func newBatchSettlementFixture(repo batchimage.BatchImageRepository, funds batch
 	}
 	if prices != nil {
 		core.Quote = func(ctx context.Context, model string, group *int64, size string) (float64, error) {
-			return prices.BatchImageUnitPrice(ctx, batchimage.BatchImagePriceInput{Model: model, GroupID: group, ImageSize: size})
+			quote, err := prices.BatchImageQuote(ctx, batchimage.BatchImagePriceInput{Model: model, GroupID: group, ImageSize: size})
+			return quote.UnitPrice, err
 		}
 	}
 	if auth != nil {
@@ -1170,6 +1172,11 @@ func (r *fakeBatchImagePricingResolver) BatchImageUnitPrice(_ context.Context, i
 		return 0, batchimage.ErrBatchImageSettlementPricingMissing
 	}
 	return r.unitPrice, nil
+}
+
+func (r *fakeBatchImagePricingResolver) BatchImageQuote(ctx context.Context, input batchimage.BatchImagePriceInput) (billing.ImageQuote, error) {
+	price, err := r.BatchImageUnitPrice(ctx, input)
+	return billing.ImageQuote{UnitPrice: price, IndependentPricing: r.independentPricing}, err
 }
 
 func (r *fakeBatchImageBillingRepo) Reserve(_ context.Context, cmd *billing.TaskFundsCommand) (*billing.TaskFundsResult, error) {

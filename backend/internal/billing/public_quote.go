@@ -22,5 +22,7 @@ func (r *PriceResolver) PublicQuote(ctx context.Context, input PublicQuoteInput)
 		pricing.ApplyPricingModifiers(&cloned, &ModelPricingEntry{FastMultiplier: &standardMultiplier})
 		resolved = &cloned
 	}
-	return r.calculator.DisplayPricingWithResolvedMultipliers(input.Model, input.RateMultiplier, resolved)
+	quote := r.calculator.DisplayPricingWithResolvedMultipliers(input.Model, input.RateMultiplier, resolved)
+	quote.IndependentPricing = resolved.UsesIndependentPricing()
+	return quote
 }

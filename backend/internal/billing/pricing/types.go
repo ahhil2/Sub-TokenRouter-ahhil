@@ -60,6 +60,7 @@ type UsageTokens struct {
 
 // CostBreakdown 费用明细。
 type CostBreakdown struct {
+	IndependentPricing        bool
 	InputCost                 float64 // 文本输入费用（不含图片输入，图片输入单独记入 ImageInputCost）
 	ImageInputCost            float64 // 图片输入 token 费用（如 gpt-image-2 图片编辑）
 	OutputCost                float64
@@ -75,6 +76,7 @@ type CostBreakdown struct {
 // ModelDisplayPricing 是面向前端展示的模型价格快照。
 // 所有价格都已经应用了分组倍率，直接表示实际扣费单价。
 type ModelDisplayPricing struct {
+	IndependentPricing      bool
 	PricingMode             string
 	PriceStatus             string
 	InputPricePerToken      float64
@@ -102,6 +104,7 @@ type ModelDisplayPricing struct {
 	ImagePrice1K    float64
 	ImagePrice2K    float64
 	ImagePrice4K    float64
+	VideoPrices     MediaPrices
 }
 
 // ModelDisplayPricingInterval 是按上下文 token 区间展示的模型价格。

@@ -1797,7 +1797,11 @@ const formGroupOptions = computed(() => {
   const availableGroups = showEditModal.value
     ? formGroups.value
     : formGroups.value.filter((group) => getKeyGroupProvider(group) === createProvider.value)
-  return buildGroupOptions(availableGroups)
+  const options = buildGroupOptions(availableGroups)
+  if (showEditModal.value) return options
+  return options.sort((left, right) =>
+    (left.userRate ?? left.rate) - (right.userRate ?? right.rate)
+  )
 })
 
 const clearCreateGroupSelection = () => {

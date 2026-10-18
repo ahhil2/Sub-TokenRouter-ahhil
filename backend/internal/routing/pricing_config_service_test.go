@@ -1959,6 +1959,22 @@ func TestValidateProviderStatsPricingEntries_RejectsFastModeMultiplier(t *testin
 	require.Contains(t, err.Error(), "fast_mode_multiplier is not supported for provider stats pricing")
 }
 
+func TestValidateIndependentPricing(t *testing.T) {
+	validation := PricingConfigValidation{LoadLocation: time.LoadLocation}
+	for _, mode := range []BillingMode{BillingModePerRequest, BillingModeImage, BillingModeVideo} {
+		for _, price := range []float64{0, 0.065} {
+			card := ModelPricingEntry{Models: []string{"custom-media"}, BillingMode: mode, IndependentPricing: true, PerRequestPrice: testPtrFloat64(price)}
+			require.NoError(t, validation.PricingEntries([]ModelPricingEntry{card}))
+			require.ErrorContains(t, validation.ProviderStatsPricing([]ModelPricingEntry{card}), "independent pricing is only supported for customer prices")
+			card.BillingMode = BillingModeToken
+			require.Error(t, validation.PricingEntries([]ModelPricingEntry{card}))
+			card.BillingMode = mode
+			card.PerRequestPrice = nil
+			require.ErrorContains(t, validation.PricingEntries([]ModelPricingEntry{card}), "independent pricing requires an explicit unit price")
+		}
+	}
+}
+
 func TestValidatePricingEntries_RejectsTimePricingForNonTokenMode(t *testing.T) {
 	err := (PricingConfigValidation{LoadLocation: time.LoadLocation}).PricingEntries([]ModelPricingEntry{{
 		BillingMode:     BillingModePerRequest,

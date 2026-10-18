@@ -32,6 +32,8 @@ type recordEffects struct{ events *[]string }
 
 type recordModels struct{}
 
+type recordConfigPrices struct{ card *billing.ModelPricingEntry }
+
 type recordIdentityRates struct {
 	rate    float64
 	err     error
@@ -67,6 +69,37 @@ func TestRecordUsesPayerIdentityRates(t *testing.T) {
 			require.Equal(t, 1, funds.calls)
 		}
 	}
+}
+
+func TestRecordIndependentPricingUsesUnitRates(t *testing.T) {
+	for _, openAI := range []bool{false, true} {
+		for _, mode := range []pricing.BillingMode{pricing.BillingModeImage, pricing.BillingModePerRequest} {
+			core, funds, logs, input, _ := recordFixture()
+			groupID := int64(6)
+			unit := 0.065
+			input.APIKey.GroupID = &groupID
+			input.APIKey.Group = &GroupSnapshot{ID: groupID, RateMultiplier: 0.18}
+			input.Result.Model = "custom-image"
+			input.Result.ImageCount = 1
+			input.Provider.RateMultiplier = 3
+			core.rates = &recordIdentityRates{rate: 0}
+			core.resolver = billing.NewPriceResolver(recordConfigPrices{card: &billing.ModelPricingEntry{
+				Models: []string{"custom-image"}, BillingMode: mode, PerRequestPrice: &unit, IndependentPricing: true,
+			}}, core.billingService, nil, nil)
+			require.NoError(t, core.Record(context.Background(), input, openAI))
+			require.NotNil(t, funds.command)
+			require.InDelta(t, unit, funds.command.BillableAmountUSD, 1e-12)
+			require.Equal(t, 1.0, funds.command.SubscriptionRateMultiplier)
+			require.Equal(t, 1.0, funds.command.BalanceRateMultiplier)
+			require.True(t, funds.command.DisablePlanGroupRateMultiplier)
+			require.Equal(t, 1.0, logs.rows[0].RateMultiplier)
+			require.Equal(t, 3.0, *logs.rows[0].ProviderRateMultiplier)
+		}
+	}
+}
+
+func (source recordConfigPrices) GetEffectiveConfigModelPricing(context.Context, int64, string) *billing.ModelPricingEntry {
+	return source.card
 }
 
 func (s *recordStore) Apply(ctx context.Context, c *billing.UsageBillingCommand) (*billing.UsageBillingApplyResult, error) {

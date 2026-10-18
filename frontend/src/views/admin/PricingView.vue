@@ -279,6 +279,7 @@
                 :removable="false"
                   enable-time-pricing
                   enable-tier-multipliers
+                  enable-independent-pricing
                   @update="updatePricingEntry(sIdx, idx, $event)"
                 />
               </template>

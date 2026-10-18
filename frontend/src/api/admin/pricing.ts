@@ -39,6 +39,7 @@ export interface TimePricingConfig {
 }
 
 export interface ModelPricingEntry {
+  independent_pricing?: boolean
   id?: number
   models: string[]
   billing_mode: BillingMode

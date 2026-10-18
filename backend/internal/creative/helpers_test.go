@@ -3,6 +3,7 @@ package creative
 import (
 	"context"
 
+	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
@@ -56,5 +57,7 @@ func (f *targetQueryFixture) GetCreativeModelSettings(context.Context) []Creativ
 }
 
 func newTargetQueryPublic(fixture *targetQueryFixture) *Public {
-	return &Public{Repo: &targetQueryRunRepository{}, ProviderRepo: fixture, UserRepo: fixture, GroupRepo: fixture, Settings: fixture, Options: PublicOptions{Enabled: true}, ImageUnitPrice: func(context.Context, *GroupView, string, string) (float64, bool) { return 0.1, true }}
+	return &Public{Repo: &targetQueryRunRepository{}, ProviderRepo: fixture, UserRepo: fixture, GroupRepo: fixture, Settings: fixture, Options: PublicOptions{Enabled: true}, ImageQuote: func(context.Context, *GroupView, string, string) (billing.ImageQuote, bool) {
+		return billing.ImageQuote{UnitPrice: 0.1}, true
+	}}
 }

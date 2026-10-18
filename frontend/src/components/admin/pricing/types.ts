@@ -20,6 +20,7 @@ export interface IntervalFormEntry {
 }
 
 export interface PricingFormEntry {
+  independent_pricing?: boolean
   models: string[]
   billing_mode: BillingMode
   // 空值表示“未配置”，0 表示免费。

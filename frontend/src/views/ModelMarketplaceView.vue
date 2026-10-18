@@ -1,7 +1,7 @@
 <template>
   <component
     :is="isAuthenticated ? AppLayout : 'div'"
-    :class="isAuthenticated ? '' : 'ba-theme-shell relative min-h-screen overflow-hidden'"
+    :class="isAuthenticated ? '' : 'ba-theme-shell relative min-h-screen overflow-x-clip'"
   >
     <template v-if="isAuthenticated" #page-heading-actions>
       <div class="model-marketplace-toolbar flex w-[calc(100vw-2rem)] max-w-full min-w-0 items-center gap-2 sm:w-auto">
@@ -124,161 +124,181 @@
           </div>
         </div>
 
-        <div v-else-if="!hasMarketplaceResults" class="card px-6 py-14">
-          <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-surface bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-300">
-            <Icon name="inbox" size="xl" />
-          </div>
-          <h2 class="mt-6 text-center text-2xl font-semibold text-gray-950 dark:text-white">{{ t('marketplace.emptyTitle') }}</h2>
-          <p class="mx-auto mt-3 max-w-xl text-center text-sm leading-7 text-gray-600 dark:text-dark-300">
-            {{ t('marketplace.emptyDescription') }}
-          </p>
-          <div class="mt-6 text-center">
-            <button class="btn btn-secondary" type="button" @click="resetFilters">
-              {{ t('common.reset') }}
-            </button>
-          </div>
-        </div>
-
-        <div v-else class="space-y-4">
-          <section
-            v-for="group in filteredGroups"
-            :key="group.id"
-            class="card overflow-hidden"
-            data-testid="marketplace-group-section"
-          >
-            <div class="card-header flex flex-col gap-4 px-4 py-4 md:px-5 xl:flex-row xl:items-center xl:justify-between">
-              <div class="min-w-0 flex-1 space-y-3">
-                <div class="flex flex-wrap items-center gap-2">
-                  <span :class="brandBadgeClass(group)">
-                    <ProviderIcon :brand="groupBrandSource(group)" size="14px" />
-                    {{ groupBrandLabel(group) }}
-                  </span>
-                  <!-- 分组头部展示相对官方价的最高优惠，无有效折扣数据时不渲染该标签；点击/悬停查看说明。 -->
-                  <HelpTooltip
-                    v-if="formatMaxDiscountOff(group.official_price_ratio)"
-                    trigger="both"
-                    width-class="w-72"
-                    :closable="false"
-                    :content="t('marketplace.maxDiscountHint')"
-                  >
-                    <template #trigger>
-                      <span
-                        data-testid="group-max-discount-tag"
-                        class="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
-                      >
-                        {{ formatMaxDiscountOff(group.official_price_ratio) }}
-                      </span>
-                    </template>
-                  </HelpTooltip>
-                  <HelpTooltip
-                    trigger="both"
-                    width-class="w-72"
-                    :closable="false"
-                    :content="t('marketplace.rateMultiplierHint')"
-                  >
-                    <template #trigger>
-                      <!-- 倍率使用中性填充，深色底与卡片拉开层次。 -->
-                      <span
-                        data-testid="group-rate-multiplier-tag"
-                        class="rounded-full border border-gray-200/80 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-600 dark:border-dark-600 dark:bg-dark-700/60 dark:text-dark-200"
-                      >
-                        {{ formatRateMultiplierLabel(group.rate_multiplier) }}
-                      </span>
-                    </template>
-                  </HelpTooltip>
-                </div>
-
-                <div class="flex items-start gap-3">
-                  <span class="mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-surface border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-950">
-                    <ProviderIcon :brand="groupBrandSource(group)" size="28px" />
-                  </span>
-                  <div class="min-w-0">
-                    <h2 class="text-lg font-semibold text-gray-950 dark:text-white">{{ group.name }}</h2>
-                    <p v-if="group.description" class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">
-                      {{ group.description }}
-                    </p>
-                  </div>
-                </div>
+        <div v-else class="grid min-w-0 items-start gap-4 xl:grid-cols-[18.75rem_minmax(0,1fr)]" data-testid="marketplace-browser">
+          <MarketplaceFilterSidebar
+            v-model:brand="selectedBrand"
+            v-model:group-id="selectedGroupId"
+            v-model:pricing="selectedPricingMode"
+            :providers="sidebarProviders"
+            :groups="brandFilteredGroups"
+            :total-groups="sortedGroups.length"
+            :pricing-options="pricingSelectOptions"
+            :active-count="activeFilterCount + (normalizedSearch ? 1 : 0)"
+            @reset="resetFilters"
+          />
+          <div class="min-w-0 space-y-4">
+            <p class="text-sm text-gray-500 dark:text-dark-400" role="status" aria-live="polite" data-testid="marketplace-result-count">
+              {{ t('marketplace.resultCount', { groups: filteredGroups.length, models: matchingModelCount }) }}
+            </p>
+            <div v-if="!hasMarketplaceResults" class="card px-6 py-14">
+              <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-surface bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-300">
+                <Icon name="inbox" size="xl" />
               </div>
-              <div
-                v-if="group.availability"
-                class="w-full xl:ml-6 xl:w-[560px] xl:shrink-0"
-                data-testid="marketplace-group-availability"
-              >
-                <!-- 用户侧只展示可用率，并利用释放出的空间将状态条靠右放置。 -->
-                <GroupAvailabilityBar
-                  :availability="group.availability"
-                  class="min-w-0"
-                />
+              <h2 class="mt-6 text-center text-2xl font-semibold text-gray-950 dark:text-white">{{ t('marketplace.emptyTitle') }}</h2>
+              <p class="mx-auto mt-3 max-w-xl text-center text-sm leading-7 text-gray-600 dark:text-dark-300">
+                {{ t('marketplace.emptyDescription') }}
+              </p>
+              <div class="mt-6 text-center">
+                <button class="btn btn-secondary" type="button" @click="resetFilters">
+                  {{ t('common.reset') }}
+                </button>
               </div>
             </div>
 
-            <div class="grid min-w-0 grid-cols-1 items-start gap-4 p-4 md:grid-cols-2 lg:grid-cols-3 md:p-5">
-              <!-- 窄屏使用单列和可收缩卡片，长定价内容在卡片内换行，大屏使用三列。 -->
-              <article
-                v-for="model in group.models"
-                :key="`${group.id}-${model.id}`"
-                class="group min-w-0 max-w-full rounded-surface border border-gray-100 bg-gray-50/80 p-4 transition hover:-translate-y-0.5 hover:border-black/20 hover:shadow-sm dark:border-dark-700 dark:bg-dark-950/80 dark:hover:border-primary-500/50"
+            <div v-else class="space-y-4">
+              <section
+                v-for="group in filteredGroups"
+                :key="group.id"
+                class="card overflow-hidden"
+                data-testid="marketplace-group-section"
               >
-                <div class="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                  <div class="flex min-w-0 flex-1 basis-32 items-center">
-                    <h3 class="min-w-0 truncate text-base font-semibold text-gray-950 dark:text-white">{{ model.display_name }}</h3>
-                    <!-- 模型属性和可用协议收进标题旁的信息图标，悬停或点击后以浮层展示，不占用卡片高度。 -->
-                    <HelpTooltip
-                      v-if="model.attributes || marketplaceProtocols(model.protocols).length > 0"
-                      trigger="both"
-                      width-class="w-72"
-                      :closable="false"
-                      class="shrink-0"
-                    >
-                      <template #trigger>
-                        <button
-                          type="button"
-                          data-testid="model-attributes-trigger"
-                          class="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition-colors hover:text-gray-700 dark:text-dark-500 dark:hover:text-dark-200"
-                          :aria-label="t('admin.modelAttributes.details')"
-                        >
-                          <Icon name="infoCircle" size="sm" class="h-4 w-4" />
-                        </button>
-                      </template>
-                      <ModelAttributesSummary v-if="model.attributes" :attributes="model.attributes" variant="tooltip" />
-                      <!-- 有属性时，协议段用和属性浮层相同的分隔线隔开。 -->
-                      <ModelProtocolChips
-                        :protocols="model.protocols"
-                        :native-protocols="model.native_protocols"
-                        :class="model.attributes ? 'mt-3 border-t border-white/10 pt-3 dark:border-dark-700' : ''"
-                      />
-                    </HelpTooltip>
-                  </div>
-                  <ModelCapabilityTags :model="model" />
-                </div>
-                <!-- ID 独占整行，右侧能力图标占用标题行。 -->
-                <ModelIdLabel :model-id="model.id" class="mt-1" />
-
-                <!-- 价格预览使用无边框列表。 -->
-                <div class="mt-4">
-                  <template v-if="compactPricingRows(model.pricing).length > 0">
-                    <dl class="space-y-2">
-                      <div
-                        v-for="row in compactPricingRows(model.pricing)"
-                        :key="row.key"
-                        class="flex items-baseline justify-between gap-3 text-sm"
+                <div class="card-header flex flex-col gap-4 px-4 py-4 md:px-5 2xl:flex-row 2xl:items-center 2xl:justify-between">
+                  <div class="min-w-0 flex-1 space-y-3">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span :class="brandBadgeClass(group)">
+                        <ProviderIcon :brand="groupBrandSource(group)" size="14px" />
+                        {{ groupBrandLabel(group) }}
+                      </span>
+                      <!-- 分组头部展示相对官方价的最高优惠，无有效折扣数据时不渲染该标签；点击/悬停查看说明。 -->
+                      <HelpTooltip
+                        v-if="group.models.some(model => !model.pricing.independent_pricing) && formatMaxDiscountOff(group.official_price_ratio)"
+                        trigger="both"
+                        width-class="w-72"
+                        :closable="false"
+                        :content="t('marketplace.maxDiscountHint')"
                       >
-                        <dt class="shrink-0 text-gray-500 dark:text-dark-400">{{ row.label }}</dt>
-                        <dd class="min-w-0 break-words text-right font-medium tabular-nums [overflow-wrap:anywhere] text-gray-900 dark:text-white">{{ row.value }}</dd>
+                        <template #trigger>
+                          <span
+                            data-testid="group-max-discount-tag"
+                            class="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+                          >
+                            {{ formatMaxDiscountOff(group.official_price_ratio) }}
+                          </span>
+                        </template>
+                      </HelpTooltip>
+                      <HelpTooltip
+                        trigger="both"
+                        width-class="w-72"
+                        :closable="false"
+                        :content="t('marketplace.rateMultiplierHint')"
+                      >
+                        <template #trigger>
+                          <!-- 倍率使用中性填充，深色底与卡片拉开层次。 -->
+                          <span
+                            data-testid="group-rate-multiplier-tag"
+                            class="rounded-full border border-gray-200/80 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-600 dark:border-dark-600 dark:bg-dark-700/60 dark:text-dark-200"
+                          >
+                            {{ formatRateMultiplierLabel(group.rate_multiplier) }}
+                          </span>
+                        </template>
+                      </HelpTooltip>
+                    </div>
+
+                    <div class="flex items-start gap-3">
+                      <span class="mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-surface border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-950">
+                        <ProviderIcon :brand="groupBrandSource(group)" size="28px" />
+                      </span>
+                      <div class="min-w-0">
+                        <h2 class="text-lg font-semibold text-gray-950 dark:text-white">{{ group.name }}</h2>
+                        <p v-if="group.description" class="mt-1 text-sm leading-6 text-gray-600 dark:text-dark-300">
+                          {{ group.description }}
+                        </p>
                       </div>
-                    </dl>
-                  </template>
-                  <p v-else class="text-sm text-gray-400 dark:text-dark-500">
-                    {{ t('marketplace.pricingUnavailable') }}
-                  </p>
-
-                  <!-- 完整定价使用卡片内抽屉浮窗，组件管理展开、收起、区间和 fast mode 切换。 -->
-                  <ModelPricingPanel :model="model" />
+                    </div>
+                  </div>
+                  <div
+                    v-if="group.availability"
+                    class="w-full min-w-0 2xl:w-1/2 2xl:max-w-[28rem] 2xl:shrink-0"
+                    data-testid="marketplace-group-availability"
+                  >
+                    <!-- 用户侧只展示可用率，并利用释放出的空间将状态条靠右放置。 -->
+                    <GroupAvailabilityBar
+                      :availability="group.availability"
+                      class="min-w-0"
+                    />
+                  </div>
                 </div>
-              </article>
+
+                <div class="grid min-w-0 grid-cols-1 items-start gap-4 p-4 md:grid-cols-2 2xl:grid-cols-3 md:p-5">
+                  <article
+                    v-for="model in group.models"
+                    :key="`${group.id}-${model.id}`"
+                    class="group min-w-0 max-w-full rounded-surface border border-gray-100 bg-gray-50/80 p-4 transition hover:-translate-y-0.5 hover:border-black/20 hover:shadow-sm dark:border-dark-700 dark:bg-dark-950/80 dark:hover:border-primary-500/50"
+                  >
+                    <div class="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                      <div class="flex min-w-0 flex-1 basis-32 items-center">
+                        <h3 class="min-w-0 truncate text-base font-semibold text-gray-950 dark:text-white">{{ model.display_name }}</h3>
+                        <!-- 模型属性和可用协议收进标题旁的信息图标，悬停或点击后以浮层展示，不占用卡片高度。 -->
+                        <HelpTooltip
+                          v-if="model.attributes || marketplaceProtocols(model.protocols).length > 0"
+                          trigger="both"
+                          width-class="w-72"
+                          :closable="false"
+                          class="shrink-0"
+                        >
+                          <template #trigger>
+                            <button
+                              type="button"
+                              data-testid="model-attributes-trigger"
+                              class="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition-colors hover:text-gray-700 dark:text-dark-500 dark:hover:text-dark-200"
+                              :aria-label="t('admin.modelAttributes.details')"
+                            >
+                              <Icon name="infoCircle" size="sm" class="h-4 w-4" />
+                            </button>
+                          </template>
+                          <ModelAttributesSummary v-if="model.attributes" :attributes="model.attributes" variant="tooltip" />
+                          <!-- 有属性时，协议段用和属性浮层相同的分隔线隔开。 -->
+                          <ModelProtocolChips
+                            :protocols="model.protocols"
+                            :native-protocols="model.native_protocols"
+                            :class="model.attributes ? 'mt-3 border-t border-white/10 pt-3 dark:border-dark-700' : ''"
+                          />
+                        </HelpTooltip>
+                      </div>
+                      <ModelCapabilityTags :model="model" />
+                    </div>
+                    <!-- ID 独占整行，右侧能力图标占用标题行。 -->
+                    <ModelIdLabel :model-id="model.id" class="mt-1" />
+
+                    <!-- 价格预览使用无边框列表。 -->
+                    <div class="mt-4">
+                      <p v-if="model.pricing.independent_pricing" class="mb-2 text-xs font-medium text-primary-600 dark:text-primary-300" data-testid="independent-pricing-badge">
+                        {{ t('marketplace.independentPricing') }}
+                      </p>
+                      <template v-if="compactPricingRows(model.pricing).length > 0">
+                        <dl class="space-y-2">
+                          <div
+                            v-for="row in compactPricingRows(model.pricing)"
+                            :key="row.key"
+                            class="flex items-baseline justify-between gap-3 text-sm"
+                          >
+                            <dt class="shrink-0 text-gray-500 dark:text-dark-400">{{ row.label }}</dt>
+                            <dd class="min-w-0 break-words text-right font-medium tabular-nums [overflow-wrap:anywhere] text-gray-900 dark:text-white">{{ row.value }}</dd>
+                          </div>
+                        </dl>
+                      </template>
+                      <p v-else class="text-sm text-gray-400 dark:text-dark-500">
+                        {{ t('marketplace.pricingUnavailable') }}
+                      </p>
+
+                      <!-- 完整定价使用卡片内抽屉浮窗，组件管理展开、收起、区间和 fast mode 切换。 -->
+                      <ModelPricingPanel :model="model" />
+                    </div>
+                  </article>
+                </div>
+              </section>
             </div>
-          </section>
+          </div>
         </div>
       </div>
     </section>
@@ -291,11 +311,12 @@ import { vContentReveal } from '@/directives/contentReveal'
 import { useRoute as useMotionRoute } from 'vue-router'
 const motionRoute = useMotionRoute()
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ModelMarketplaceSkeleton from '@/components/marketplace/ModelMarketplaceSkeleton.vue'
+import MarketplaceFilterSidebar from '@/components/marketplace/MarketplaceFilterSidebar.vue'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import GroupAvailabilityBar from '@/components/marketplace/GroupAvailabilityBar.vue'
 import ModelCapabilityTags from '@/components/marketplace/ModelCapabilityTags.vue'
@@ -314,14 +335,14 @@ import { initTheme, useTheme } from '@/composables/useTheme'
 import { getMarketplaceModels } from '@/api/marketplace'
 import { providerBrandDisplayName, providerBrandFilterKey, resolveProviderBrand } from '@/utils/providerBrand'
 import { formatCompactTokenRange } from '@/utils/formatters'
-import { formatPriceNumber, pricingKind } from '@/utils/marketplacePricing'
+import { formatPriceNumber, pricingKind, videoPricingTiers } from '@/utils/marketplacePricing'
 import { marketplaceProtocols } from '@/utils/marketplaceProtocols'
 import { sanitizeUrl } from '@/utils/url'
 import type { MarketplaceGroup, MarketplaceModelPricing, MarketplacePricingInterval } from '@/types'
 import { useAppStore, useAuthStore } from '@/stores'
 
 type VisibleMarketplaceGroup = MarketplaceGroup
-type PricingFilter = 'all' | 'token' | 'image' | 'unpriced'
+type PricingFilter = 'all' | 'token' | 'image' | 'video' | 'unpriced'
 
 interface PricingRow {
   key: string
@@ -390,16 +411,39 @@ const brandSelectOptions = computed(() => [
   })),
 ])
 
-const pricingSelectOptions = computed(() => [
+const sidebarProviders = computed(() => availableBrands.value.map((brand) => ({
+  value: brand,
+  label: brandKey(brand) === 'brand:google' ? 'Gemini / Google' : brandKey(brand) === 'brand:xai' ? 'Grok / xAI' : brand,
+  count: sortedGroups.value.filter((group) => brandKey(groupBrandLabel(group)) === brandKey(brand)).length,
+})))
+
+const brandFilteredGroups = computed(() => sortedGroups.value.filter((group) =>
+  selectedBrand.value === 'all' || brandKey(groupBrandLabel(group)) === brandKey(selectedBrand.value)
+))
+
+watch(availableBrands, (brands) => {
+  if (selectedBrand.value !== 'all' && !brands.includes(selectedBrand.value)) {
+    selectedBrand.value = 'all'
+  }
+})
+
+watch(brandFilteredGroups, (availableGroups) => {
+  if (selectedGroupId.value !== 'all' && !availableGroups.some((group) => group.id === selectedGroupId.value)) {
+    selectedGroupId.value = 'all'
+  }
+})
+
+const pricingSelectOptions = computed<{ value: PricingFilter; label: string }[]>(() => [
   { value: 'all', label: t('marketplace.allTypes') },
   { value: 'token', label: t('marketplace.tokenPricing') },
   { value: 'image', label: t('marketplace.imagePricing') },
+  { value: 'video', label: t('marketplace.videoPricing') },
   { value: 'unpriced', label: t('marketplace.unpriced') },
 ])
 
 const groupSelectOptions = computed(() => [
   { value: 'all', label: t('marketplace.allGroups') },
-  ...sortedGroups.value.map((group) => ({
+  ...brandFilteredGroups.value.map((group) => ({
     value: group.id,
     label: group.name,
     search_terms: group.search_terms,
@@ -409,11 +453,7 @@ const groupSelectOptions = computed(() => [
 const filteredGroups = computed<VisibleMarketplaceGroup[]>(() => {
   const keyword = normalizedSearch.value
 
-  return sortedGroups.value.flatMap((group) => {
-    if (selectedBrand.value !== 'all' && brandKey(groupBrandLabel(group)) !== brandKey(selectedBrand.value)) {
-      return []
-    }
-
+  return brandFilteredGroups.value.flatMap((group) => {
     if (selectedGroupId.value !== 'all' && group.id !== selectedGroupId.value) {
       return []
     }
@@ -447,6 +487,7 @@ const filteredGroups = computed<VisibleMarketplaceGroup[]>(() => {
 })
 
 const hasMarketplaceResults = computed(() => filteredGroups.value.length > 0)
+const matchingModelCount = computed(() => filteredGroups.value.reduce((total, group) => total + group.models.length, 0))
 
 function hasPositiveValue(value?: number | null): value is number {
   return typeof value === 'number' && value > 0
@@ -641,6 +682,13 @@ function compactPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
   }
   if (kind === 'image') {
     return imagePricingRows(pricing)
+  }
+  if (kind === 'video') {
+    return videoPricingTiers(pricing).map(({ resolution, price }) => ({
+      key: resolution,
+      label: resolution,
+      value: `${formatPrice(price)} ${t('marketplace.perSecond')}`,
+    }))
   }
   return []
 }

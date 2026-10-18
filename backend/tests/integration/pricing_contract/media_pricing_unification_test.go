@@ -75,7 +75,7 @@ func TestAsyncImageUnitPricingUsesCardsAndPerImageFallback(t *testing.T) {
 	resolver := billingtestkit.ResolverWithCards(t, billing, []routing.ModelPricingEntry{pricingConfig})
 	group := &routing.Group{ID: 100}
 	batch := &batchimage.Pricing{Resolver: resolver}
-	creativeService := &creative.Public{ImageUnitPrice: creativePriceFixture(billing, resolver)}
+	creativeService := &creative.Public{ImageQuote: creativePriceFixture(billing, resolver)}
 	for _, tc := range []struct {
 		size string
 		want float64
@@ -83,9 +83,9 @@ func TestAsyncImageUnitPricingUsesCardsAndPerImageFallback(t *testing.T) {
 		price, err := batch.BatchImageUnitPrice(ctx, batchimage.BatchImagePriceInput{Model: model, GroupID: &group.ID, Group: &batchimage.GroupView{}, ImageSize: tc.size})
 		require.NoError(t, err)
 		require.InDelta(t, tc.want, price, 1e-12)
-		unit, ok := creativeService.ImageUnitPrice(ctx, creativeGroupProjection(group), model, tc.size)
+		quote, ok := creativeService.ImageQuote(ctx, creativeGroupProjection(group), model, tc.size)
 		require.True(t, ok)
-		require.Equal(t, price, unit)
+		require.Equal(t, price, quote.UnitPrice)
 	}
 	resolver = billingtestkit.SharedPriceResolver(billing, group.ID, pricing.DefaultBillingSettings(), []routing.ModelPricingEntry{{Models: []string{model}, BillingMode: routing.BillingModeImage, PerRequestPrice: testPtrFloat64(0.6)}})
 	price, err := resolver.ResolveImageUnitPrice(ctx, billingcore.PricingInput{Model: model, GroupID: &group.ID}, "1K")
@@ -113,10 +113,10 @@ func creativeGroupProjection(value *routing.Group) *creative.GroupView {
 }
 
 // creativePriceFixture 将目录和解析器接入测试，使用 billing 计算价格并处理缺价回退。
-func creativePriceFixture(calculator *billingcore.Calculator, resolver *billingcore.PriceResolver) func(context.Context, *creative.GroupView, string, string) (float64, bool) {
-	return func(ctx context.Context, group *creative.GroupView, model, size string) (float64, bool) {
+func creativePriceFixture(calculator *billingcore.Calculator, resolver *billingcore.PriceResolver) func(context.Context, *creative.GroupView, string, string) (billingcore.ImageQuote, bool) {
+	return func(ctx context.Context, group *creative.GroupView, model, size string) (billingcore.ImageQuote, bool) {
 		if group == nil {
-			return 0, false
+			return billingcore.ImageQuote{}, false
 		}
 		selected := resolver
 		if selected == nil && calculator != nil {
@@ -124,7 +124,7 @@ func creativePriceFixture(calculator *billingcore.Calculator, resolver *billingc
 				slog.Debug("failed to get model pricing from model catalog, using fallback", "model", model, "error", err)
 			})
 		}
-		value, err := selected.ResolveImageUnitPrice(ctx, billingcore.PricingInput{Model: model, GroupID: &group.ID}, size)
+		value, err := selected.ResolveImageQuote(ctx, billingcore.PricingInput{Model: model, GroupID: &group.ID}, size)
 		return value, err == nil
 	}
 }

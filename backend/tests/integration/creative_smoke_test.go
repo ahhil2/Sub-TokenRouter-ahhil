@@ -427,8 +427,8 @@ func TestCreativeFullChainSmoke(t *testing.T) {
 			}
 			return key.ID, nil
 		},
-		ImageUnitPrice: func(ctx context.Context, g *creative.GroupView, m, size string) (float64, bool) {
-			price, err := prices.ResolveImageUnitPrice(ctx, billingcore.PricingInput{Model: m, GroupID: &g.ID}, size)
+		ImageQuote: func(ctx context.Context, g *creative.GroupView, m, size string) (billingcore.ImageQuote, bool) {
+			price, err := prices.ResolveImageQuote(ctx, billingcore.PricingInput{Model: m, GroupID: &g.ID}, size)
 			return price, err == nil
 		},
 		SubscriptionMultiplier: func(context.Context, int64, *creative.GroupView, float64) (float64, bool) { return 0, false },

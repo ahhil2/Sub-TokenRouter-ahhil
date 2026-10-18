@@ -23,3 +23,19 @@ func TestApplyRateMultipliersPreservesZeroIdentityRate(t *testing.T) {
 	ApplyRateMultipliers(command, input)
 	require.Equal(t, 0.5, command.BalanceRateMultiplier)
 }
+
+func TestApplyRateMultipliersIndependentPricing(t *testing.T) {
+	for _, amount := range []float64{0, 0.065} {
+		input := &SettlementInput{
+			Cost:                       &CostBreakdown{TotalCost: amount, ActualCost: amount, IndependentPricing: true},
+			SubscriptionRateMultiplier: 0.18, BalanceRateMultiplier: 0,
+			SubscriptionRateMultiplierScale: 2, RateMultipliersResolved: true,
+		}
+		command := &billing.UsageBillingCommand{}
+		ApplyRateMultipliers(command, input)
+		require.Equal(t, 1.0, command.SubscriptionRateMultiplier)
+		require.Equal(t, 1.0, command.BalanceRateMultiplier)
+		require.Equal(t, 1.0, command.SubscriptionRateMultiplierScale)
+		require.True(t, command.DisablePlanGroupRateMultiplier)
+	}
+}

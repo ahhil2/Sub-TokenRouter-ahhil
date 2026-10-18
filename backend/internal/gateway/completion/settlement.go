@@ -126,6 +126,13 @@ func ApplyRateMultipliers(cmd *billing.UsageBillingCommand, p *usageBillingParam
 	if cmd == nil || p == nil || p.Cost == nil {
 		return
 	}
+	if p.Cost.IndependentPricing {
+		cmd.SubscriptionRateMultiplier = 1
+		cmd.SubscriptionRateMultiplierScale = 1
+		cmd.BalanceRateMultiplier = 1
+		cmd.DisablePlanGroupRateMultiplier = true
+		return
+	}
 	baseAmount := p.Cost.TotalCost
 	if p.BillingBaseAmountUSD != nil {
 		baseAmount = *p.BillingBaseAmountUSD

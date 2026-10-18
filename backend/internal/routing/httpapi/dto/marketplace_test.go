@@ -22,6 +22,16 @@ func TestImagePriceJSONPreservesFreeAndMissingSizes(t *testing.T) {
 	require.NotContains(t, fields, "image_price_4k")
 }
 
+func TestIndependentPricingJSON(t *testing.T) {
+	row := modelMarketplacePricingFromRouting(pricing.ModelDisplayPricing{
+		PricingMode: "image", PriceStatus: "priced", IndependentPricing: true,
+		ImagePriceSizes: []string{"1K"}, ImagePrice1K: 0.065,
+	})
+	body, err := json.Marshal(row)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"pricing_mode":"image","price_status":"priced","independent_pricing":true,"image_price_1k":0.065}`, string(body))
+}
+
 // TestMarketplacePricingJSONIncludesTokenModifiers 检查模型广场能拿到分时规则和 Max 推理倍率。
 func TestMarketplacePricingJSONIncludesTokenModifiers(t *testing.T) {
 	maxMultiplier := 1.5
@@ -60,4 +70,14 @@ func TestMarketplacePricingJSONOmitsAbsentTokenModifiers(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &fields))
 	require.NotContains(t, fields, "max_reasoning_effort_multiplier")
 	require.NotContains(t, fields, "time_pricing")
+	require.NotContains(t, fields, "video_prices")
+}
+
+func TestVideoPriceJSONPreservesFreeAndMissingResolutions(t *testing.T) {
+	row := modelMarketplacePricingFromRouting(pricing.ModelDisplayPricing{
+		PricingMode: "video", PriceStatus: "priced", VideoPrices: pricing.MediaPrices{"480p": 0, "720p": 0.0162},
+	})
+	body, err := json.Marshal(row)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"pricing_mode":"video","price_status":"priced","video_prices":{"480p":0,"720p":0.0162}}`, string(body))
 }

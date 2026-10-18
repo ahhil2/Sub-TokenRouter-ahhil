@@ -17,6 +17,7 @@ type ModelMarketplaceStats struct {
 }
 
 type ModelMarketplacePricing struct {
+	IndependentPricing            bool                              `json:"independent_pricing,omitempty"`
 	PricingMode                   string                            `json:"pricing_mode"`
 	PriceStatus                   string                            `json:"price_status"`
 	InputPricePerToken            float64                           `json:"input_price_per_token,omitempty"`
@@ -39,6 +40,7 @@ type ModelMarketplacePricing struct {
 	ImagePrice1K                  *float64                          `json:"image_price_1k,omitempty"`
 	ImagePrice2K                  *float64                          `json:"image_price_2k,omitempty"`
 	ImagePrice4K                  *float64                          `json:"image_price_4k,omitempty"`
+	VideoPrices                   pricing.MediaPrices               `json:"video_prices,omitempty"`
 }
 
 // ModelMarketplacePricingInterval 是前端模型广场展示用的上下文区间价格。
@@ -235,6 +237,7 @@ func modelMarketplacePricingFromRouting(pricing pricing.ModelDisplayPricing) Mod
 	}
 
 	return ModelMarketplacePricing{
+		IndependentPricing:            pricing.IndependentPricing,
 		PricingMode:                   pricing.PricingMode,
 		PriceStatus:                   pricing.PriceStatus,
 		InputPricePerToken:            pricing.InputPricePerToken,
@@ -257,6 +260,7 @@ func modelMarketplacePricingFromRouting(pricing pricing.ModelDisplayPricing) Mod
 		ImagePrice1K:                  imagePriceValue(pricing, "1K", pricing.ImagePrice1K),
 		ImagePrice2K:                  imagePriceValue(pricing, "2K", pricing.ImagePrice2K),
 		ImagePrice4K:                  imagePriceValue(pricing, "4K", pricing.ImagePrice4K),
+		VideoPrices:                   pricing.VideoPrices,
 	}
 }
 

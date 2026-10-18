@@ -6,6 +6,8 @@ import (
 )
 
 const (
+	IndependentPricingSnapshotVersion = 4
+
 	BatchProviderStateQueued    BatchProviderInternalState = "queued"
 	BatchProviderStateRunning   BatchProviderInternalState = "running"
 	BatchProviderStateSucceeded BatchProviderInternalState = "succeeded"
@@ -105,6 +107,7 @@ type BatchImageOwner struct {
 }
 
 type BatchImagePricingSnapshot struct {
+	Version                    int
 	BaseUnitPrice              float64
 	GroupRateMultiplier        float64
 	SubscriptionRateMultiplier float64

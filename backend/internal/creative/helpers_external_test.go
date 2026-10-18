@@ -271,10 +271,10 @@ func newCreativeMediaCalculator() *billing.Calculator {
 }
 
 // creativePriceFixture 将目录和解析器接入测试，使用 billing 计算价格并处理缺价回退。
-func creativePriceFixture(calculator *billing.Calculator, resolver *billing.PriceResolver) func(context.Context, *creative.GroupView, string, string) (float64, bool) {
-	return func(ctx context.Context, group *creative.GroupView, model, size string) (float64, bool) {
+func creativePriceFixture(calculator *billing.Calculator, resolver *billing.PriceResolver) func(context.Context, *creative.GroupView, string, string) (billing.ImageQuote, bool) {
+	return func(ctx context.Context, group *creative.GroupView, model, size string) (billing.ImageQuote, bool) {
 		if group == nil {
-			return 0, false
+			return billing.ImageQuote{}, false
 		}
 		selected := resolver
 		if selected == nil && calculator != nil {
@@ -282,7 +282,7 @@ func creativePriceFixture(calculator *billing.Calculator, resolver *billing.Pric
 				slog.Debug("failed to get model pricing from model catalog, using fallback", "model", model, "error", err)
 			})
 		}
-		value, err := selected.ResolveImageUnitPrice(ctx, billing.PricingInput{Model: model, GroupID: &group.ID}, size)
+		value, err := selected.ResolveImageQuote(ctx, billing.PricingInput{Model: model, GroupID: &group.ID}, size)
 		return value, err == nil
 	}
 }
@@ -324,7 +324,7 @@ func newCreativePublicFixture(repo creative.CreativeRunRepository, keys creative
 		results.InvalidateAuth = auth.InvalidateAuthCacheByUserID
 	}
 	bindCreativeUsageFixture(results, logs)
-	core := &creative.Public{Repo: repo, UserGroupRateRepo: rates, Queue: queue, TransientStore: transient, Results: results, Settings: settings, UserNotFound: identity.ErrUserNotFound, Observe: creativeLegacyObserve, ImageUnitPrice: creativePriceFixture(calculator, resolver)}
+	core := &creative.Public{Repo: repo, UserGroupRateRepo: rates, Queue: queue, TransientStore: transient, Results: results, Settings: settings, UserNotFound: identity.ErrUserNotFound, Observe: creativeLegacyObserve, ImageQuote: creativePriceFixture(calculator, resolver)}
 	if users != nil {
 		core.UserRepo = creativeUserReader{users}
 	}
@@ -368,15 +368,15 @@ func newCreativePublicFixture(repo creative.CreativeRunRepository, keys creative
 
 // setCreativeConfigPricing 为指定分组装配共享价表，保留其它分组的报价来源。
 func setCreativeConfigPricing(svc *creative.Public, groupID int64, cards []routing.ModelPricingEntry) {
-	previous := svc.ImageUnitPrice
+	previous := svc.ImageQuote
 	config := routing.PricingConfig{ID: groupID, Status: routing.StatusActive, GroupIDs: []int64{groupID}, ModelPricing: cards}
 	source := routing.NewPricingConfigService(&creativeConfigPrices{config: config}, nil)
 	resolver := billingtestkit.PriceResolver(source, newCreativeMediaCalculator())
-	svc.ImageUnitPrice = func(ctx context.Context, group *creative.GroupView, model, size string) (float64, bool) {
+	svc.ImageQuote = func(ctx context.Context, group *creative.GroupView, model, size string) (billing.ImageQuote, bool) {
 		if group.ID != groupID {
 			return previous(ctx, group, model, size)
 		}
-		price, err := resolver.ResolveImageUnitPrice(ctx, billing.PricingInput{Model: model, GroupID: &groupID}, size)
+		price, err := resolver.ResolveImageQuote(ctx, billing.PricingInput{Model: model, GroupID: &groupID}, size)
 		return price, err == nil
 	}
 }

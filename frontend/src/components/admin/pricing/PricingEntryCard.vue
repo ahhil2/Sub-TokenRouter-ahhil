@@ -142,6 +142,19 @@
               :placeholder="t('admin.pricing.form.priceMultiplierPlaceholder', '不调整')"
             />
           </div>
+          <div v-if="props.enableIndependentPricing && entry.billing_mode !== 'token'" class="col-span-full">
+            <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('admin.pricing.form.sellingPriceMode') }}
+            </label>
+            <Select
+              :model-value="entry.independent_pricing ? 'independent' : 'standard'"
+              :options="sellingPriceModeOptions"
+              class="mt-1"
+              data-testid="independent-pricing-select"
+              @update:model-value="emit('update', { ...entry, independent_pricing: $event === 'independent' })"
+            />
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.pricing.form.independentPricingHint') }}</p>
+          </div>
           <div v-if="props.showFastModeMultiplier && entry.billing_mode === 'token'">
             <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
               {{ t('admin.pricing.form.fastModeMultiplier', 'Fast 模式倍率') }}
@@ -376,12 +389,14 @@ const props = withDefaults(defineProps<{
   hideTokenIntervals?: boolean
   enableTimePricing?: boolean
   enableTierMultipliers?: boolean
+  enableIndependentPricing?: boolean
 }>(), {
   removable: true,
   showFastModeMultiplier: false,
   hideTokenIntervals: false,
   enableTimePricing: false,
   enableTierMultipliers: false,
+  enableIndependentPricing: false,
 })
 
 const emit = defineEmits<{
@@ -404,6 +419,11 @@ const billingModeLabel = computed(() => {
   return opt ? opt.label : props.entry.billing_mode
 })
 
+const sellingPriceModeOptions = computed(() => [
+  { value: 'standard', label: t('admin.pricing.form.standardSellingPrice') },
+  { value: 'independent', label: t('admin.pricing.form.independentSellingPrice') },
+])
+
 const maxReasoningEffortMultiplierPlaceholder = computed(() =>
   props.entry.models.some(model => /fable(?:-5-1|-5\.1|5\.1|51)(?!\d)/i.test(model))
     ? t('admin.pricing.form.fable51DefaultMaxReasoningMultiplier', '默认 3')
@@ -423,6 +443,7 @@ function onBillingModeUpdate(billingMode: BillingMode) {
   emit('update', {
     ...props.entry,
     billing_mode: billingMode,
+    independent_pricing: billingMode === 'token' ? false : props.entry.independent_pricing,
     fast_mode_multiplier: billingMode === 'token' ? props.entry.fast_mode_multiplier : null,
     fast_multiplier: billingMode === 'token' ? props.entry.fast_multiplier : null,
     flex_multiplier: billingMode === 'token' ? props.entry.flex_multiplier : null,

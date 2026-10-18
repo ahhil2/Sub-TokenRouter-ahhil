@@ -89,7 +89,7 @@ type BatchImagePriceInput struct {
 	ImageSize string
 }
 type ImagePricer interface {
-	BatchImageUnitPrice(context.Context, BatchImagePriceInput) (float64, error)
+	BatchImageQuote(context.Context, BatchImagePriceInput) (billing.ImageQuote, error)
 }
 type PublicOptions struct {
 	Enabled                                                                                                                                                                       bool
@@ -248,7 +248,7 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 		HoldMultiplier:             pricingSnapshot.HoldMultiplier,
 		BillableUnitPrice:          pricingSnapshot.BillableUnitPrice,
 		HoldUnitPrice:              pricingSnapshot.HoldUnitPrice,
-		PricingSnapshotVersion:     3,
+		PricingSnapshotVersion:     pricingSnapshot.Version,
 		Currency:                   "USD",
 		HoldID:                     &holdID,
 		IdempotencyKey:             BatchImageOptionalStringPtr(idempotencyKey),
@@ -676,7 +676,7 @@ func (s *Public) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchI
 				mapping := billingMapping
 				mapping.MappedModel = routingModel
 				pricingModel := BatchImagePricingModel(mapping, model, routingModel, upstreamModel)
-				if _, err := s.Pricing.BatchImageUnitPrice(ctx, BatchImagePriceInput{Model: pricingModel, GroupID: owner.GroupID, ImageSize: "1K"}); err != nil {
+				if _, err := s.Pricing.BatchImageQuote(ctx, BatchImagePriceInput{Model: pricingModel, GroupID: owner.GroupID, ImageSize: "1K"}); err != nil {
 					continue
 				}
 				if modelsByProvider[providerName] == nil {
@@ -1063,6 +1063,7 @@ func (s *Public) ResolvePricingSnapshot(ctx context.Context, owner BatchImageOwn
 	// 同一次提交复用同一份分组配置，避免并发修改时混用旧倍率与新价格。
 	var pricingGroup *GroupView
 	unit := -1.0
+	snapshotVersion := 3
 	groupMultiplier := 1.0
 	subscriptionRateMultiplier := 1.0
 	balanceRateMultiplier := 1.0
@@ -1136,11 +1137,20 @@ func (s *Public) ResolvePricingSnapshot(ctx context.Context, owner BatchImageOwn
 		if s.Pricing == nil {
 			return nil, ErrBatchImageSettlementPricingMissing
 		}
-		resolvedUnit, err := s.Pricing.BatchImageUnitPrice(ctx, BatchImagePriceInput{Model: req.Model, GroupID: owner.GroupID, Group: pricingGroup, ImageSize: req.ImageSize})
-		if err != nil || resolvedUnit < 0 {
+		quote, err := s.Pricing.BatchImageQuote(ctx, BatchImagePriceInput{Model: req.Model, GroupID: owner.GroupID, Group: pricingGroup, ImageSize: req.ImageSize})
+		if err != nil || quote.UnitPrice < 0 {
 			return nil, ErrBatchImageSettlementPricingMissing
 		}
-		unit = resolvedUnit
+		unit = quote.UnitPrice
+		if quote.IndependentPricing {
+			snapshotVersion = IndependentPricingSnapshotVersion
+			groupMultiplier = 1
+			subscriptionRateMultiplier = 1
+			balanceRateMultiplier = 1
+			planGroupRateEnabled = false
+			discountMultiplier = 1
+			holdMultiplier = 1
+		}
 	}
 	// 定价不变式：hold 比例不得低于 discount 比例，否则成功率足够高时
 	// actualCost > holdAmount，结算永远失败、冻结余额无法解冻。
@@ -1160,9 +1170,13 @@ func (s *Public) ResolvePricingSnapshot(ctx context.Context, owner BatchImageOwn
 		providerMultiplier = 0
 	}
 	standardUnitPrice := unit * groupMultiplier * providerMultiplier
+	if snapshotVersion == IndependentPricingSnapshotVersion {
+		standardUnitPrice = unit
+	}
 	billableUnitPrice := standardUnitPrice * discountMultiplier
 	holdUnitPrice := standardUnitPrice * holdMultiplier
 	return &BatchImagePricingSnapshot{
+		Version:                    snapshotVersion,
 		BaseUnitPrice:              unit,
 		GroupRateMultiplier:        groupMultiplier,
 		SubscriptionRateMultiplier: subscriptionRateMultiplier,
