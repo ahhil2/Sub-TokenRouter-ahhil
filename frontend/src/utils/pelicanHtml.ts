@@ -5,11 +5,11 @@ export function preparePelicanHTML(html: string, nonce = globalThis.document.que
   const template = globalThis.document.createElement('template')
   template.innerHTML = html
   const fragment = template.content
-  fragment.querySelectorAll('meta, base, link, iframe, frame, frameset, object, embed, portal, form, input, button, textarea, select').forEach(element => element.remove())
+  fragment.querySelectorAll('meta, base, link, iframe, frame, frameset, object, embed, portal, form, input, textarea, select').forEach(element => element.remove())
   for (const element of fragment.querySelectorAll('*')) {
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLowerCase()
-      if (name.startsWith('on') || ['srcdoc', 'srcset', 'action', 'formaction', 'target', 'ping', 'download', 'autofocus'].includes(name)) {
+      if (name.startsWith('on') || ['srcdoc', 'srcset', 'action', 'form', 'formaction', 'formtarget', 'target', 'ping', 'download', 'autofocus'].includes(name)) {
         element.removeAttribute(attribute.name)
       }
       if (['href', 'xlink:href', 'src', 'poster', 'data', 'background'].includes(name)) {
@@ -19,6 +19,7 @@ export function preparePelicanHTML(html: string, nonce = globalThis.document.que
       }
     }
   }
+  fragment.querySelectorAll('button').forEach(button => button.setAttribute('type', 'button'))
   fragment.querySelectorAll('script').forEach(script => {
     script.removeAttribute('nonce')
     if (nonce) script.setAttribute('nonce', nonce)
@@ -29,7 +30,7 @@ export function preparePelicanHTML(html: string, nonce = globalThis.document.que
   policy.content = PELICAN_CSP
   document.head.prepend(policy)
   const style = document.createElement('style')
-  style.textContent = 'html{overflow:hidden}body{margin:0}svg{max-width:100%}'
+  style.textContent = 'html{overflow:auto}body{margin:0}svg{max-width:100%}'
   document.head.append(style)
   for (const tag of ['html', 'body'] as const) {
     const opening = html.match(new RegExp(`<${tag}\\b((?:[^>"']|"[^"]*"|'[^']*')*)>`, 'i'))

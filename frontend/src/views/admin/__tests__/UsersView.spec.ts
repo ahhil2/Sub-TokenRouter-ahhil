@@ -131,7 +131,9 @@ const DataTableStub = {
       <div v-for="row in data" :key="row.id">
         <div data-test="row-email">{{ row.email }}</div>
         <slot name="cell-last_used_at" :value="row.last_used_at" :row="row" />
-        <slot v-for="column in columns" :name="'cell-' + column.key" :value="row[column.key]" :row="row" />
+        <div v-for="column in columns" :key="column.key" :data-test="'cell-' + column.key + '-' + row.id">
+          <slot :name="'cell-' + column.key" :value="row[column.key]" :row="row" />
+        </div>
       </div>
     </div>
   `
@@ -179,6 +181,52 @@ describe('admin UsersView', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('shows historical invitation relationships in two lines and leaves unrelated users blank', async () => {
+    listUsers.mockResolvedValue({
+      items: [
+        createAdminUser({ id: 1, inviter_id: null, invited_count: 0 }),
+        createAdminUser({ id: 2, inviter_id: 9001, invited_count: 0 }),
+        createAdminUser({ id: 3, inviter_id: null, invited_count: 127 }),
+        createAdminUser({ id: 4, inviter_id: 2, invited_count: 8 }),
+        createAdminUser({ id: 5 })
+      ],
+      total: 5, page: 1, page_size: 20, pages: 1
+    })
+    const wrapper = mountUsersView()
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="columns"]').text()).toContain('invitation_relationship')
+    for (const userId of [1, 5]) {
+      expect(wrapper.get(`[data-test="cell-invitation_relationship-${userId}"]`).text()).toBe('')
+    }
+    for (const [userId, inviter, count] of [[2, '9001', '0'], [3, '-', '127'], [4, '2', '8']]) {
+      const cell = wrapper.get(`[data-test="cell-invitation_relationship-${userId}"]`)
+      expect(cell.text()).toBe(`admin.users.inviterId${inviter}admin.users.invitedCount${count}`)
+      expect(cell.element.firstElementChild?.children).toHaveLength(2)
+    }
+    wrapper.unmount()
+  })
+
+  it('persists invitation column visibility and restores it after remount', async () => {
+    localStorage.setItem('user-hidden-columns', JSON.stringify(['notes']))
+    localStorage.setItem('user-column-settings-version', '4')
+    const wrapper = mountUsersView()
+    await flushPromises()
+    expect(wrapper.get('[data-test="columns"]').text()).toContain('invitation_relationship')
+    await wrapper.get('button[title="admin.users.columnSettings"]').trigger('click')
+    const invitationOption = wrapper.findAll('button').find(button => button.text().includes('admin.users.columns.invitationRelationship'))
+    expect(invitationOption).toBeDefined()
+    await invitationOption!.trigger('click')
+    expect(wrapper.get('[data-test="columns"]').text()).not.toContain('invitation_relationship')
+    expect(JSON.parse(localStorage.getItem('user-hidden-columns')!)).toContain('invitation_relationship')
+    wrapper.unmount()
+
+    const restored = mountUsersView()
+    await flushPromises()
+    expect(restored.get('[data-test="columns"]').text()).not.toContain('invitation_relationship')
+    restored.unmount()
   })
 
   it('shows active, used, and created activity columns in order and requests last_used_at sort', async () => {

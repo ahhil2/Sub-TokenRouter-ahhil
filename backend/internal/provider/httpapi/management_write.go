@@ -51,6 +51,21 @@ type UpdateProviderRequest struct {
 	AutoPauseOnExpired *bool          `json:"auto_pause_on_expired"`
 }
 
+func (h *ManagementHandler) UpdateDisplayOrder(requestContext *gin.Context) {
+	var request struct {
+		IDs []int64 `json:"ids" binding:"required,min=1,max=10000"`
+	}
+	if err := response.BindJSONStrict(requestContext, &request); err != nil {
+		response.BadRequest(requestContext, "Invalid provider order: "+err.Error())
+		return
+	}
+	if err := h.adminService.UpdateProviderDisplayOrder(requestContext.Request.Context(), request.IDs); err != nil {
+		response.ErrorFrom(requestContext, err)
+		return
+	}
+	response.Success(requestContext, gin.H{"updated": len(request.IDs)})
+}
+
 // Create 在原幂等范围内创建提供商。
 // POST /api/v1/admin/providers
 func (h *ManagementHandler) Create(c *gin.Context) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -243,6 +244,68 @@ func TestUserHandlerBindAuthIdentityMapsRequest(t *testing.T) {
 	require.Equal(t, "subject-123", adminSvc.boundAuthIdentity.ProviderSubject)
 	require.Nil(t, adminSvc.boundAuthIdentity.Channel)
 	require.Equal(t, float64(12), adminSvc.boundAuthIdentity.Metadata["report_id"])
+}
+
+func TestUserHandlerListInvitationRelationships(test *testing.T) {
+	adminService := newAdminUserStub()
+	adminService.users = []identity.User{{ID: 2}, {ID: 7}, {ID: 9}}
+	handler := newAdminUserTestHandler(adminService)
+	inviterID := int64(1500)
+	var requestedIDs []int64
+	handler.relationships = func(_ context.Context, userIDs []int64) (map[int64]UserInvitationRelationship, error) {
+		requestedIDs = append(requestedIDs, userIDs...)
+		return map[int64]UserInvitationRelationship{
+			2: {InviterID: &inviterID, InvitedCount: 0},
+			7: {InvitedCount: 127},
+		}, nil
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/users?page=3&page_size=50", nil)
+	handler.List(ctx)
+	require.Equal(test, http.StatusOK, recorder.Code)
+	require.Equal(test, []int64{2, 7, 9}, requestedIDs)
+	require.Equal(test, 3, adminService.lastListUsers.page)
+	require.Equal(test, 50, adminService.lastListUsers.pageSize)
+	var body struct {
+		Data struct {
+			Items []struct {
+				ID int64 `json:"id"`
+				UserInvitationRelationship
+			} `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(test, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Len(test, body.Data.Items, 3)
+	require.Equal(test, inviterID, *body.Data.Items[0].InviterID)
+	require.Zero(test, body.Data.Items[0].InvitedCount)
+	require.Nil(test, body.Data.Items[1].InviterID)
+	require.Equal(test, int64(127), body.Data.Items[1].InvitedCount)
+	require.Nil(test, body.Data.Items[2].InviterID)
+	require.Zero(test, body.Data.Items[2].InvitedCount)
+}
+
+func TestUserHandlerListInvitationFailureAndEmptyPage(test *testing.T) {
+	adminService := newAdminUserStub()
+	handler := newAdminUserTestHandler(adminService)
+	calls := 0
+	handler.relationships = func(context.Context, []int64) (map[int64]UserInvitationRelationship, error) {
+		calls++
+		return nil, errors.New("affiliate read failed")
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
+	handler.List(ctx)
+	require.Equal(test, http.StatusInternalServerError, recorder.Code)
+	require.Equal(test, 1, calls)
+	adminService.users = nil
+	recorder = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
+	handler.List(ctx)
+	require.Equal(test, http.StatusOK, recorder.Code)
+	require.Equal(test, 1, calls)
 }
 
 func TestUserHandlerListIncludesActivityFieldsAndSortParams(t *testing.T) {
@@ -651,7 +714,7 @@ func setupAdminRouter() (*gin.Engine, *adminUserFixture) {
 		}
 		return out, total, nil
 	}
-	userHandler := NewAdminUserHandler(adminSvc, listKeys, nil, func(c *gin.Context) bool { return EnforceStepUp(c, nil, nil, nil) })
+	userHandler := NewAdminUserHandler(adminSvc, listKeys, nil, func(c *gin.Context) bool { return EnforceStepUp(c, nil, nil, nil) }, nil)
 
 	router.GET("/api/v1/admin/users", userHandler.List)
 	router.GET("/api/v1/admin/users/:id", userHandler.GetByID)
@@ -703,7 +766,7 @@ func (s *adminUserStub) UpdateUser(_ context.Context, id int64, _ *identity.Upda
 func newAdminUserTestHandler(users UserAdministration) *AdminUserHandler[struct{}] {
 	return NewAdminUserHandler[struct{}](users, nil, nil, func(c *gin.Context) bool {
 		return EnforceStepUp(c, nil, nil, nil)
-	})
+	}, nil)
 }
 
 func cloneIntPointer(value *int) *int {

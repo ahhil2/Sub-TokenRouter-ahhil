@@ -58,7 +58,7 @@ func provideKeyAdmin(client *dbent.Client, keys *keypostgres.KeyStore, users *id
 }
 
 // provideIdentityAdminHTTP 绑定 Key 展示和实时并发读取函数，用户管理规则由 identity 执行。
-func provideIdentityAdminHTTP(admin *identity.UserAdmin, keys *apikey.Admin, concurrency *scheduler.ConcurrencyService, totp *identity.TotpService, users *identity.UserService, settings *identity.RuntimeSettings) *identityhttp.AdminUserHandler[keydto.APIKey[routingdto.Group]] {
+func provideIdentityAdminHTTP(admin *identity.UserAdmin, keys *apikey.Admin, concurrency *scheduler.ConcurrencyService, totp *identity.TotpService, users *identity.UserService, settings *identity.RuntimeSettings, affiliates promotion.AffiliateRepository) *identityhttp.AdminUserHandler[keydto.APIKey[routingdto.Group]] {
 	listKeys := func(ctx context.Context, id int64, page, size int, sortBy, order string) ([]keydto.APIKey[routingdto.Group], int64, error) {
 		rows, total, err := keys.GetUserAPIKeys(ctx, id, page, size, sortBy, order)
 		if err != nil {
@@ -86,7 +86,18 @@ func provideIdentityAdminHTTP(admin *identity.UserAdmin, keys *apikey.Admin, con
 		}
 		return result, err
 	}
+	readRelationships := func(ctx context.Context, userIDs []int64) (map[int64]identityhttp.UserInvitationRelationship, error) {
+		relationships, err := affiliates.GetRelationships(ctx, userIDs)
+		if err != nil {
+			return nil, err
+		}
+		result := make(map[int64]identityhttp.UserInvitationRelationship, len(relationships))
+		for userID, relationship := range relationships {
+			result[userID] = identityhttp.UserInvitationRelationship{InviterID: relationship.InviterID, InvitedCount: relationship.AffCount}
+		}
+		return result, nil
+	}
 	return identityhttp.NewAdminUserHandler(admin, listKeys, readConcurrency, func(c *gin.Context) bool {
 		return identityhttp.EnforceStepUp(c, totp, users, settings)
-	})
+	}, readRelationships)
 }

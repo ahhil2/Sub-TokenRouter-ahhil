@@ -406,14 +406,20 @@ export default {
       },
       notifyModeLabels: {
         silent: '静默',
-        popup: '弹窗'
+        popup: '弹窗',
+        banner: '顶部公告（三页共用）'
       },
       form: {
         title: '标题',
         content: '内容（支持 Markdown）',
         status: '状态',
         notifyMode: '通知方式',
-        notifyModeHint: '弹窗模式会自动弹出通知给用户',
+        notifyModeHint: '顶部公告显示在 API 密钥、仪表盘和使用记录页，已读后仍显示；草稿及归档不展示。',
+        bold: '加粗选中文字',
+        fontSize: '字号（px）',
+        applySize: '应用字号',
+        formatHint: '选中文字后设置格式，未选中时应用于全文。中文使用宋体，英文和数字使用 Times New Roman；设备缺少字体时使用可用的替代字体。',
+        bannerPreview: '顶部公告预览',
         startsAt: '开始时间',
         endsAt: '结束时间',
         startsAtPlaceholder: '立即生效',

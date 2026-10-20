@@ -1,7 +1,5 @@
 import { apiClient } from './client'
 
-export const PELICAN_PROMPT = '创建一个HTML,内容是SVG绘制一个鹈鹕自行车的2D动画，你不需要任何测试'
-
 export interface PelicanTask {
   id: number
   group_id: number

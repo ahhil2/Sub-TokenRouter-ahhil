@@ -1,5 +1,6 @@
 export default {
   title: '鹈鹕测智', adminTitle: '鹈鹕测试管理',
+  prompt: '查看当前生成提示词',
   description: '用同一句提示词观察模型的 HTML / SVG 动画生成效果。作品仅供参考，不代表标准化智力评分。历史保留 30 天。',
   adminDescription: '按分组和模型安排生成任务。费用由平台承担，通过格式检查的作品自动公开。',
   group: '分组', model: '模型', date: '生成日期（北京时间）', all: '全部', refresh: '刷新', preview: '查看动画',

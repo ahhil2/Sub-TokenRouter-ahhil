@@ -110,6 +110,8 @@ export interface User {
 }
 
 export interface AdminUser extends User {
+  inviter_id?: number | null
+  invited_count?: number
   // 管理员备注（普通用户接口不返回）
   notes: string
   last_used_at?: string | null
@@ -333,7 +335,7 @@ export type CurrentUserResponse = User
 // ==================== Announcement Types ====================
 
 export type AnnouncementStatus = 'draft' | 'active' | 'archived'
-export type AnnouncementNotifyMode = 'silent' | 'popup'
+export type AnnouncementNotifyMode = 'silent' | 'popup' | 'banner'
 
 export type AnnouncementConditionType = 'subscription' | 'balance'
 

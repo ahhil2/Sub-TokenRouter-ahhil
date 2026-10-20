@@ -113,6 +113,10 @@ func (r *paymentFulfillmentAffiliateRepoStub) ListInvitees(context.Context, int6
 	panic("unexpected ListInvitees call")
 }
 
+func (r *paymentFulfillmentAffiliateRepoStub) GetRelationships(context.Context, []int64) (map[int64]promotion.AffiliateRelationship, error) {
+	panic("unexpected GetRelationships call")
+}
+
 func (r *paymentFulfillmentAffiliateRepoStub) UpdateUserAffCode(context.Context, int64, string) error {
 	panic("unexpected UpdateUserAffCode call")
 }

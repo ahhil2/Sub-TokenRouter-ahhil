@@ -1,12 +1,16 @@
 <template>
-  <div class="relative" ref="containerRef">
+  <div class="relative flex min-w-0 flex-wrap items-center gap-2" ref="containerRef">
     <button
+      ref="triggerRef"
       type="button"
       @click="toggle"
       :aria-expanded="isOpen"
       aria-haspopup="dialog"
+      :title="displayValue"
       :class="[
         'input input-trigger',
+        'min-w-0 max-w-full',
+        quickPresets.length > 0 && 'w-auto',
         // 日期控件文字沿用既有的中性灰(比 .input 默认色略浅),保持现状视觉。
         'text-gray-700 dark:text-gray-300',
         isOpen && 'date-picker-trigger-open'
@@ -26,6 +30,18 @@
           :animate-on-hover="false"
         />
       </span>
+    </button>
+
+    <button
+      v-for="preset in quickPresets"
+      :key="preset.value"
+      type="button"
+      :data-quick-preset="preset.value"
+      :aria-pressed="(isOpen ? snapshot?.preset : activePreset) === preset.value"
+      class="btn btn-secondary shrink-0 text-sm"
+      @click="applyQuickPreset(preset)"
+    >
+      {{ t(preset.labelKey) }}
     </button>
 
     <MotionTransition name="dropdown-fade">
@@ -111,6 +127,31 @@
           </div>
         </div>
 
+        <div v-if="enableTime" class="border-t border-gray-200 p-3 dark:border-dark-700">
+          <div class="grid min-w-0 gap-3">
+            <div class="min-w-0">
+              <label :for="`${pickerId}-start`" class="input-label">{{ t('dates.startDateTime') }}</label>
+              <DateTimePicker
+                :id="`${pickerId}-start`"
+                data-test="range-start-time"
+                :model-value="dateTimeInputValue(localStartDate)"
+                @update:model-value="updateDateTime('start', $event)"
+              />
+            </div>
+            <div class="min-w-0">
+              <label :for="`${pickerId}-end`" class="input-label">{{ t('dates.endDateTime') }}</label>
+              <DateTimePicker
+                :id="`${pickerId}-end`"
+                data-test="range-end-time"
+                :model-value="dateTimeInputValue(localEndDate, true)"
+                @update:model-value="updateDateTime('end', $event)"
+              />
+            </div>
+          </div>
+          <p class="mt-2 text-xs text-gray-500 dark:text-dark-400">{{ t('dates.minutePrecisionHint', { timezone: browserTimezone }) }}</p>
+          <p v-if="rangeError" role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ rangeError }}</p>
+        </div>
+
         <!-- 底栏：左侧显示待应用的区间，右侧取消与应用 -->
         <div class="date-picker-actions">
           <div class="date-picker-summary">
@@ -129,7 +170,7 @@
             <button type="button" class="btn btn-secondary btn-sm h-8" @click="cancel">
               {{ t('common.cancel') }}
             </button>
-            <button type="button" class="btn btn-primary btn-sm h-8" :disabled="selectingEnd" @click="apply">
+            <button type="button" class="btn btn-primary btn-sm h-8" :disabled="selectingEnd || !!rangeError" @click="apply">
               {{ t('dates.apply') }}
             </button>
           </div>
@@ -142,9 +183,10 @@
 <script setup lang="ts">
 import { useFloatingMotion } from '@/composables/useFloatingMotion'
 import MotionTransition from '@/components/common/MotionTransition.vue'
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import DateTimePicker from './DateTimePicker.vue'
 import { getFloatingPanelPosition, type FloatingPanelPosition } from '@/utils/floatingPanel'
 
 interface DatePreset {
@@ -177,6 +219,8 @@ interface Props {
   startDate: string
   endDate: string
   applyOnPreset?: boolean
+  enableTime?: boolean
+  quickPresets?: string[]
 }
 
 interface Emits {
@@ -192,6 +236,9 @@ const { t, locale } = useI18n()
 
 const isOpen = ref(false)
 const containerRef = ref<HTMLElement | null>(null)
+const triggerRef = ref<HTMLButtonElement | null>(null)
+const pickerId = useId()
+const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 const dropdownPosition = ref<FloatingPanelPosition | null>(null)
 const localStartDate = ref(props.startDate)
 const localEndDate = ref(props.endDate)
@@ -255,7 +302,27 @@ const formatDateTimeToString = (date: Date): string => {
 }
 
 const dateInputValue = (value: string): string => {
+  if (value.length > 10) return formatDateToString(new Date(value))
   return value.slice(0, 10)
+}
+
+const dateTimeInputValue = (value: string, endOfDay = false): string => {
+  if (!value) return ''
+  if (value.length === 16) return value
+  const date = new Date(value.length === 10 ? `${value}T00:00:00` : value)
+  if (!Number.isFinite(date.getTime())) return ''
+  if (value.length === 10 && endOfDay) date.setDate(date.getDate() + 1)
+  return formatDateTimeToString(date).slice(0, 16)
+}
+
+const updateDateTime = (boundary: 'start' | 'end', value: string) => {
+  const start = dateTimeInputValue(localStartDate.value)
+  const end = dateTimeInputValue(localEndDate.value, true)
+  localStartDate.value = boundary === 'start' ? value : start
+  localEndDate.value = boundary === 'end' ? value : end
+  activePreset.value = null
+  selectingEnd.value = false
+  hoverDate.value = null
 }
 
 const presets: DatePreset[] = [
@@ -306,12 +373,13 @@ const presets: DatePreset[] = [
   {
     labelKey: 'dates.last24Hours',
     value: 'last24Hours',
+    durationMs: 24 * 60 * 60 * 1000,
     getRange: () => {
       const end = new Date()
       const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
       return {
-        start: formatDateToString(start),
-        end: formatDateToString(end)
+        start: start.toISOString(),
+        end: end.toISOString()
       }
     }
   },
@@ -383,6 +451,10 @@ const presetGroups = presetGroupValues.map((values) =>
     .filter((preset): preset is DatePreset => !!preset)
 )
 
+const quickPresets = computed(() => (props.quickPresets ?? [])
+  .map((value) => presets.find((preset) => preset.value === value))
+  .filter((preset): preset is DatePreset => !!preset))
+
 // 弹层打开期间触发器继续显示已生效的范围，点应用后才切换文案。
 const displayValue = computed(() => {
   const committed = isOpen.value && snapshot.value
@@ -395,6 +467,9 @@ const displayValue = computed(() => {
   }
 
   if (committed.start && committed.end) {
+    if (committed.start.length > 10 || committed.end.length > 10) {
+      return `${formatSummaryDate(committed.start)} - ${formatSummaryDate(committed.end)}`
+    }
     if (committed.start === committed.end) {
       return formatDate(committed.start)
     }
@@ -414,13 +489,15 @@ const formatDate = (dateStr: string): string => {
 
 // 底栏摘要带年份；分钟级预设的值含时刻，一并显示到分钟。
 const formatSummaryDate = (value: string): string => {
-  if (!value) return '—'
+  if (!value || !Number.isFinite(new Date(value).getTime())) return '—'
   const text = parseLocalDate(value).toLocaleDateString(dateLocale.value, {
     year: 'numeric',
     month: 'short',
     day: 'numeric'
   })
-  return value.length > 10 ? `${text} ${value.slice(11, 16)}` : text
+  if (value.length <= 10) return text
+  const time = new Date(value).toLocaleTimeString(dateLocale.value, { hour: '2-digit', minute: '2-digit', hour12: false })
+  return `${text} ${time}`
 }
 
 const monthLabel = computed(() => {
@@ -540,6 +617,21 @@ const parseRangeTime = (value: string): number | null => {
   return Number.isFinite(timestamp) ? timestamp : null
 }
 
+const rangeError = computed(() => {
+  const start = parseRangeTime(localStartDate.value)
+  const end = parseRangeTime(localEndDate.value)
+  if (start === null || end === null) return t('dates.invalidDateTimeRange')
+  const endDate = new Date(end)
+  if (localEndDate.value.length === 10) endDate.setDate(endDate.getDate() + 1)
+  if (start >= endDate.getTime()) return t('dates.invalidDateTimeRange')
+  for (const value of [localStartDate.value, localEndDate.value]) {
+    if (value.length === 16 && formatDateTimeToString(new Date(value)).slice(0, 16) !== value) {
+      return t('dates.invalidDateTimeRange')
+    }
+  }
+  return ''
+})
+
 const selectPreset = (preset: DatePreset) => {
   const range = preset.getRange()
   localStartDate.value = range.start
@@ -553,11 +645,17 @@ const selectPreset = (preset: DatePreset) => {
   }
 }
 
+const applyQuickPreset = (preset: DatePreset) => {
+  selectPreset(preset)
+  if (!props.applyOnPreset) apply()
+}
+
 const presetMatchesRange = (preset: DatePreset): boolean => {
   const range = preset.getRange()
   if (!preset.durationMs) {
     return range.start === localStartDate.value && range.end === localEndDate.value
   }
+  if (localStartDate.value.length <= 10 || localEndDate.value.length <= 10) return false
 
   const startMs = parseRangeTime(localStartDate.value)
   const endMs = parseRangeTime(localEndDate.value)
@@ -618,6 +716,11 @@ const cancel = () => {
 }
 
 const apply = () => {
+  if (selectingEnd.value || rangeError.value) return
+  if (props.enableTime) {
+    if (localStartDate.value.length > 10) localStartDate.value = new Date(localStartDate.value).toISOString()
+    if (localEndDate.value.length > 10) localEndDate.value = new Date(localEndDate.value).toISOString()
+  }
   emit('update:startDate', localStartDate.value)
   emit('update:endDate', localEndDate.value)
   emit('change', {
@@ -630,7 +733,7 @@ const apply = () => {
 
 // 触发器在视口右半侧时右缘对齐，否则左缘对齐；空间不足时由公共定位函数翻转和夹取。
 const updateDropdownPosition = () => {
-  const trigger = containerRef.value?.getBoundingClientRect()
+  const trigger = triggerRef.value?.getBoundingClientRect()
   if (!trigger) return
   const triggerCenter = trigger.left + trigger.width / 2
   dropdownPosition.value = getFloatingPanelPosition(trigger, window.innerWidth, window.innerHeight, {
@@ -709,7 +812,7 @@ onUnmounted(() => {
 }
 
 .date-picker-value {
-  @apply font-medium;
+  @apply min-w-0 truncate font-medium;
 }
 
 .date-picker-chevron {

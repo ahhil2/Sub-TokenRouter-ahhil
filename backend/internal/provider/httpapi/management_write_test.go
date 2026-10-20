@@ -23,6 +23,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+type displayOrderManagementStub struct {
+	ProviderManagement
+	ids []int64
+	err error
+}
+
 type duplicateProviderAdminServiceStub struct {
 	ProviderManagement
 	provider     *providercore.Record
@@ -372,4 +378,40 @@ func setupDuplicateProviderRouter(t *testing.T, svc ProviderManagement, coordina
 	}
 	router.POST("/api/v1/admin/providers/:id/duplicate", handler.Duplicate)
 	return router
+}
+
+func (stub *displayOrderManagementStub) UpdateProviderDisplayOrder(_ context.Context, ids []int64) error {
+	stub.ids = ids
+	return stub.err
+}
+
+func TestProviderDisplayOrderHandler(test *testing.T) {
+	for _, scenario := range []struct {
+		name    string
+		body    string
+		status  int
+		failure error
+	}{
+		{name: "saves order", body: `{"ids":[2,1]}`, status: http.StatusOK},
+		{name: "rejects empty order", body: `{"ids":[]}`, status: http.StatusBadRequest},
+		{name: "rejects scheduling fields", body: `{"ids":[1],"priority":0}`, status: http.StatusBadRequest},
+		{name: "reports deleted provider", body: `{"ids":[2,1]}`, status: http.StatusNotFound, failure: providercore.ErrProviderNotFound},
+	} {
+		test.Run(scenario.name, func(test *testing.T) {
+			stub := &displayOrderManagementStub{err: scenario.failure}
+			handler := &ManagementHandler{adminService: stub}
+			router := gin.New()
+			router.PUT("/providers/display-order", handler.UpdateDisplayOrder)
+			request := httptest.NewRequest(http.MethodPut, "/providers/display-order", strings.NewReader(scenario.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			require.Equal(test, scenario.status, response.Code, response.Body.String())
+			if scenario.status == http.StatusBadRequest {
+				require.Nil(test, stub.ids)
+			} else {
+				require.Equal(test, []int64{2, 1}, stub.ids)
+			}
+		})
+	}
 }

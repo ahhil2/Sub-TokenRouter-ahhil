@@ -410,14 +410,20 @@ export default {
       },
       notifyModeLabels: {
         silent: 'Silent',
-        popup: 'Popup'
+        popup: 'Popup',
+        banner: 'Page banner (three pages)'
       },
       form: {
         title: 'Title',
         content: 'Content (Markdown supported)',
         status: 'Status',
         notifyMode: 'Notify Mode',
-        notifyModeHint: 'Popup mode will show a popup notification to users',
+        notifyModeHint: 'Banners appear on API Keys, Dashboard and Usage, including after being read. Draft and archived notices stay hidden.',
+        bold: 'Bold selection',
+        fontSize: 'Font size (px)',
+        applySize: 'Apply size',
+        formatHint: 'Select text to format it, or apply to the whole text without a selection. Chinese uses SimSun; English and numbers use Times New Roman, with available fallback fonts when unavailable.',
+        bannerPreview: 'Page banner preview',
         startsAt: 'Starts At',
         endsAt: 'Ends At',
         startsAtPlaceholder: 'Starts immediately',

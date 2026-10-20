@@ -36,6 +36,8 @@
 <a id="layout_spacing"></a>
 ## 间距约定
 
+用户 API 密钥、仪表盘和使用记录的 `AppLayout` 页头在标题与操作按钮之间展示 `AnnouncementBanner`。没有匹配的顶部公告时不占空间，窄屏自动换行。顶部公告使用局部宋体及 Times New Roman 字体栈，不改变站点其余文字。仪表盘消费卡的余额位于金额行，消费与余额共用 `text-2xl`、字重和前景色，窄屏时余额整组换到下一行。
+
 - 所有间距都落在 Tailwind 的 4px 网格上。`mt-[2px]`、`padding-left: 17px` 这类任意值会被门禁拦截。
 - 页面布局有两档间距。独立大卡片、统计卡、图表卡、移动端数据卡之间，以及工具栏、控件组和卡片之间，用 16px（`gap-4` / `space-y-4`）；工具栏和控件组内部用 8px（`gap-2` / `space-y-2`）。横向网格和纵向堆叠用同样的档位，加载骨架和实际内容的间距一致。`TablePageLayout` 里相邻的工具组之间 8px，最后一组工具到表格 16px。API 密钥页的端点条例外，它到表格也是 8px，和它到上方工具栏的间距相同。移动端数据卡和分页器之间也是 16px。`RuleListEditor` 的标题操作区到卡片列表 16px，卡片行之间 16px，线形行和它的标题操作区之间 8px。
 - 列表的搜索、筛选、刷新和批量操作工具栏都用 `gap-2`（8px），包括工具栏外层、左侧筛选组和右侧操作组；共用组件和加载骨架也用这个间距。窄屏换行时行间距同样是 8px。筛选弹层里带标签的字段按表单间距排列；分页摘要、正文信息组和卡片区块各用自己的间距。
@@ -94,6 +96,8 @@
 - 挂载到 body 的浮层，定位只有一个实现：`utils/floatingPanel.ts` 的 `getFloatingPanelPosition`。翻转、对齐、夹取和窄屏行为都通过 options 控制：固定高度的菜单用 `fixedHeight`，左对齐面板用 `align: 'left'`，菜单类传 `pinLeftOnMobile: false`。组件里自己计算 rect 和 spaceBelow 做翻转，会和这个实现产生分歧。JS 侧的面板尺寸常量在 `constants/overlay.ts`（`SELECT_PANEL_MAX_HEIGHT`、`MIN_COMFORTABLE_PANEL_HEIGHT`），和样式档位取值一致。
 
 管理员和普通用户的使用记录页初始日期范围是浏览器本地日历的“今天”，起止日期相同。管理员页面链接携带 `start_date` 或 `end_date` 时，按链接中的日期查询。
+
+`DateRangePicker` 的 `quickPresets` 可在触发器右侧展示立即应用的快捷按钮，使用记录页配置为昨天和过去24小时。`enableTime` 在弹层中加入两个 `DateTimePicker`，用自绘日历和时分列表设置范围，和其他页面的日期时间控件保持一致。草稿使用浏览器本地时间，应用时转换为带时区的时间戳；触发器显示已应用的日期和时分。两项功能按调用处启用，纯日期选择保持整天范围。
 
 ## 断点
 

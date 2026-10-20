@@ -98,6 +98,7 @@ function mountFilters(filters = defaultFilters()) {
     },
     global: {
       stubs: {
+        Icon: true,
         Select: true,
         Teleport: true,
       },
@@ -117,6 +118,47 @@ function deferred<T>() {
 }
 
 describe('UsageFilters quick filters', () => {
+  it.each(['usage', 'errors', 'ranking'] as const)('resets all filters from the toolbar while preserving dates in %s mode', async mode => {
+    const filters = {
+      ...defaultFilters(), model: 'claude-test', user_id: 7, provider_id: 8,
+      api_key_id: 9, group_id: 3, team_id: 4, request_id: 'request-test',
+      error_phase: 'upstream', error_category: 'rate_limit', status_code: 429,
+    }
+    const wrapper = mountFilters(filters as unknown as ReturnType<typeof defaultFilters>)
+    await wrapper.setProps({ showActions: true, mode })
+    await flushPromises()
+
+    const reset = wrapper.get('[data-testid="usage-toolbar-reset"]')
+    expect(reset.isVisible()).toBe(true)
+    expect(reset.text()).toBe('Reset')
+    expect(reset.element.closest('[role="dialog"]')).toBeNull()
+    await reset.trigger('click')
+
+    for (const [key, value] of Object.entries(filters)) {
+      if (key !== 'start_date' && key !== 'end_date') expect(value).toBeUndefined()
+    }
+    expect(filters.start_date).toBe('2026-05-01')
+    expect(filters.end_date).toBe('2026-05-28')
+    expect(wrapper.emitted('change')).toHaveLength(1)
+    expect(wrapper.emitted('cleanup')).toBeUndefined()
+    wrapper.unmount()
+  }, 60_000)
+
+  it('clears unselected search text when resetting from the toolbar', async () => {
+    const wrapper = mountFilters()
+    await wrapper.setProps({ showActions: true })
+    await flushPromises()
+    const inputs = wrapper.findAll('input').filter(input =>
+      ['Search user...', 'Search provider...', 'Search API key...'].includes(input.attributes('placeholder'))
+    )
+    expect(inputs).toHaveLength(3)
+    for (const input of inputs) await input.setValue('unfinished search')
+    await wrapper.get('[data-testid="usage-toolbar-reset"]').trigger('click')
+    for (const input of inputs) expect(input.element.value).toBe('')
+    expect(wrapper.emitted('change')).toHaveLength(1)
+    wrapper.unmount()
+  }, 60_000)
+
   it.each(['usage', 'errors', 'ranking'] as const)('keeps four ordered filters outside the panel in %s mode', async mode => {
     const wrapper = mountFilters()
     await wrapper.setProps({ mode })

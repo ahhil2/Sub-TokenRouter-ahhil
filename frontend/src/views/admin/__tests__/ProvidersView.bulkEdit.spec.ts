@@ -642,7 +642,7 @@ describe('admin ProvidersView bulk edit scope', () => {
     expect(getUsage).toHaveBeenCalledWith(99, 'active', true)
   })
 
-  it('falls back to name sorting for the removed upstream billing sort key', async () => {
+  it('falls back to display ordering for the removed upstream billing sort key', async () => {
     localStorage.setItem('provider-table-sort', JSON.stringify({ key: 'upstream_billing_rate', order: 'asc' }))
 
     const wrapper = mount(ProvidersView, {
@@ -683,7 +683,7 @@ describe('admin ProvidersView bulk edit scope', () => {
     await flushPromises()
 
     expect(listProviders.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
-      sort_by: 'name',
+      sort_by: 'display_order',
       sort_order: 'asc'
     }))
     expect(wrapper.find('[data-test="probe-upstream-billing"]').exists()).toBe(false)

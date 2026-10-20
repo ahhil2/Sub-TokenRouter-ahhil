@@ -1,6 +1,13 @@
 export default {
 // Providers
     providers: {
+      displayOrder: 'Arrange providers',
+      displayOrderHint: 'Drag or use the arrows to arrange all providers. Scheduling priority is controlled in provider settings.',
+      displayOrderLoadFailed: 'Could not load the order. Reopen to retry (up to 10,000 providers).',
+      displayOrderSaveFailed: 'Could not save the order. Retry, or reopen the list if a provider was deleted.',
+      displayOrderSaved: 'Provider order saved',
+      moveUp: 'Move up',
+      moveDown: 'Move down',
       semanticError: {
         section: 'Failure handling',
         title: 'Detect error text in responses',

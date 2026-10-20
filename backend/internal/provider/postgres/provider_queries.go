@@ -688,6 +688,14 @@ func ProviderListOrder(params pagination.PaginationParams) []func(*entsql.Select
 	field := dbprovider.FieldName
 	defaultOrder := true
 	switch sortBy {
+	case "display_order":
+		return []func(*entsql.Selector){func(selector *entsql.Selector) {
+			direction := " ASC"
+			if sortOrder == pagination.SortOrderDesc {
+				direction = " DESC"
+			}
+			selector.OrderExpr(entsql.Expr("CASE WHEN jsonb_typeof(extra->'display_order') = 'number' THEN (extra->>'display_order')::numeric END" + direction + " NULLS LAST"))
+		}, dbent.Asc(dbprovider.FieldName), dbent.Asc(dbprovider.FieldID)}
 	case "", "name":
 		field = dbprovider.FieldName
 	case "id":

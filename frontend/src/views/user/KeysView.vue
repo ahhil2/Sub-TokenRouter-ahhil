@@ -130,21 +130,22 @@
                 class="text-blue-500"
                 :title="t('keys.ipRestrictionEnabled')"
               />
-              <!-- 并发大于 0 时，名称后面显示并发数和上限。 -->
-              <span
-                v-if="(row.current_concurrency ?? 0) > 0"
-                data-test="key-concurrency"
-                :class="['ml-1 inline-flex items-center gap-1 text-xs tabular-nums', concurrencyTone(row).text]"
-                :title="concurrencyTitle(row)"
-                :aria-label="concurrencyTitle(row)"
-              >
-                <span :class="['h-1.5 w-1.5 rounded-full', concurrencyTone(row).dot]" aria-hidden="true" />
-                <span>
-                  <span>{{ row.current_concurrency }}</span>
-                  <span v-if="(row.concurrency_limit ?? 0) > 0" class="text-gray-400 dark:text-dark-500">/{{ row.concurrency_limit }}</span>
-                </span>
-              </span>
             </div>
+          </template>
+
+          <template #cell-current_concurrency="{ row }">
+            <span
+              data-test="key-concurrency"
+              :class="['inline-flex items-center gap-1.5 rounded-compact bg-gray-100 px-2 py-1 text-sm tabular-nums dark:bg-dark-800', concurrencyTone(row).text]"
+              :title="concurrencyTitle(row)"
+              :aria-label="concurrencyTitle(row)"
+            >
+              <span :class="['h-1.5 w-1.5 rounded-full', concurrencyTone(row).dot]" aria-hidden="true" />
+              <span>
+                <span>{{ row.current_concurrency ?? 0 }}</span>
+                <span v-if="(row.concurrency_limit ?? 0) > 0" class="text-gray-400 dark:text-dark-500">/{{ row.concurrency_limit }}</span>
+              </span>
+            </span>
           </template>
 
           <template #cell-group="{ row }">
@@ -1411,6 +1412,9 @@ const compositeGroupChipClass = (displayBrand?: string | null) => {
 const concurrencyTone = (row: ApiKey) => {
   const current = row.current_concurrency ?? 0
   const limit = row.concurrency_limit ?? 0
+  if (current === 0) {
+    return { dot: 'bg-gray-400 dark:bg-dark-500', text: 'text-gray-500 dark:text-dark-300' }
+  }
   if (limit > 0 && current >= limit) {
     return { dot: 'bg-red-500', text: 'font-medium text-red-600 dark:text-red-400' }
   }
@@ -1439,6 +1443,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'id', label: t('keys.id'), sortable: true },
   { key: 'key', label: t('keys.apiKey'), sortable: false },
   { key: 'group', label: t('keys.group'), sortable: false },
+  { key: 'current_concurrency', label: t('keys.currentConcurrency'), sortable: false },
   { key: 'usage', label: t('keys.usage'), sortable: true },
   { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
   { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },

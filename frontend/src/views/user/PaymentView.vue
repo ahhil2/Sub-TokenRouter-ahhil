@@ -24,26 +24,26 @@
       :aria-label="t('purchase.buyRedeemCode')"
       class="mb-6 w-full space-y-4"
     >
-      <a
-        :href="redeemShopUrl"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="group flex w-full flex-col items-center justify-center gap-4 rounded-surface border border-primary-300 bg-primary-50 px-4 py-8 text-center text-primary-900 transition-colors hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:border-primary-500/40 dark:bg-primary-500/10 dark:text-primary-100 dark:hover:bg-primary-500/20 dark:focus-visible:ring-offset-dark-900 sm:px-8 sm:py-10"
-      >
-        <span class="text-4xl font-bold leading-tight tracking-wide sm:text-5xl lg:text-6xl">
-          {{ t('purchase.buyRedeemCode') }}
-        </span>
-        <span class="inline-flex items-center gap-2 text-sm text-primary-700 dark:text-primary-300">
-          {{ t('purchase.openInNewTab') }}
-          <Icon name="externalLink" size="sm" aria-hidden="true" />
-        </span>
-      </a>
-      <div class="flex flex-col items-center justify-between gap-3 text-center sm:flex-row sm:text-left">
-        <p class="text-sm text-gray-600 dark:text-dark-300">{{ t('purchase.redeemCodeDescription') }}</p>
+      <div class="flex flex-col items-center justify-center gap-4 rounded-surface border border-primary-300 bg-primary-50 px-4 py-8 dark:border-primary-500/40 dark:bg-primary-500/10 sm:flex-row sm:gap-8 sm:px-8 sm:py-10">
+        <a
+          :href="redeemShopUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="group flex min-w-0 flex-col items-center justify-center gap-4 rounded-control text-center text-primary-900 transition-colors hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-100 dark:hover:text-primary-300"
+        >
+          <span class="text-4xl font-bold leading-tight tracking-wide sm:text-5xl lg:text-6xl">
+            {{ t('purchase.buyRedeemCode') }}
+          </span>
+          <span class="inline-flex items-center gap-2 text-sm text-primary-700 dark:text-primary-300">
+            {{ t('purchase.openInNewTab') }}
+            <Icon name="externalLink" size="sm" aria-hidden="true" />
+          </span>
+        </a>
         <RouterLink to="/redeem" class="btn btn-secondary shrink-0">
           {{ t('purchase.redeemPurchasedCode') }}
         </RouterLink>
       </div>
+      <p class="text-sm text-gray-600 dark:text-dark-300">{{ t('purchase.redeemCodeDescription') }}</p>
     </section>
     <!-- 不加 mx-auto：app-main 是 flex 列容器，auto 边距会让内容收缩到内容宽度并与页头错位。 -->
     <div

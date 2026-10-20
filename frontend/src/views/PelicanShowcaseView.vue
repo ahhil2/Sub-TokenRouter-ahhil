@@ -1,11 +1,14 @@
 <template>
   <component :is="auth.isAuthenticated ? AppLayout : 'div'" :class="auth.isAuthenticated ? '' : 'min-h-screen bg-gray-50 dark:bg-dark-900'">
     <AppHeader v-if="!auth.isAuthenticated" public-page />
-    <main class="mx-auto w-full max-w-7xl space-y-6" :class="auth.isAuthenticated ? '' : 'px-4 pb-8 pt-[calc(var(--header-h)+1.5rem)] md:px-6 lg:px-8'">
+    <main class="mx-auto w-full max-w-screen-2xl space-y-6" :class="auth.isAuthenticated ? '' : 'px-4 pb-8 pt-[calc(var(--header-h)+1.5rem)] md:px-6 lg:px-8'">
       <header class="space-y-2">
         <h1 class="text-2xl font-semibold text-gray-950 dark:text-white">{{ t('pelican.title') }}</h1>
         <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('pelican.description') }}</p>
-        <blockquote class="rounded-card border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-dark-700 dark:bg-dark-800 dark:text-dark-200">{{ PELICAN_PROMPT }}</blockquote>
+        <details v-if="prompt" class="rounded-card border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-dark-700 dark:bg-dark-800 dark:text-dark-200">
+          <summary class="cursor-pointer font-medium">{{ t('pelican.prompt') }}</summary>
+          <p class="mt-4 whitespace-pre-wrap break-words">{{ prompt }}</p>
+        </details>
       </header>
       <form class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" @submit.prevent="reload">
         <label class="space-y-2 text-sm"><span>{{ t('pelican.group') }}</span><Select v-model="groupID" :options="groupOptions" /></label>
@@ -18,7 +21,7 @@
       <p v-else-if="!items.length" class="rounded-card border border-dashed border-gray-300 p-6 text-center text-gray-500 dark:border-dark-700">{{ t('pelican.empty') }}</p>
       <section v-for="group in grouped" :key="group.id" class="space-y-4">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ group.name }}</h2>
-        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <PelicanCard v-for="item in group.items" :key="item.id" :item="item" :active="activeIDs.has(item.id)" @visible="visibility" @open="open" />
         </div>
       </section>
@@ -46,11 +49,12 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import PelicanCard from '@/components/pelican/PelicanCard.vue'
 import PelicanPreview from '@/components/pelican/PelicanPreview.vue'
-import { pelicanApi, PELICAN_PROMPT, type PelicanCatalogItem, type PelicanResult } from '@/api/pelican'
+import { pelicanApi, type PelicanCatalogItem, type PelicanResult } from '@/api/pelican'
 
 const { t } = useI18n()
 const auth = useAuthStore()
 const items = ref<PelicanResult[]>([])
+const prompt = ref('')
 const catalog = ref<PelicanCatalogItem[]>([])
 const groupID = ref<number | string>(0)
 const model = ref('')
@@ -84,7 +88,11 @@ async function load() {
   error.value = false
   try {
     const result = await pelicanApi.results({ page: page.value, group_id: Number(groupID.value), model: model.value, date: date.value }, false, controller.signal)
-    if (!controller.signal.aborted) { items.value = result.items; hasMore.value = result.has_more }
+    if (!controller.signal.aborted) {
+      items.value = result.items
+      hasMore.value = result.has_more
+      prompt.value = result.prompt
+    }
   } catch { if (!controller.signal.aborted) error.value = true }
   finally { if (!controller.signal.aborted) loading.value = false }
 }

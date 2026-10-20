@@ -173,6 +173,7 @@
       <!-- 分页留在表格外框内，不随表体滚动。 -->
       <Pagination
         v-if="total > 0"
+        show-jump
         :total="total"
         :page="page"
         :page-size="pageSize"

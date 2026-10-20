@@ -24,6 +24,25 @@ describe('pelican sandbox document', () => {
     expect(preparePelicanHTML('')).toBe('')
     expect(preparePelicanHTML('鸟'.repeat(400000))).toBe('')
   })
+  it('keeps pause buttons and listener scripts while removing form and navigation attributes', () => {
+    const result = preparePelicanHTML(`<html><body>
+      <svg id="bird"></svg>
+      <button id="pause" type="submit" form="external" formaction="https://example.invalid" formtarget="_top" onclick="alert(1)" aria-label="暂停动画">暂停</button>
+      <script>document.getElementById('pause').addEventListener('click', () => { document.body.dataset.paused = 'yes' })</script>
+    </body></html>`)
+    const parsed = new DOMParser().parseFromString(result, 'text/html')
+    const button = parsed.querySelector('#pause')
+    expect(button?.tagName).toBe('BUTTON')
+    expect(button?.getAttribute('type')).toBe('button')
+    expect(button?.getAttribute('aria-label')).toBe('暂停动画')
+    for (const attribute of ['form', 'formaction', 'formtarget', 'onclick']) {
+      expect(button?.hasAttribute(attribute)).toBe(false)
+    }
+    expect(parsed.querySelector('script')?.textContent).toContain("getElementById('pause').addEventListener")
+    expect(result).not.toContain('example.invalid')
+    expect(result).toContain('html{overflow:auto}')
+    expect(PELICAN_CSP).toContain("form-action 'none'")
+  })
   it('keeps root layout attributes while stripping event handlers', () => {
     const result = preparePelicanHTML('<html lang="zh"><body id="scene" style="display:grid" onload="alert(1)"><svg onload="alert(2)"></svg></body></html>')
     expect(result).toContain('lang="zh"')

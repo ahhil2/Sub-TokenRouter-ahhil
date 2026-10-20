@@ -267,6 +267,21 @@ describe('user UsageView', () => {
     }
   }, 60_000)
 
+  it.each([
+    { startDate: '2026-10-18T19:25:30.123Z', endDate: '2026-10-19T19:25:30.123Z', preset: 'last24Hours' },
+    { startDate: '2026-10-19T12:20:00.000Z', endDate: '2026-10-19T13:40:00.000Z', preset: null },
+  ])('preserves precise ranges for usage and hourly charts: $startDate', async (range) => {
+    const wrapper = mountUsageView()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'DateRangePicker' }).props()).toMatchObject({ enableTime: true, quickPresets: ['yesterday', 'last24Hours'] })
+    wrapper.findComponent({ name: 'DateRangePicker' }).vm.$emit('change', range)
+    await flushPromises()
+    const requestRange = { start_date: range.startDate, end_date: range.endDate }
+    expect(query).toHaveBeenLastCalledWith(expect.objectContaining(requestRange), expect.anything())
+    expect(getStats).toHaveBeenLastCalledWith(expect.objectContaining(requestRange))
+    expect(getDashboardSnapshotV2).toHaveBeenLastCalledWith(expect.objectContaining({ ...requestRange, granularity: 'hour' }))
+  })
+
   it('shows model and group quick filters without administrator-only fields', async () => {
     const wrapper = mountUsageView()
     await flushPromises()

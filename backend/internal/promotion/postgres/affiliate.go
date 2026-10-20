@@ -20,6 +20,13 @@ const (
 	affiliateCodeLength      = 12
 	affiliateCodeMaxAttempts = 12
 
+	affiliateRelationshipsSQL = `
+SELECT requested.user_id, profile.inviter_id,
+       GREATEST(COALESCE(profile.aff_count, 0),
+           (SELECT COUNT(*) FROM user_affiliates invitee WHERE invitee.inviter_id = requested.user_id))
+FROM unnest($1::bigint[]) AS requested(user_id)
+LEFT JOIN user_affiliates profile ON profile.user_id = requested.user_id`
+
 	affiliateUserOverviewSQL = `
 SELECT ua.user_id,
        COALESCE(u.email, ''),
@@ -83,6 +90,35 @@ func (r *affiliateRepository) EnsureUserAffiliate(ctx context.Context, userID in
 func (r *affiliateRepository) GetAffiliateByCode(ctx context.Context, code string) (*promotion.AffiliateSummary, error) {
 	client := clientFromContext(ctx, r.client)
 	return queryAffiliateByCode(ctx, client, code)
+}
+
+func (r *affiliateRepository) GetRelationships(ctx context.Context, userIDs []int64) (map[int64]promotion.AffiliateRelationship, error) {
+	relationships := make(map[int64]promotion.AffiliateRelationship, len(userIDs))
+	if len(userIDs) == 0 {
+		return relationships, nil
+	}
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, affiliateRelationshipsSQL, pq.Array(userIDs))
+	if err != nil {
+		return nil, fmt.Errorf("get affiliate relationships: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var userID int64
+		var inviterID sql.NullInt64
+		var relationship promotion.AffiliateRelationship
+		if err := rows.Scan(&userID, &inviterID, &relationship.AffCount); err != nil {
+			return nil, fmt.Errorf("scan affiliate relationship: %w", err)
+		}
+		if inviterID.Valid {
+			relationship.InviterID = &inviterID.Int64
+		}
+		relationships[userID] = relationship
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read affiliate relationships: %w", err)
+	}
+	return relationships, nil
 }
 
 func (r *affiliateRepository) BindInviter(ctx context.Context, userID, inviterID int64) (bool, error) {

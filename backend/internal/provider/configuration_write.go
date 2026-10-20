@@ -28,8 +28,9 @@ const (
 	ConfigQuotaDimension
 )
 
-// 消费由 billing 写入，观测由对应维护入口写入；配置替换不得覆盖其最新值。
+// 维护字段由对应入口写入，配置替换时从锁内最新记录继承。
 var managedConfigurationExtraKeys = []string{
+	"display_order",
 	"quota_used", "quota_daily_used", "quota_daily_start", "quota_weekly_used", "quota_weekly_start",
 	"grok_billing_snapshot", "grok_usage_snapshot", "grok_observed_models",
 	"qoder_quota_snapshot", "qoder_quota_updated_at",

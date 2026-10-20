@@ -20,7 +20,7 @@
           : 'hover:border-black/20 dark:hover:border-dark-500'"
         @click="selectMetric(item.key)"
       >
-        <div class="flex min-w-0 items-center gap-2">
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
           <span
             class="flex h-7 w-7 shrink-0 items-center justify-center rounded-compact"
             :class="[METRIC_TONES[item.key].tile, METRIC_TONES[item.key].icon]"
@@ -28,17 +28,28 @@
             <Icon :name="item.icon" size="sm" />
           </span>
           <span class="truncate text-xs font-medium text-gray-500 dark:text-dark-400">{{ item.label }}</span>
+          <UsageSparkline
+            v-if="loaded && item.key === 'cost'"
+            class="metric-sparkline ml-auto h-7 w-16 shrink-0"
+            :class="metric === item.key ? 'text-primary-600 dark:text-primary-500' : 'text-gray-400 dark:text-dark-500'"
+            :values="item.series"
+            :data-testid="`usage-sparkline-${item.key}`"
+          />
         </div>
-        <div class="flex min-w-0 items-end justify-between gap-3">
+        <div class="flex min-w-0 flex-wrap items-end justify-between gap-3">
           <Skeleton v-if="!loaded" :width="96" :height="32" />
           <span v-else class="min-w-0 truncate text-2xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-dark-50">
             <!-- 滚动中的数字只做视觉展示，读屏读取最终值 -->
             <span aria-hidden="true">{{ item.animatedValue }}</span>
             <span class="sr-only">{{ item.value }}</span>
           </span>
+          <div v-if="item.key === 'cost'" data-testid="usage-balance" class="min-w-0 flex-1 basis-full text-center sm:basis-32">
+            <span class="block text-xs text-gray-500 dark:text-dark-400">{{ t('redeem.currentBalance') }}</span>
+            <span data-testid="usage-balance-amount" class="block break-words text-2xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-dark-50">{{ authStore.user ? formatBalanceAmount(authStore.user.balance) : '—' }}</span>
+          </div>
           <!-- 只画走势线，选中的指标用品牌色 -->
           <UsageSparkline
-            v-if="loaded"
+            v-if="loaded && item.key !== 'cost'"
             class="metric-sparkline h-8 w-20 shrink-0"
             :class="metric === item.key ? 'text-primary-600 dark:text-primary-500' : 'text-gray-400 dark:text-dark-500'"
             :values="item.series"
@@ -178,6 +189,7 @@ import { cacheHitRateOf } from './usageChartData'
 import { CHART_REVEAL_MS, COUNT_UP_MS } from './dashboardMotion'
 import { METRIC_TONES } from './metricTones'
 import { injectUsageChartState, type UsageMetric } from './usageChartState'
+import { useAuthStore } from '@/stores/auth'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip)
 
@@ -201,6 +213,7 @@ const LABEL_PADDING_X = 6
 const LABEL_GAP = 10
 
 const { t } = useI18n()
+const authStore = useAuthStore()
 const { formatBalanceAmount } = useBalanceDisplay()
 const { colors: themeColors, isDark } = useChartTheme()
 const reducedMotion = usePreferredReducedMotion()
@@ -304,15 +317,6 @@ const metricTabs = computed(() => {
       series: seriesOf('tokens'),
     },
     {
-      key: 'cost' as const,
-      icon: 'dollar' as IconName,
-      label: t('dashboard.usageChart.metrics.cost'),
-      value: formatCostTotal(now.cost),
-      animatedValue: formatCostTotal(animatedCost.value),
-      delta: percentDelta(now.cost, prev?.cost),
-      series: seriesOf('cost'),
-    },
-    {
       key: 'cacheHitRate' as const,
       icon: 'database' as IconName,
       label: t('dashboard.usageChart.metrics.cacheHitRate'),
@@ -320,6 +324,15 @@ const metricTabs = computed(() => {
       animatedValue: now.cacheHitRate === null ? '—' : formatPercent(animatedHitRate.value),
       delta: pointDelta(now.cacheHitRate, prev?.cacheHitRate),
       series: seriesOf('cacheHitRate'),
+    },
+    {
+      key: 'cost' as const,
+      icon: 'dollar' as IconName,
+      label: t('dashboard.usageChart.metrics.cost'),
+      value: formatCostTotal(now.cost),
+      animatedValue: formatCostTotal(animatedCost.value),
+      delta: percentDelta(now.cost, prev?.cost),
+      series: seriesOf('cost'),
     },
   ]
 })

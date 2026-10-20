@@ -13,6 +13,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
+	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 	"github.com/TokenFlux/TokenRouter/internal/settings"
@@ -67,6 +68,63 @@ type usageRankingRepoCapture struct {
 	usage.UsageLogRepository
 	called bool
 	sortBy usage.UsageRankingSortBy
+}
+
+type userErrorsCapture struct {
+	ports.UserErrors
+	filter *ops.OpsErrorLogFilter
+	userID int64
+}
+
+type userErrorsSettings struct {
+	ports.Settings
+}
+
+func TestUserErrorsMinuteRange(test *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		query  string
+		start  string
+		end    string
+		status int
+	}{
+		{name: "local_minutes", query: "start_date=2026-10-19T20:20&end_date=2026-10-19T21:40&timezone=Asia/Shanghai", start: "2026-10-19T12:20:00Z", end: "2026-10-19T13:40:00Z", status: http.StatusOK},
+		{name: "utc_minutes", query: "start_date=2026-10-19T12:20:00Z&end_date=2026-10-19T13:40:00Z", start: "2026-10-19T12:20:00Z", end: "2026-10-19T13:40:00Z", status: http.StatusOK},
+		{name: "whole_day", query: "start_date=2026-10-19&end_date=2026-10-19&timezone=Asia/Shanghai", start: "2026-10-18T16:00:00Z", end: "2026-10-19T16:00:00Z", status: http.StatusOK},
+		{name: "reversed", query: "start_date=2026-10-19T21:40&end_date=2026-10-19T20:20", status: http.StatusBadRequest},
+		{name: "equal", query: "start_date=2026-10-19T20:20&end_date=2026-10-19T20:20", status: http.StatusBadRequest},
+		{name: "invalid_start", query: "start_date=invalid", status: http.StatusBadRequest},
+		{name: "invalid_end", query: "end_date=invalid", status: http.StatusBadRequest},
+	} {
+		test.Run(testCase.name, func(test *testing.T) {
+			capture := &userErrorsCapture{}
+			handler := NewUsageHandler(nil, nil, capture, &userErrorsSettings{}, timezone.NewCalendar(time.UTC))
+			recorder := httptest.NewRecorder()
+			requestContext, _ := gin.CreateTestContext(recorder)
+			requestContext.Set(string(authctx.ContextKeyUser), authctx.AuthSubject{UserID: 42})
+			requestContext.Request = httptest.NewRequest(http.MethodGet, "/usage/errors?"+testCase.query, nil)
+			handler.ListErrors(requestContext)
+			require.Equal(test, testCase.status, recorder.Code)
+			if testCase.status != http.StatusOK {
+				require.Nil(test, capture.filter)
+				return
+			}
+			require.Equal(test, int64(42), capture.userID)
+			require.NotNil(test, capture.filter)
+			require.Equal(test, testCase.start, capture.filter.StartTime.UTC().Format(time.RFC3339))
+			require.Equal(test, testCase.end, capture.filter.EndTime.UTC().Format(time.RFC3339))
+		})
+	}
+}
+
+func (capture *userErrorsCapture) ListUserErrorRequests(_ context.Context, userID int64, filter *ops.OpsErrorLogFilter) (*ops.UserErrorRequestList, error) {
+	capture.filter = filter
+	capture.userID = userID
+	return &ops.UserErrorRequestList{Page: filter.Page, PageSize: filter.PageSize}, nil
+}
+
+func (*userErrorsSettings) IsUserErrorViewAllowed(context.Context) bool {
+	return true
 }
 
 func (s *dailyUsageRepoStub) GetUsageTrendWithFilters(
@@ -389,6 +447,23 @@ func TestUserUsageListAdvancedFilters(t *testing.T) {
 	require.Equal(t, "image", repo.listFilters.BillingMode)
 	require.NotNil(t, repo.listFilters.StartTime)
 	require.NotNil(t, repo.listFilters.EndTime)
+}
+
+func TestUserUsageRolling24HoursKeepsExactInstants(test *testing.T) {
+	repo := &userUsageRepoCapture{stats: &usage.UsageStats{}}
+	router := newUserUsageRequestTypeTestRouter(repo)
+	query := "?start_date=2026-10-31T16:25:30.123Z&end_date=2026-11-01T16:25:30.123Z&timezone=America/New_York"
+	for _, endpoint := range []string{"/usage", "/usage/stats"} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, endpoint+query, nil))
+		require.Equal(test, http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	for _, filters := range []usage.UsageLogFilters{repo.listFilters, repo.statsFilters} {
+		require.NotNil(test, filters.StartTime)
+		require.NotNil(test, filters.EndTime)
+		require.Equal(test, 24*time.Hour, filters.EndTime.Sub(*filters.StartTime))
+		require.Equal(test, "2026-11-01T16:25:30.123Z", filters.EndTime.UTC().Format(time.RFC3339Nano))
+	}
 }
 
 func TestUserUsageListInvalidBillingMode(t *testing.T) {

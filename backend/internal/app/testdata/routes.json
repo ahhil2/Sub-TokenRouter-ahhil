@@ -697,6 +697,7 @@
   "PUT /api/v1/admin/providers/:id",
   "PUT /api/v1/admin/providers/:id/ollama-cloud-usage/auto-refresh",
   "PUT /api/v1/admin/providers/:id/ollama-cloud-usage/session",
+  "PUT /api/v1/admin/providers/display-order",
   "PUT /api/v1/admin/providers/ollama-cloud-usage/settings",
   "PUT /api/v1/admin/proxies/:id",
   "PUT /api/v1/admin/redeem-codes/:id",

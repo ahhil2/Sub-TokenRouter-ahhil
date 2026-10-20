@@ -14,6 +14,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+type displayOrderStore struct {
+	AdminStore
+	ids []int64
+	err error
+}
+
 type providerRepoStubForClearProviderError struct {
 	AdminStore
 	provider                 *Record
@@ -309,4 +315,22 @@ func TestResetProviderQuota_PropagatesAtomicRepositoryFailure(t *testing.T) {
 	require.ErrorIs(t, err, resetErr)
 	require.Equal(t, 1, repo.resetCalls)
 	require.Zero(t, repo.clearRateLimitCalls)
+}
+
+func (store *displayOrderStore) UpdateDisplayOrder(_ context.Context, ids []int64) error {
+	store.ids = ids
+	return store.err
+}
+
+func TestUpdateProviderDisplayOrder(test *testing.T) {
+	store := &displayOrderStore{}
+	admin := NewAdmin(store, AdminOptions{})
+	for _, ids := range [][]int64{nil, {0}, {-1}, {1, 1}, make([]int64, 10001)} {
+		require.Error(test, admin.UpdateProviderDisplayOrder(context.Background(), ids))
+		require.Nil(test, store.ids)
+	}
+	require.NoError(test, admin.UpdateProviderDisplayOrder(context.Background(), []int64{3, 1, 2}))
+	require.Equal(test, []int64{3, 1, 2}, store.ids)
+	store.err = errors.New("write failed")
+	require.ErrorIs(test, admin.UpdateProviderDisplayOrder(context.Background(), []int64{1}), store.err)
 }

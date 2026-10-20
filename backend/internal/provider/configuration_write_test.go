@@ -7,6 +7,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestConfigurationPreservesDisplayOrder(test *testing.T) {
+	current := &Record{ID: 1, Extra: map[string]any{"display_order": 3.0}, Priority: 5}
+	for _, extra := range []map[string]any{{}, {"display_order": 1.0}} {
+		desired := CloneRecord(current)
+		desired.Extra = extra
+		result, err := ApplyConfigurationChange(current, desired, ConfigurationChange{Fields: ConfigExtra})
+		require.NoError(test, err)
+		require.Equal(test, 3.0, result.Extra["display_order"])
+		require.Equal(test, 5, result.Priority)
+	}
+}
+
 // TestConfigurationUsesCurrentWindowAndIsolatedValues 验证配置替换基于锁内最新累计，仍按原取时点处理真正跨越的资金窗口。
 func TestConfigurationUsesCurrentWindowAndIsolatedValues(t *testing.T) {
 	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)

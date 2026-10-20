@@ -261,6 +261,9 @@ const DataTableStub = {
           <slot name="cell-id" :value="row.id" :row="row" />
         </div>
         <slot name="cell-name" :value="row.name" :row="row" />
+        <div v-if="columns.some((column) => column.key === 'current_concurrency')" data-test="concurrency-column">
+          <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
+        </div>
         <div data-test="group"><slot name="cell-group" :value="row.group" :row="row" /></div>
         <div data-test="usage"><slot name="cell-usage" :row="row" /></div>
         <div data-test="status">
@@ -463,6 +466,7 @@ describe('user KeysView column settings', () => {
       'name',
       'key',
       'group',
+      'current_concurrency',
       'usage',
       'expires_at',
       'status',
@@ -640,6 +644,7 @@ describe('user KeysView column settings', () => {
     expect(visibleColumnKeys(wrapper)).toEqual([
       'name',
       'key',
+      'current_concurrency',
       'usage',
       'rate_limit',
       'expires_at',
@@ -754,13 +759,15 @@ describe('user KeysView column settings', () => {
     expect(updateKey).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'inactive' }))
   })
 
-  it('shows in-flight concurrency next to the key name', async () => {
+  it('shows in-flight concurrency in a separate column after the group', async () => {
     const wrapper = await mountView()
 
     const indicator = wrapper.get('[data-test="key-concurrency"]')
     expect(indicator.text()).toBe('3')
     expect(indicator.attributes('title')).toBe('keys.concurrencyInUseUnlimited')
-    expect(visibleColumnKeys(wrapper)).not.toContain('current_concurrency')
+    expect(wrapper.get('[data-test="concurrency-column"]').text()).toBe('3')
+    const columns = visibleColumnKeys(wrapper)
+    expect(columns[columns.indexOf('group') + 1]).toBe('current_concurrency')
   })
 
   it('shows the concurrency limit and warns when the key is nearly full', async () => {
@@ -779,7 +786,7 @@ describe('user KeysView column settings', () => {
     expect(indicator.classes()).toContain('text-amber-600')
   })
 
-  it('hides the concurrency indicator for idle keys', async () => {
+  it('shows zero concurrency for idle keys', async () => {
     listKeys.mockResolvedValueOnce({
       items: [{ ...createApiKey(), current_concurrency: 0, concurrency_limit: 5 }],
       total: 1,
@@ -789,7 +796,7 @@ describe('user KeysView column settings', () => {
     })
     const wrapper = await mountView()
 
-    expect(wrapper.find('[data-test="key-concurrency"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="key-concurrency"]').text().replace(/\s+/g, '')).toBe('0/5')
   })
 
   it('keeps the create key form shrinkable on narrow screens', async () => {

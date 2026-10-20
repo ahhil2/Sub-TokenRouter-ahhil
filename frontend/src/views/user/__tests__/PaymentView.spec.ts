@@ -416,6 +416,7 @@ describe('PaymentView external redemption code shop', () => {
     expect(purchaseLink.attributes('rel')).toBe('noopener noreferrer')
     expect(purchaseLink.text()).toContain('purchase.buyRedeemCode')
     expect(shop.findComponent(RouterLink).props('to')).toBe('/redeem')
+    expect(shop.findComponent(RouterLink).element.parentElement).toBe(purchaseLink.element.parentElement)
     expect(wrapper.findAllComponents(SubscriptionPlanCard)).toHaveLength(3)
     const view = wrapper.vm as unknown as { activeTab: string }
     view.activeTab = 'recharge'

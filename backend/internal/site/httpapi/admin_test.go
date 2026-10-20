@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,25 @@ type announcementReadRepoCapture struct {
 
 type announcementUserSubRepoCapture struct {
 	site.SubscriptionReader
+}
+
+func TestAdminAnnouncementBannerRequest(testContext *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		request := httptest.NewRequest(method, "/admin/announcements", strings.NewReader(`{"localization":{"source":{"title":"notice","content":"hello"}},"notify_mode":"banner"}`))
+		request.Header.Set("Content-Type", "application/json")
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = request
+		if method == http.MethodPost {
+			var input CreateAnnouncementRequest
+			require.NoError(testContext, context.ShouldBindJSON(&input))
+			require.Equal(testContext, site.AnnouncementNotifyModeBanner, input.NotifyMode)
+		} else {
+			var input UpdateAnnouncementRequest
+			require.NoError(testContext, context.ShouldBindJSON(&input))
+			require.Equal(testContext, site.AnnouncementNotifyModeBanner, *input.NotifyMode)
+		}
+	}
 }
 
 func TestAdminAnnouncementListSortParams(t *testing.T) {

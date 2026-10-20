@@ -6,11 +6,13 @@
       <div class="space-y-4">
         <div class="card p-4">
           <div class="time-controls flex flex-wrap items-center justify-between gap-2">
-            <div class="flex min-w-0 items-center gap-2">
+            <div class="flex min-w-0 flex-wrap items-center gap-2">
               <span class="time-control-label text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
               <DateRangePicker
                 v-model:start-date="startDate"
                 v-model:end-date="endDate"
+                enable-time
+                :quick-presets="['yesterday', 'last24Hours']"
                 @change="onDateRangeChange"
               />
             </div>
@@ -149,7 +151,7 @@
           @sort="handleSort"
           @userClick="handleUserClick"
         />
-        <Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" />
+        <Pagination v-if="pagination.total > 0" show-jump :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" />
       </div>
 
       <div v-show="activeTab === 'errors'" v-content-reveal="activeTab === 'errors'" data-testid="admin-usage-errors-section">
@@ -422,7 +424,7 @@ const loadLogs = async () => {
   abortController?.abort(); const c = new AbortController(); abortController = c; loading.value = true
   try {
     const res = await adminAPI.usage.list(
-      buildUsageListParams(pagination.page, pagination.page_size, false),
+      buildUsageListParams(pagination.page, pagination.page_size, true),
       { signal: c.signal }
     )
     if(!c.signal.aborted) { usageLogs.value = res.items; pagination.total = res.total }
@@ -905,9 +907,9 @@ const errSortOrder = ref<'asc' | 'desc'>('desc')
 const showErrorModal = ref(false)
 const selectedErrorId = ref<number | null>(null)
 
-// 日期字符串省略时区后缀，先按本地时区解析，再转为 UTC，与页面其它日期处理一致。
+// 日期使用本地日界，带时区的时间戳保留对应时刻。
 const toRFC3339 = (d: string | undefined, endOfDay = false): string | undefined =>
-  d ? new Date(d + (endOfDay ? 'T23:59:59.999' : 'T00:00:00')).toISOString() : undefined
+  d ? new Date(d.length > 10 ? d : d + (endOfDay ? 'T23:59:59.999' : 'T00:00:00')).toISOString() : undefined
 
 const loadAdminErrors = async () => {
   errLoading.value = true

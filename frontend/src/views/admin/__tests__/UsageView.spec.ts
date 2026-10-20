@@ -4,6 +4,7 @@ import { defineComponent, ref } from 'vue'
 import * as XLSX from 'xlsx'
 
 import UsageView from '../UsageView.vue'
+import Pagination from '@/components/common/Pagination.vue'
 
 const { list, getStats, getSnapshotV2, getById, getModelStats, listErrorLogs, routeQuery } = vi.hoisted(() => {
   vi.stubGlobal('localStorage', {
@@ -202,6 +203,54 @@ describe('admin UsageView 路由筛选', () => {
   afterEach(() => {
     Object.keys(routeQuery).forEach((key) => delete routeQuery[key])
     vi.useRealTimers()
+  })
+
+  it.each([
+    ['desktop', 'click'],
+    ['desktop', 'keyup.enter'],
+    ['mobile', 'submit'],
+  ])('jumps to requested pages with 50 rows using %s %s', async (layout, event) => {
+    list.mockImplementation(async ({ page, page_size, exact_total }) => ({
+      items: [],
+      total: exact_total ? 1000 : Math.min(1000, page * page_size + 1),
+    }))
+    const wrapper = mount(UsageView, {
+      global: { stubs: {
+        AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
+        UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
+        UserBalanceHistoryModal: true, Select: true,
+        DateRangePicker: true, Icon: true, TokenUsageTrend: true,
+        ModelDistributionChart: true, GroupDistributionChart: true,
+        EndpointDistributionChart: true, UserTokenRanking: true,
+      } },
+    })
+    try {
+      vi.advanceTimersByTime(120)
+      await flushPromises()
+      const pagination = wrapper.getComponent(Pagination)
+      pagination.getComponent({ name: 'Select' }).vm.$emit('update:modelValue', 50)
+      await flushPromises()
+
+      for (const [input, expectedPage] of [['9', 9], ['17', 17], ['3', 3], ['999', 20]] as const) {
+        const controls = pagination.get(`.pagination-${layout}`)
+        await controls.get('input').setValue(input)
+        const target = event === 'click'
+          ? controls.get('.pagination-jump-button')
+          : event === 'submit' ? controls.get('form') : controls.get('input')
+        await target.trigger(event)
+        await flushPromises()
+
+        expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
+          page: expectedPage,
+          page_size: 50,
+        }), expect.anything())
+        expect(pagination.props('page')).toBe(expectedPage)
+        expect(pagination.props('total')).toBe(1000)
+      }
+      expect(list.mock.calls.every(([params]) => params.exact_total === true)).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it.each([0, 23])('defaults to today at local hour %i for the picker and data requests', async (hour) => {
@@ -819,6 +868,25 @@ describe('admin UsageView errors tab filter forwarding', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('preserves a minute range in usage, charts and error requests', async () => {
+    const wrapper = mountRouteFilteredUsageView()
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+    const picker = wrapper.findComponent({ name: 'DateRangePicker' })
+    expect(picker.props()).toMatchObject({ enableTime: true, quickPresets: ['yesterday', 'last24Hours'] })
+    const range = { startDate: '2026-10-19T12:20:00.000Z', endDate: '2026-10-19T13:40:00.000Z', preset: null }
+    picker.vm.$emit('change', range)
+    await flushPromises()
+    const requestRange = { start_date: range.startDate, end_date: range.endDate }
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining(requestRange), expect.anything())
+    expect(getStats).toHaveBeenCalledWith(expect.objectContaining(requestRange), expect.anything())
+    expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ ...requestRange, granularity: 'hour' }))
+    await wrapper.findAll('[data-testid="usage-detail-tab"]')[1].trigger('click')
+    await flushPromises()
+    expect(listErrorLogs).toHaveBeenLastCalledWith(expect.objectContaining({ start_time: range.startDate, end_time: range.endDate }))
+    wrapper.unmount()
   })
 
   it('forwards model/provider_id/group_id to listErrorLogs on the errors tab', async () => {

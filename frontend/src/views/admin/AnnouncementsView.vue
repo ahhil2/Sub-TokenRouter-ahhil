@@ -88,7 +88,7 @@
                   : 'badge-gray'
               ]"
             >
-              {{ row.notify_mode === 'popup' ? t('admin.announcements.notifyModeLabels.popup') : t('admin.announcements.notifyModeLabels.silent') }}
+              {{ t(`admin.announcements.notifyModeLabels.${row.notify_mode}`) }}
             </span>
           </template>
 
@@ -186,7 +186,15 @@
             { key: 'title', label: t('admin.announcements.form.title'), required: true },
             { key: 'content', label: t('admin.announcements.form.content'), multiline: true, rows: 6, required: true },
           ]"
-        />
+        >
+          <template #field-tools="{ field, inputId, value, update }">
+            <AnnouncementFormattingToolbar v-if="field.key === 'content' && form.notify_mode === 'banner'" :input-id="inputId" :model-value="value" @update:model-value="update" />
+          </template>
+        </LocalizedFieldsEditor>
+        <div v-if="form.notify_mode === 'banner'" class="rounded-surface border border-gray-200 p-4 dark:border-dark-600">
+          <p class="mb-2 text-xs text-gray-500">{{ t('admin.announcements.form.bannerPreview') }}</p>
+          <div class="banner-preview" v-html="renderAnnouncementBanner(form.localization.source.content)"></div>
+        </div>
 
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
@@ -295,9 +303,13 @@ import Icon from '@/components/icons/Icon.vue'
 import AnnouncementTargetingEditor from '@/components/admin/announcements/AnnouncementTargetingEditor.vue'
 import AnnouncementReadStatusDialog from '@/components/admin/announcements/AnnouncementReadStatusDialog.vue'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
+import AnnouncementFormattingToolbar from '@/components/common/AnnouncementFormattingToolbar.vue'
+import { renderAnnouncementBanner } from '@/utils/announcementBanner'
+import { useAnnouncementStore } from '@/stores/announcements'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const announcementStore = useAnnouncementStore()
 
 const announcements = ref<Announcement[]>([])
 const loading = ref(false)
@@ -347,7 +359,8 @@ const endsAtPresets = computed<DateTimePreset[]>(() =>
 
 const notifyModeOptions = computed(() => [
   { value: 'silent', label: t('admin.announcements.notifyModeLabels.silent') },
-  { value: 'popup', label: t('admin.announcements.notifyModeLabels.popup') }
+  { value: 'popup', label: t('admin.announcements.notifyModeLabels.popup') },
+  { value: 'banner', label: t('admin.announcements.notifyModeLabels.banner') }
 ])
 
 const columns = computed<Column[]>(() => [
@@ -583,6 +596,7 @@ async function handleSave() {
       appStore.showSuccess(t('common.success'))
       showEditDialog.value = false
       await loadAnnouncements()
+      await announcementStore.fetchAnnouncements(true)
       return
     }
 
@@ -593,6 +607,7 @@ async function handleSave() {
     showEditDialog.value = false
     editingAnnouncement.value = null
     await loadAnnouncements()
+    await announcementStore.fetchAnnouncements(true)
   } catch (error: any) {
     console.error('Failed to save announcement:', error)
     appStore.showError(error.response?.data?.detail || (editingAnnouncement.value ? t('admin.announcements.failedToUpdate') : t('admin.announcements.failedToCreate')))
@@ -619,6 +634,7 @@ async function confirmDelete() {
     showDeleteDialog.value = false
     deletingAnnouncement.value = null
     await loadAnnouncements()
+    await announcementStore.fetchAnnouncements(true)
   } catch (error: any) {
     console.error('Failed to delete announcement:', error)
     appStore.showError(error.response?.data?.detail || t('admin.announcements.failedToDelete'))
@@ -649,3 +665,12 @@ onUnmounted(() => {
   currentController?.abort()
 })
 </script>
+
+<style scoped>
+.banner-preview {
+  font-family: 'Times New Roman', 'SimSun', '宋体', 'Songti SC', 'Noto Serif CJK SC', 'Noto Sans SC Variable', serif;
+  font-size: 18px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+</style>

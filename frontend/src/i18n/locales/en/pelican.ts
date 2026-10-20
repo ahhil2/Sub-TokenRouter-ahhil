@@ -1,5 +1,6 @@
 export default {
   title: 'Pelican Showcase', adminTitle: 'Pelican Tests',
+  prompt: 'View current generation prompt',
   description: 'Compare HTML / SVG animations generated from the same prompt. These examples are not standardized intelligence scores. History is retained for 30 days.',
   adminDescription: 'Schedule generation by group and model. The platform pays upstream costs. Results passing format checks are published automatically.',
   group: 'Group', model: 'Model', date: 'Generation date (UTC+8)', all: 'All', refresh: 'Refresh', preview: 'View animation',

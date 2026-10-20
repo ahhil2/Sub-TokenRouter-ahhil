@@ -1,6 +1,13 @@
 export default {
 // Providers Management
     providers: {
+      displayOrder: '排列提供商',
+      displayOrderHint: '拖动或点击箭头调整全部提供商的显示顺序。调度优先级由提供商设置控制。',
+      displayOrderLoadFailed: '加载排序列表失败，请重新打开后重试（最多支持 10000 个提供商）。',
+      displayOrderSaveFailed: '保存排序失败，请重试；如提供商已删除，请重新打开列表。',
+      displayOrderSaved: '提供商排列已保存',
+      moveUp: '上移',
+      moveDown: '下移',
       semanticError: {
         section: '故障处理',
         title: '识别响应中的错误文本',

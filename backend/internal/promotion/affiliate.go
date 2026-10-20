@@ -43,6 +43,11 @@ type AffiliateSummary struct {
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 
+type AffiliateRelationship struct {
+	InviterID *int64
+	AffCount  int64
+}
+
 type AffiliateInvitee struct {
 	UserID      int64      `json:"user_id"`
 	Email       string     `json:"email"`
@@ -77,6 +82,7 @@ type AffiliateRepository interface {
 	ThawFrozenQuota(ctx context.Context, userID int64) (float64, error)
 	TransferQuotaToBalance(ctx context.Context, userID int64) (float64, float64, error)
 	ListInvitees(ctx context.Context, inviterID int64, limit int) ([]AffiliateInvitee, error)
+	GetRelationships(ctx context.Context, userIDs []int64) (map[int64]AffiliateRelationship, error)
 
 	// 管理端：用户级专属配置
 	UpdateUserAffCode(ctx context.Context, userID int64, newCode string) error

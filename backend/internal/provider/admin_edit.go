@@ -154,8 +154,10 @@ func (s *Admin) UpdateProvider(ctx context.Context, id int64, input *UpdateProvi
 		delete(normalizedExtra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSnapshotExtraKey)
 		delete(normalizedExtra, CNUsageMonitorSnapshotExtraKey)
+		delete(normalizedExtra, "display_order")
 		// 保留配额用量和专用服务受管字段，防止普通提供商编辑意外覆盖。
 		for _, key := range []string{
+			"display_order",
 			"quota_used",
 			"quota_daily_used",
 			"quota_daily_start",

@@ -378,6 +378,7 @@ affiliates: {
         email: 'Email',
         username: 'Username',
         notes: 'Notes',
+        invitationRelationship: 'Invitations',
         role: 'Role',
         groups: 'Groups',
         subscriptions: 'Subscriptions',
@@ -530,6 +531,8 @@ affiliates: {
       // Settings Dropdowns
       filterSettings: 'Filter Settings',
       columnSettings: 'Column Settings',
+      inviterId: 'Inviter ID: ',
+      invitedCount: 'Invited users: ',
       filterValue: 'Enter value',
       // User Attributes
       attributes: {

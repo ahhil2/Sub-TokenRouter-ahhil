@@ -46,6 +46,7 @@ func TestPelicanExtraction(t *testing.T) {
 		{"document", "<!doctype html><html><body><svg></svg></body></html>", "<html><body><svg></svg></body></html>"},
 		{"fence", "Here is the result:\n```html\n<html><svg></svg></html>\n```", "<html><svg></svg></html>"},
 		{"svg", "<svg viewBox=\"0 0 100 100\"></svg>", "<svg viewBox=\"0 0 100 100\"></svg>"},
+		{"interactive animation", "<!DOCTYPE html><html><body><svg id=\"bird\"></svg><button id=\"pause\">暂停</button><script>document.getElementById('pause').addEventListener('click', () => {});</script></body></html>", "<html><body><svg id=\"bird\"></svg><button id=\"pause\">暂停</button><script>document.getElementById('pause').addEventListener('click', () => {});</script></body></html>"},
 		{"empty", "", ""},
 		{"truncated", "<html><svg>", ""},
 		{"prose", "hello", ""},
@@ -60,6 +61,16 @@ func TestPelicanExtraction(t *testing.T) {
 				require.Equal(testing, test.want, value)
 			}
 		})
+	}
+}
+
+func TestPelicanPrompt(t *testing.T) {
+	for _, requirement := range []string{
+		"【场景】", "【服装】", "【车子】", "【视觉风格】", "独立选择", "喉囊", "蹼足", "相差半圈",
+		"<!DOCTYPE html>", "1024×768", "暂停／继续", "prefers-reduced-motion", "addEventListener",
+		"sandbox=\"allow-scripts\"", "不依赖外部图片", "直接输出 HTML",
+	} {
+		require.Contains(t, PelicanPrompt, requirement)
 	}
 }
 

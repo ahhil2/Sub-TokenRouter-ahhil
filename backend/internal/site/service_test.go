@@ -53,6 +53,25 @@ func (*announcementRepoStub) ListActive(context.Context, time.Time) ([]Announcem
 	return nil, nil
 }
 
+func TestAnnouncementServiceBannerMode(testContext *testing.T) {
+	repo := &announcementRepoStub{}
+	service := NewAnnouncementService(repo, nil, nil, nil)
+	created, err := service.Create(context.Background(), &CreateAnnouncementInput{
+		Title: "顶部公告", Content: `<span style="font-size: 24px">API <strong>公告</strong></span>`,
+		Status: AnnouncementStatusActive, NotifyMode: AnnouncementNotifyModeBanner,
+	})
+	require.NoError(testContext, err)
+	require.Equal(testContext, AnnouncementNotifyModeBanner, created.NotifyMode)
+	require.Contains(testContext, created.Content, "font-size: 24px")
+	mode := AnnouncementNotifyModeSilent
+	_, err = service.Update(context.Background(), created.ID, &UpdateAnnouncementInput{NotifyMode: &mode})
+	require.NoError(testContext, err)
+	mode = AnnouncementNotifyModeBanner
+	updated, err := service.Update(context.Background(), created.ID, &UpdateAnnouncementInput{NotifyMode: &mode})
+	require.NoError(testContext, err)
+	require.Equal(testContext, AnnouncementNotifyModeBanner, updated.NotifyMode)
+}
+
 func TestAnnouncementServiceCreateRejectsEqualStartEndTimes(t *testing.T) {
 	repo := &announcementRepoStub{}
 	svc := NewAnnouncementService(repo, nil, nil, nil)

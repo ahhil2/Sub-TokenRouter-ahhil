@@ -391,21 +391,27 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 	// 日期范围使用半开区间 [start, end)，与用量列表语义一致。
 	userTZ := c.Query("timezone")
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
-		t, err := h.calendar.ParseInUserLocation("2006-01-02", startDateStr, userTZ)
+		t, _, err := h.calendar.ParseDateTimeInUserLocation(startDateStr, userTZ)
 		if err != nil {
-			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD")
+			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 			return
 		}
 		filter.StartTime = &t
 	}
 	if endDateStr := c.Query("end_date"); endDateStr != "" {
-		t, err := h.calendar.ParseInUserLocation("2006-01-02", endDateStr, userTZ)
+		t, dateOnly, err := h.calendar.ParseDateTimeInUserLocation(endDateStr, userTZ)
 		if err != nil {
-			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD")
+			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 			return
 		}
-		t = t.AddDate(0, 0, 1)
+		if dateOnly {
+			t = t.AddDate(0, 0, 1)
+		}
 		filter.EndTime = &t
+	}
+	if filter.StartTime != nil && filter.EndTime != nil && !filter.StartTime.Before(*filter.EndTime) {
+		response.BadRequest(c, "end_date must be later than start_date")
+		return
 	}
 
 	filter.Model = strings.TrimSpace(c.Query("model"))

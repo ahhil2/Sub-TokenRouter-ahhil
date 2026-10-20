@@ -14,6 +14,7 @@ import (
 
 // ProviderManagement 提供 HTTP 管理入口需要的业务操作。
 type ProviderManagement interface {
+	UpdateProviderDisplayOrder(context.Context, []int64) error
 	BulkUpdateProviders(context.Context, *providercore.BulkUpdateProvidersInput) (*providercore.BulkUpdateProvidersResult, error)
 	SetProviderSchedulable(context.Context, int64, bool) (*providercore.Record, error)
 	ResetProviderQuota(context.Context, int64) error

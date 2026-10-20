@@ -6,11 +6,13 @@
       <div class="space-y-4">
         <div class="card p-4">
           <div class="time-controls flex flex-wrap items-center justify-between gap-2">
-            <div class="flex min-w-0 items-center gap-2">
+            <div class="flex min-w-0 flex-wrap items-center gap-2">
               <span class="time-control-label text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
               <DateRangePicker
                 v-model:start-date="startDate"
                 v-model:end-date="endDate"
+                enable-time
+                :quick-presets="['yesterday', 'last24Hours']"
                 @change="onDateRangeChange"
               />
             </div>
@@ -220,6 +222,7 @@
 
         <Pagination
           v-if="pagination.total > 0"
+          show-jump
           :page="pagination.page"
           :total="pagination.total"
           :page-size="pagination.page_size"
@@ -388,8 +391,8 @@ const getTodayRangeDates = () => {
 }
 
 const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
-  const startTime = new Date(`${start}T00:00:00`).getTime()
-  const endTime = new Date(`${end}T00:00:00`).getTime()
+  const startTime = new Date(start.length === 10 ? `${start}T00:00:00` : start).getTime()
+  const endTime = new Date(end.length === 10 ? `${end}T00:00:00` : end).getTime()
   return Math.ceil((endTime - startTime) / (1000 * 60 * 60 * 24)) <= 1 ? 'hour' : 'day'
 }
 

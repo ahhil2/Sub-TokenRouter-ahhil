@@ -37,15 +37,22 @@ type UserAdministration interface {
 type AdminUserHandler[K any] struct {
 	idempotencyhttp.Executor
 
-	adminService UserAdministration
-	listKeys     func(context.Context, int64, int, int, string, string) ([]K, int64, error)
-	concurrency  func(context.Context, []identity.User) (map[int64]int, error)
-	stepUp       func(*gin.Context) bool
+	adminService  UserAdministration
+	listKeys      func(context.Context, int64, int, int, string, string) ([]K, int64, error)
+	concurrency   func(context.Context, []identity.User) (map[int64]int, error)
+	stepUp        func(*gin.Context) bool
+	relationships func(context.Context, []int64) (map[int64]UserInvitationRelationship, error)
+}
+
+type UserInvitationRelationship struct {
+	InviterID    *int64 `json:"inviter_id"`
+	InvitedCount int64  `json:"invited_count"`
 }
 
 // UserWithConcurrency wraps AdminUser with current concurrency info.
 type UserWithConcurrency[K any] struct {
 	dto.AdminUser[K]
+	UserInvitationRelationship
 	CurrentConcurrency int `json:"current_concurrency"`
 }
 
@@ -131,8 +138,8 @@ type BatchUpdateLimitsRequest struct {
 	RPMLimit    *int    `json:"rpm_limit" binding:"omitempty,min=0"`
 }
 
-func NewAdminUserHandler[K any](users UserAdministration, keys func(context.Context, int64, int, int, string, string) ([]K, int64, error), concurrency func(context.Context, []identity.User) (map[int64]int, error), stepUp func(*gin.Context) bool) *AdminUserHandler[K] {
-	return &AdminUserHandler[K]{adminService: users, listKeys: keys, concurrency: concurrency, stepUp: stepUp}
+func NewAdminUserHandler[K any](users UserAdministration, keys func(context.Context, int64, int, int, string, string) ([]K, int64, error), concurrency func(context.Context, []identity.User) (map[int64]int, error), stepUp func(*gin.Context) bool, relationships func(context.Context, []int64) (map[int64]UserInvitationRelationship, error)) *AdminUserHandler[K] {
+	return &AdminUserHandler[K]{adminService: users, listKeys: keys, concurrency: concurrency, stepUp: stepUp, relationships: relationships}
 }
 
 func (h *AdminUserHandler[K]) userResponse(u *identity.User) *dto.AdminUser[K] {
@@ -192,6 +199,19 @@ func (h *AdminUserHandler[K]) List(c *gin.Context) {
 		return
 	}
 
+	var relationships map[int64]UserInvitationRelationship
+	if len(users) > 0 && h.relationships != nil {
+		userIDs := make([]int64, len(users))
+		for index := range users {
+			userIDs[index] = users[index].ID
+		}
+		relationships, err = h.relationships(c.Request.Context(), userIDs)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
+
 	// Batch get current concurrency (nil map if unavailable)
 	var loadInfo map[int64]int
 	if len(users) > 0 && h.concurrency != nil {
@@ -205,6 +225,7 @@ func (h *AdminUserHandler[K]) List(c *gin.Context) {
 			AdminUser: *h.userResponse(&users[i]),
 		}
 		out[i].CurrentConcurrency = loadInfo[users[i].ID]
+		out[i].UserInvitationRelationship = relationships[users[i].ID]
 	}
 
 	response.Paginated(c, out, total, page, pageSize)

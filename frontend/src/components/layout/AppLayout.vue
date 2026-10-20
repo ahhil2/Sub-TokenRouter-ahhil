@@ -38,6 +38,7 @@
               <slot name="page-heading-meta" />
             </div>
           </div>
+          <AnnouncementBanner v-if="['Keys', 'Dashboard', 'Usage'].includes(String(route.name))" />
           <div v-if="$slots['page-heading-actions']" class="shrink-0">
             <slot name="page-heading-actions" />
           </div>
@@ -61,6 +62,7 @@ import { usePageMeta } from '@/composables/usePageMeta'
 import { useOnboardingStore } from '@/stores/onboarding'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
+import AnnouncementBanner from '@/components/common/AnnouncementBanner.vue'
 
 // @project-doc docs/architecture/frontend_ui_conventions.md#layout_spacing
 interface Props {

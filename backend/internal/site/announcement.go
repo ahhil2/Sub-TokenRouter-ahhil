@@ -15,6 +15,7 @@ const (
 
 	AnnouncementNotifyModeSilent = "silent"
 	AnnouncementNotifyModePopup  = "popup"
+	AnnouncementNotifyModeBanner = "banner"
 
 	AnnouncementConditionTypeSubscription = "subscription"
 	AnnouncementConditionTypeBalance      = "balance"

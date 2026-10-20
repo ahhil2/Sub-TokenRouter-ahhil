@@ -350,6 +350,7 @@ affiliates: {
         email: '邮箱',
         username: '用户名',
         notes: '备注',
+        invitationRelationship: '邀请关系',
         role: '角色',
         groups: '分组',
         subscriptions: '订阅分组',
@@ -527,6 +528,8 @@ affiliates: {
       // Settings Dropdowns
       filterSettings: '筛选设置',
       columnSettings: '列设置',
+      inviterId: '邀请人id：',
+      invitedCount: '已邀请人数：',
       filterValue: '输入值',
       // User Attributes
       attributes: {

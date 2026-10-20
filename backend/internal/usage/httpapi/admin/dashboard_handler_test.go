@@ -599,6 +599,16 @@ func TestParseTimeRange(t *testing.T) {
 	require.False(t, end.IsZero())
 }
 
+func TestParseTimeRangeRollingDay(test *testing.T) {
+	for _, zone := range []string{"Asia/Shanghai", "America/New_York"} {
+		requestContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+		requestContext.Request = httptest.NewRequest(http.MethodGet, "/?start_date=2026-10-31T16:25:30.123Z&end_date=2026-11-01T16:25:30.123Z&timezone="+zone, nil)
+		start, end := parseTimeRange(requestContext, timezone.NewCalendar(time.UTC))
+		require.Equal(test, 24*time.Hour, end.Sub(start))
+		require.Equal(test, "2026-11-01T16:25:30.123Z", end.UTC().Format(time.RFC3339Nano))
+	}
+}
+
 // TestParseTimeRangeInjectedCalendar 检查注入的服务端时区、用户时区覆盖和日历日结束时间。
 func TestParseTimeRangeInjectedCalendar(t *testing.T) {
 	newYork, err := time.LoadLocation("America/New_York")

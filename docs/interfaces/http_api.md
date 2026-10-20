@@ -32,6 +32,8 @@
 
 ## 全局入口
 
+管理员用户列表 `GET /api/v1/admin/users` 的每项包含 `inviter_id`（没有邀请人时为 `null`）和 `invited_count`（累计直接邀请人数）。这些字段由当前页用户 ID 批量查询，计数覆盖分页之外的邀请对象。查询失败时返回错误，防止把读取故障显示为无邀请关系。普通用户资料接口不返回这两个管理字段。历史追溯规则见[推广与返利](../domains/promotions_and_affiliates.md#管理员用户列表)。
+
 ### 用户身份分组接口
 
 `/api/v1/admin/identity-groups` 使用管理员认证、面板限流和审计。`GET` 返回三个固定身份及成员数；`GET /users` 搜索待分配用户；`GET /:code/members` 按 `search`、`page`、`page_size` 查询成员；`PUT /:code/members` 接收 `user_ids` 和 `action: add | remove`，每批最多 500 位用户。
@@ -293,6 +295,10 @@ Key 自身的配额和滚动限额字段不受这些展示规则影响。
 
 <a id="announcement_api"></a>
 ## 公告接口
+
+`notify_mode` 支持 `silent`、`popup` 和 `banner`。`banner` 在用户 API 密钥、仪表盘和使用记录页的标题区域共用展示，使用已有公告的状态、定向和有效期规则。已读状态不隐藏顶部公告。管理员在公告管理中选择“顶部公告（三页共用）”并发布，内容和格式仍保存在公告的本地化正文中，无需新增数据库列。保存或删除后刷新当前管理员会话的公告缓存；其他会话沿用公告刷新策略。
+
+顶部公告编辑工具支持选区加粗和 12 至 48px 字号，未选中文字时应用于全文。正文支持 Markdown、`strong` 和带 `font-size` 的 `span`。前端先消毒 HTML，再只保留段落、换行、强调、列表及范围内的整数字号；链接、图片、脚本、事件属性和其他样式不进入顶部区域。字体栈优先 Times New Roman，中文回退到宋体（SimSun、Songti SC）；缺少系统字体时依次使用 Noto Serif CJK SC、站点已有的 Noto Sans SC 或通用衬线字体，不从外网下载商业字体。
 
 公告的用户端和管理端 handler、DTO 在 `site/httpapi`，接入相同的认证、审计和限流。用户入口是 `GET /api/v1/announcements` 和 `POST /api/v1/announcements/:id/read`；管理员的增删改查和已读状态在 `/api/v1/admin/announcements` 下。
 

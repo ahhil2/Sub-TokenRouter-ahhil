@@ -110,6 +110,7 @@
       </DataTable>
       <!-- 分页留在表格外框内，不随表体滚动。 -->
       <Pagination
+        show-jump
         v-if="total > 0"
         :page="page"
         :page-size="pageSize"

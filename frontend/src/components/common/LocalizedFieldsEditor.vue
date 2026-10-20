@@ -25,6 +25,7 @@
           </template>
         </LocalizedTranslateButton>
       </div>
+      <slot name="field-tools" :field="field" :input-id="`${id}-${field.key}`" :value="content.source[field.key]" :update="(value: string) => updateField(field.key, value)" />
       <textarea v-if="field.multiline" :id="`${id}-${field.key}`" dir="auto" :value="content.source[field.key]" class="input resize-y" :class="field.inputClass" :rows="field.rows || 3" :placeholder="field.placeholder" :required="field.required" @input="updateField(field.key, ($event.target as HTMLTextAreaElement).value)"></textarea>
       <input v-else :id="`${id}-${field.key}`" dir="auto" :value="content.source[field.key]" :type="field.url ? 'url' : 'text'" class="input" :class="field.inputClass" :placeholder="field.placeholder" :required="field.required" @input="updateField(field.key, ($event.target as HTMLInputElement).value)" />
     </div>

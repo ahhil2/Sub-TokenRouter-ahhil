@@ -103,6 +103,7 @@ func RegisterProviderRoutes(admin *gin.RouterGroup, endpoints ProviderRouteEndpo
 	providers := admin.Group("/providers")
 	{
 		providers.GET("", endpoints.ProviderManagement.List)
+		providers.PUT("/display-order", endpoints.ProviderManagement.UpdateDisplayOrder)
 		providers.GET("/ollama-cloud-usage/settings", endpoints.ProviderOllama.GetOllamaCloudUsageSettings)
 		providers.PUT("/ollama-cloud-usage/settings", endpoints.ProviderOllama.UpdateOllamaCloudUsageSettings)
 		providers.GET("/:id", endpoints.ProviderManagement.GetByID)

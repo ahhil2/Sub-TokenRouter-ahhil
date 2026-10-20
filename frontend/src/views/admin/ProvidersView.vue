@@ -20,6 +20,10 @@
             @create="openCreateProvider()"
           >
             <template #after>
+              <button type="button" class="btn btn-secondary shrink-0" data-testid="provider-sort-open" @click="showDisplayOrder = true">
+                <Icon name="menu" size="sm" />
+                {{ t('admin.providers.displayOrder') }}
+              </button>
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
                 <button
@@ -234,6 +238,7 @@
       <template #table>
         <div ref="providerTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <DataTable
+          :key="sortState.sort_by === 'display_order' ? 'display-order' : 'column-order'"
           column-order-storage-key="admin-providers-column-order"
           ref="dataTableRef"
           :columns="cols"
@@ -242,7 +247,7 @@
           row-key="id"
           :server-side-sort="true"
           @sort="handleSort"
-          default-sort-key="name"
+          default-sort-key=""
           default-sort-order="asc"
           :sort-storage-key="PROVIDER_SORT_STORAGE_KEY"
           :estimate-row-height="156"
@@ -347,7 +352,7 @@
             />
           </template>
           <template #cell-groups="{ row }">
-            <ProviderGroupsCell :groups="row.groups" :max-display="4" />
+            <ProviderGroupsCell :groups="row.groups" />
           </template>
           <template #header-usage="{ column }">
             <div class="flex items-center">
@@ -471,6 +476,7 @@
       </template>
       <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
     </TablePageLayout>
+    <ProviderSortDialog :show="showDisplayOrder" @close="showDisplayOrder = false" @saved="handleDisplayOrderSaved" />
     <CreateProviderModal
       :show="showCreate"
       :initial-platform="createInitialPlatform"
@@ -524,6 +530,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
+import ProviderSortDialog from '@/components/provider/ProviderSortDialog.vue'
 import { isUpstreamUsageQueryEnabled, supportsUpstreamUsageQuery } from '@/utils/upstreamUsage'
 import { useTableLoader } from '@/composables/useTableLoader'
 import { useSwipeSelect, type SwipeSelectVirtualContext } from '@/composables/useSwipeSelect'
@@ -706,6 +713,7 @@ type ProviderSortState = {
   sort_order: ProviderSortOrder
 }
 const PROVIDER_SORTABLE_KEYS = new Set([
+  'display_order',
   'id',
   'name',
   'status',
@@ -717,7 +725,7 @@ const PROVIDER_SORTABLE_KEYS = new Set([
   'expires_at'
 ])
 const loadInitialProviderSortState = (): ProviderSortState => {
-  const fallback: ProviderSortState = { sort_by: 'name', sort_order: 'asc' }
+  const fallback: ProviderSortState = { sort_by: 'display_order', sort_order: 'asc' }
   try {
     const raw = localStorage.getItem(PROVIDER_SORT_STORAGE_KEY)
     if (!raw) return fallback
@@ -733,6 +741,11 @@ const loadInitialProviderSortState = (): ProviderSortState => {
   }
 }
 const sortState = reactive<ProviderSortState>(loadInitialProviderSortState())
+const showDisplayOrder = ref(false)
+const handleDisplayOrderSaved = () => {
+  showDisplayOrder.value = false
+  handleSort('display_order', 'asc')
+}
 
 // Auto refresh settings
 const showAutoRefreshDropdown = ref(false)
@@ -1734,6 +1747,11 @@ const handlePageSizeChange = (size: number) => {
 }
 
 const handleSort = (key: string, order: ProviderSortOrder) => {
+  try {
+    localStorage.setItem(PROVIDER_SORT_STORAGE_KEY, JSON.stringify({ key, order }))
+  } catch (error) {
+    console.warn('Failed to save provider sorting preference:', error)
+  }
   sortState.sort_by = key
   sortState.sort_order = order
   const requestParams = params as any

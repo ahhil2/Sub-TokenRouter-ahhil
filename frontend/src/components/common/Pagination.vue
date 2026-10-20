@@ -11,9 +11,15 @@
       >
         {{ t('pagination.previous') }}
       </button>
-      <span class="text-sm text-gray-700 dark:text-gray-300">
+      <div class="flex flex-col items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+        <span>
         {{ t('pagination.pageOf', { page, total: totalPages }) }}
-      </span>
+        </span>
+        <form v-if="showJump" class="flex items-center gap-1" @submit.prevent="submitJump">
+          <input v-model="jumpPage" type="number" min="1" :max="totalPages" :aria-label="t('pagination.jumpTo')" class="pagination-jump-input input w-16 text-sm" />
+          <button type="submit" class="pagination-jump-button btn btn-ghost btn-sm h-9">{{ t('pagination.jumpAction') }}</button>
+        </form>
+      </div>
       <button
         @click="goToPage(page + 1)"
         :disabled="page === totalPages"
@@ -60,6 +66,7 @@
             :max="totalPages"
             class="pagination-jump-input input w-20 text-sm"
             :placeholder="t('pagination.jumpPlaceholder')"
+            :aria-label="t('pagination.jumpTo')"
             @keyup.enter="submitJump"
           />
           <button type="button" class="pagination-jump-button btn btn-ghost btn-sm h-9" @click="submitJump">
@@ -150,7 +157,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<Emits>()
 
-const totalPages = computed(() => Math.ceil(props.total / props.pageSize))
+const totalPages = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)))
 
 const fromItem = computed(() => {
   if (props.total === 0) return 0
@@ -231,10 +238,10 @@ const handlePageSizeChange = (value: string | number | boolean | null) => {
 }
 
 const submitJump = () => {
-  const value = jumpPage.value.trim()
+  const value = String(jumpPage.value).trim()
   if (!value) return
-  const pageNum = Number.parseInt(value, 10)
-  if (Number.isNaN(pageNum)) return
+  const pageNum = Number(value)
+  if (!Number.isSafeInteger(pageNum)) return
   const nextPage = Math.min(Math.max(pageNum, 1), totalPages.value)
   jumpPage.value = ''
   goToPage(nextPage)

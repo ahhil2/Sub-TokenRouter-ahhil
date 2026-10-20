@@ -8,6 +8,7 @@ import (
 
 // AdminStore 提供管理用例所需的读取、状态写入和删除操作。
 type AdminStore interface {
+	UpdateDisplayOrder(context.Context, []int64) error
 	UpdateExtra(context.Context, int64, map[string]any) error
 	BulkUpdate(context.Context, []int64, ProviderBulkUpdate) (int64, error)
 	RevertProxyFallback(context.Context, int64) error

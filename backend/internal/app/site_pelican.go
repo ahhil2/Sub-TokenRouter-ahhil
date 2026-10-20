@@ -49,6 +49,10 @@ func (executor pelicanExecutor) Generate(ctx context.Context, task site.PelicanT
 	if err != nil {
 		return site.PelicanExecution{}, err
 	}
-	generated, err := executor.tests.GenerateText(ctx, target.ProviderID, target.ModelID, site.PelicanPrompt, site.PelicanOutputTokens, site.PelicanMaxResponseBytes)
+	prompt, err := site.NewPelicanGenerationPrompt()
+	if err != nil {
+		return site.PelicanExecution{}, err
+	}
+	generated, err := executor.tests.GenerateText(ctx, target.ProviderID, target.ModelID, prompt, site.PelicanOutputTokens, site.PelicanMaxResponseBytes)
 	return site.PelicanExecution{Text: generated.Text, ProviderID: target.ProviderID, Model: generated.Model}, err
 }

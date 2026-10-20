@@ -5,6 +5,10 @@
         <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('pelican.adminDescription') }}</p>
         <div class="flex gap-2"><router-link to="/pelican-showcase" class="btn btn-secondary">{{ t('pelican.viewGallery') }}</router-link><button class="btn btn-primary" @click="edit()">{{ t('pelican.create') }}</button></div>
       </div>
+      <details v-if="prompt" class="rounded-card border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-dark-700 dark:bg-dark-800 dark:text-dark-200">
+        <summary class="cursor-pointer font-medium">{{ t('pelican.prompt') }}</summary>
+        <p class="mt-4 whitespace-pre-wrap break-words">{{ prompt }}</p>
+      </details>
       <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
       <p v-if="notice" role="status" class="text-sm text-primary-600">{{ notice }}</p>
       <div class="overflow-x-auto rounded-card border border-gray-200 dark:border-dark-700">
@@ -72,6 +76,7 @@ const tasks = ref<PelicanTask[]>([])
 const groups = ref<AdminGroup[]>([])
 const models = ref<string[]>([])
 const results = ref<PelicanResult[]>([])
+const prompt = ref('')
 const page = ref(1)
 const historyID = ref(0)
 const hasMore = ref(false)
@@ -98,7 +103,11 @@ function taskBusy(task: PelicanTask) { return !!task.lease_until || task.manual_
 async function loadHistory() {
   const version = ++historyVersion
   const result = await pelicanApi.results({ page: page.value, task_id: historyID.value }, true)
-  if (!disposed && version === historyVersion) { results.value = result.items; hasMore.value = result.has_more }
+  if (!disposed && version === historyVersion) {
+    results.value = result.items
+    hasMore.value = result.has_more
+    prompt.value = result.prompt
+  }
 }
 async function refresh() {
   if (refreshing) return

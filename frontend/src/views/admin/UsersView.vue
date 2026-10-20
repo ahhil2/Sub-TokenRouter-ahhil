@@ -303,6 +303,16 @@
             <span class="text-sm text-gray-700 dark:text-gray-300">{{ value || '-' }}</span>
           </template>
 
+          <template #cell-invitation_relationship="{ row }">
+            <div
+              v-if="row.inviter_id || row.invited_count > 0"
+              class="whitespace-nowrap text-sm leading-6 text-gray-700 dark:text-gray-300"
+            >
+              <div>{{ t('admin.users.inviterId') }}{{ row.inviter_id ?? '-' }}</div>
+              <div>{{ t('admin.users.invitedCount') }}{{ row.invited_count ?? 0 }}</div>
+            </div>
+          </template>
+
           <template #cell-notes="{ value }">
             <div class="max-w-xs">
               <span
@@ -859,6 +869,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'email', label: t('admin.users.columns.user'), sortable: true },
   { key: 'id', label: t('admin.users.columns.id'), sortable: true },
   { key: 'username', label: t('admin.users.columns.username'), sortable: true },
+  { key: 'invitation_relationship', label: t('admin.users.columns.invitationRelationship'), sortable: false },
   { key: 'notes', label: t('admin.users.columns.notes'), sortable: false },
   // Dynamic attribute columns
   ...attributeColumns.value,

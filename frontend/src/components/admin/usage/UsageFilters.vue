@@ -176,6 +176,10 @@
         </FilterField>
 
         <div v-if="showActions" class="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <button type="button" @click="resetPanelFilters" class="btn btn-secondary whitespace-nowrap" data-testid="usage-toolbar-reset">
+            <Icon name="refresh" size="sm" />
+            {{ t('common.reset') }}
+          </button>
           <button type="button" @click="$emit('refresh')" class="btn btn-secondary btn-icon" :title="t('common.refresh')">
             <Icon name="refresh" size="sm" />
           </button>
@@ -422,9 +426,17 @@ const onClearApiKey = () => {
   emitChange()
 }
 
-// 面板内重置只清空筛选条件，日期范围保持不变；关键词由下方的 watch 跟随清空。
 const resetPanelFilters = () => {
   clearPendingUserSearch()
+  if (apiKeySearchTimeout) clearTimeout(apiKeySearchTimeout)
+  if (providerSearchTimeout) clearTimeout(providerSearchTimeout)
+  userKeyword.value = ''
+  userResults.value = []
+  showUserDropdown.value = false
+  clearApiKey()
+  providerKeyword.value = ''
+  providerResults.value = []
+  showProviderDropdown.value = false
   for (const key of Object.keys(filters.value)) {
     if (key !== 'start_date' && key !== 'end_date') filters.value[key] = undefined
   }

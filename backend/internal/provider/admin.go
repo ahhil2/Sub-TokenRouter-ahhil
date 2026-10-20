@@ -26,6 +26,20 @@ func (s *Admin) ListProviders(ctx context.Context, page, pageSize int, platform,
 	return providers, result.Total, nil
 }
 
+func (s *Admin) UpdateProviderDisplayOrder(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 || len(ids) > 10000 {
+		return apperror.BadRequest("INVALID_PROVIDER_ORDER", "provider order must contain between 1 and 10000 IDs")
+	}
+	seen := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		if id <= 0 || seen[id] {
+			return apperror.BadRequest("INVALID_PROVIDER_ORDER", "provider IDs must be positive and unique")
+		}
+		seen[id] = true
+	}
+	return s.providerRepo.UpdateDisplayOrder(ctx, ids)
+}
+
 // ListProvidersForSchedulerScoreFilter 查询当前管理端筛选范围内用于调度评分的提供商。
 func (s *Admin) ListProvidersForSchedulerScoreFilter(ctx context.Context, platform, providerType, status, search string, groupID int64, privacyMode string) ([]Record, error) {
 	if s == nil || s.providerRepo == nil {

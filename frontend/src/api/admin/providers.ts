@@ -242,6 +242,10 @@ export interface AdvancedSchedulerScorePreviewRequest {
   previous_response_provider_id?: number
 }
 
+export async function updateDisplayOrder(ids: number[]): Promise<void> {
+  await apiClient.put('/admin/providers/display-order', { ids })
+}
+
 /**
  * List all providers with pagination
  * @param page - Page number (default: 1)
@@ -1061,6 +1065,7 @@ export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUs
 }
 
 export const providersAPI = {
+  updateDisplayOrder,
   list,
   listWithEtag,
   getById,

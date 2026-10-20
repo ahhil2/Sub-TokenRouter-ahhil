@@ -11,6 +11,10 @@ import { Line } from 'vue-chartjs'
 import { usageAPI } from '@/api/usage'
 import { formatDayKey } from '../usageChartData'
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ user: { balance: 123.45 } }),
+}))
+
 // 图表替身接收数据和选项，供组件测试检查配置。
 vi.mock('vue-chartjs', () => ({
   Line: {
@@ -117,6 +121,19 @@ const mountChart = async () => {
 }
 
 describe('UserDashboardUsageChart', () => {
+  it('shows cache before cost and the signed-in balance inside the cost card', async () => {
+    vi.mocked(usageAPI.getDashboardTrend).mockResolvedValue(trendOf([]) as any)
+    const wrapper = await mountChart()
+    const metrics = wrapper.findAll('[role="tab"]')
+    expect(metrics.map(item => item.attributes('data-testid'))).toEqual([
+      'usage-metric-requests', 'usage-metric-tokens', 'usage-metric-cacheHitRate', 'usage-metric-cost',
+    ])
+    expect(wrapper.get('[data-testid="usage-metric-cost"] [data-testid="usage-balance"]').text()).toContain('123.45')
+    const balance = wrapper.get('[data-testid="usage-balance-amount"]')
+    expect(balance.classes()).toContain('text-2xl')
+    expect(balance.classes()).toContain('text-gray-900')
+    expect(balance.classes()).toContain('dark:text-dark-50')
+  })
   beforeEach(() => {
     localStorage.clear()
     vi.mocked(usageAPI.getDashboardTrend).mockReset()
