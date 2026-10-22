@@ -23,7 +23,7 @@ func (store *GroupRateStore) EffectiveGroupRate(ctx context.Context, userID, gro
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		return nil, rows.Err()
 	}
@@ -40,7 +40,7 @@ func (store *GroupRateStore) EffectiveGroupRates(ctx context.Context, userID int
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	rates := make(map[int64]float64)
 	for rows.Next() {
 		var id int64
@@ -60,7 +60,7 @@ func (store *GroupRateStore) IdentityRates(ctx context.Context) ([]billing.Ident
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	rates := make([]billing.IdentityRate, 0)
 	for rows.Next() {
 		var rate billing.IdentityRate
@@ -97,7 +97,7 @@ func (store *GroupRateStore) UpdateIdentityRates(ctx context.Context, actorID in
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `SELECT code FROM identity_groups WHERE code='ahhilai' FOR UPDATE`); err != nil {
 		return err
 	}
@@ -110,13 +110,13 @@ func (store *GroupRateStore) UpdateIdentityRates(ctx context.Context, actorID in
 		var groupID int64
 		var value float64
 		if err := rows.Scan(&groupID, &value); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		before[groupID] = value
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return err
 	}

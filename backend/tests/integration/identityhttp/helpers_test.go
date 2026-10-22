@@ -1106,6 +1106,10 @@ func (r *oauthPendingFlowAffiliateRepo) ListInvitees(context.Context, int64, int
 	return nil, nil
 }
 
+func (r *oauthPendingFlowAffiliateRepo) GetRelationships(context.Context, []int64) (map[int64]promotion.AffiliateRelationship, error) {
+	panic("unexpected GetRelationships call")
+}
+
 func (r *oauthPendingFlowAffiliateRepo) UpdateUserAffCode(context.Context, int64, string) error {
 	panic("unexpected UpdateUserAffCode call")
 }

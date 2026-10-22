@@ -25,7 +25,7 @@ func (store *MemberGroupStore) ListGroups(ctx context.Context) ([]identity.Membe
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	groups := make([]identity.MemberGroup, 0, 3)
 	for rows.Next() {
 		var group identity.MemberGroup
@@ -47,7 +47,7 @@ func (store *MemberGroupStore) Memberships(ctx context.Context, ids []int64) (ma
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var userID int64
 		var code string
@@ -68,7 +68,7 @@ func (store *MemberGroupStore) RechargeIdentity(ctx context.Context, userID int6
 		}
 		exists := rows.Next()
 		scanErr := rows.Err()
-		rows.Close()
+		_ = rows.Close()
 		if scanErr != nil {
 			return "", scanErr
 		}
@@ -97,7 +97,7 @@ func (store *MemberGroupStore) ChangeMembers(ctx context.Context, actorID int64,
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
 	rows, err := client.QueryContext(ctx, `SELECT id FROM users WHERE id=ANY($1) AND deleted_at IS NULL ORDER BY id FOR UPDATE`, pq.Array(ids))
 	if err != nil {
@@ -108,7 +108,7 @@ func (store *MemberGroupStore) ChangeMembers(ctx context.Context, actorID int64,
 		found++
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return err
 	}
@@ -150,11 +150,11 @@ func (store *MemberGroupStore) ListMembers(ctx context.Context, code, search str
 	}
 	var total int64
 	if !rows.Next() {
-		rows.Close()
+		_ = rows.Close()
 		return nil, 0, fmt.Errorf("count identity members")
 	}
 	err = rows.Scan(&total)
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, 0, err
 	}
@@ -167,14 +167,14 @@ func (store *MemberGroupStore) ListMembers(ctx context.Context, code, search str
 	for rows.Next() {
 		var member identity.GroupMember
 		if err := rows.Scan(&member.UserID, &member.Username, &member.Email); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, 0, err
 		}
 		members = append(members, member)
 		ids = append(ids, member.UserID)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, 0, err
 	}

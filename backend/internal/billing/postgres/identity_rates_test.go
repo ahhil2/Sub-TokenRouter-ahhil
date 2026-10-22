@@ -15,7 +15,7 @@ import (
 func TestEffectiveIdentityRateRead(t *testing.T) {
 	database, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() { _ = database.Close() })
 	store := NewUserGroupRateRepository(database)
 	mock.ExpectQuery("SELECT DISTINCT ON").WithArgs(int64(1), int64(2)).WillReturnRows(sqlmock.NewRows([]string{"group_id", "rate_multiplier"}).AddRow(2, 0))
 	rate, err := store.EffectiveGroupRate(context.Background(), 1, 2)

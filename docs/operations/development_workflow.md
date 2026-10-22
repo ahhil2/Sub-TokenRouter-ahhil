@@ -248,6 +248,8 @@ Ent schema 不是生产环境的迁移器。数据库的变更需要新建 `back
 - 用量 HTTP、仪表盘和 DTO 的接口测试，直接构造 usage 和使用方的查询数据，不经过旧的 service 或完整的设置服务。日期测试明确指定 Calendar，分别覆盖用户时区的回退、夏令时和各入口的结束边界；清理任务的存储缺失错误，先由 PostgreSQL 适配层的测试核对，再用相同的错误链输入 HTTP 夹具。
 - 团队所有权的两次有序 SQL 更新，由 `team/postgres` 同包的测试直接验证。sqlmock 夹具检查关闭错误时，同时登记关闭的预期，测试资源的清理不会被误判为业务 SQL 的失败。
 
+SQLite 认证夹具通过 `identity/postgres.NewUserStoreWithSQL` 构造用户存储。`NewUserStore` 还会装配身份组查询，依赖 PostgreSQL 的成员关系表和数组查询；身份组读写由 PostgreSQL 集成测试覆盖。
+
 identity 和 promotion 的集成测试通过 `postgrescontainer.Suite` 在各自的测试进程内复用 PostgreSQL 容器，模板数据库执行当前源码的全部迁移后关闭连接。每个测试从模板克隆独立数据库，支持提交、回滚和多连接；测试完成后依次关闭应用连接、连接池并删除数据库。删除使用 `DROP DATABASE ... WITH (FORCE)`，服务端还没处理完的断开会被直接终止，删除失败时测试失败。`TestMain` 最后回收容器。模板随进程销毁，迁移、恢复及实例级测试使用独立容器入口。
 
 Redis 测试通过 `rediscontainer.Run` 启动独立容器，等待监听就绪及启动日志，等待上限为一分钟。调用方的 context 可提前取消；超时或就绪检查失败仍使测试失败。这个入口覆盖库默认的十秒监听等待，以容纳 Docker 并发启动时的延迟。

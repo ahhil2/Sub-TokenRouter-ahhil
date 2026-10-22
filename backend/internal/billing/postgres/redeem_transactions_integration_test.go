@@ -55,7 +55,7 @@ func TestIdentityRedeemTransactions(t *testing.T) {
 		if queryErr != nil {
 			return "", queryErr
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		var code string
 		if rows.Next() {
 			queryErr = rows.Scan(&code)
@@ -90,12 +90,10 @@ func TestIdentityRedeemTransactions(t *testing.T) {
 	failures := make(chan error, 2)
 	var workers sync.WaitGroup
 	for range 2 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			_, redeemErr := service.Redeem(ctx, userIDs[2], concurrent.Code)
 			failures <- redeemErr
-		}()
+		})
 	}
 	workers.Wait()
 	close(failures)

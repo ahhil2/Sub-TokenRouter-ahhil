@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS user_provider_default_grants (
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
 
-	repo := identitypostgres.NewUserStore(client, db)
+	repo := identitypostgres.NewUserStoreWithSQL(client, db)
 	options := &identitycore.AuthOptions{
 		JWT: identitycore.SessionOptions{
 			Secret:     "test-auth-identity-secret",

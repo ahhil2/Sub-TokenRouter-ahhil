@@ -44,7 +44,6 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 	if apiKey.GroupID != nil && apiKey.Group != nil {
 		groupDefault := apiKey.Group.RateMultiplier
 		subscriptionMultiplier = groupDefault
-		balanceMultiplier = groupDefault
 		var rateErr error
 		balanceMultiplier, rateErr = s.resolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
 		if rateErr != nil {
@@ -274,7 +273,6 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	subscription = s.resolveSubscription(ctx, apiKey, subscription, user.ID, apiKey.GroupID)
 	if apiKey.GroupID != nil && apiKey.Group != nil {
 		subscriptionMultiplier = apiKey.Group.RateMultiplier
-		balanceMultiplier = apiKey.Group.RateMultiplier
 		var rateErr error
 		balanceMultiplier, rateErr = s.resolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
 		if rateErr != nil {
