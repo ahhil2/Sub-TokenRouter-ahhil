@@ -4022,3 +4022,75 @@ func splitContentModerationText(text string, chunkSize int, overlap int) []strin
 	})
 	return chunks
 }
+
+// TestRequestModerationEnabledCachesDisabledPolicy covers each ordinary review switch.
+// Repeated disabled requests share one settings load, and direct Check callers
+// cannot enqueue audits or run synchronous checks under that disabled snapshot.
+func TestRequestModerationEnabledCachesDisabledPolicy(t *testing.T) {
+	for _, reason := range []string{"master", "config", "mode"} {
+		t.Run(reason, func(t *testing.T) {
+			cfg := defaultContentModerationConfig()
+			cfg.Enabled = reason != "config"
+			cfg.Mode = ContentModerationModePreBlock
+			if reason == "mode" {
+				cfg.Mode = ContentModerationModeOff
+			}
+			raw, err := json.Marshal(cfg)
+			require.NoError(t, err)
+			risk := "true"
+			if reason == "master" {
+				risk = "false"
+			}
+			repo := &contentModerationRuntimeSettingRepo{values: map[string]string{
+				SettingKeyRiskControlEnabled:      risk,
+				SettingKeyContentModerationConfig: string(raw),
+			}}
+			svc := runtimeCacheTestService(repo, time.Hour)
+			for range 20 {
+				require.False(t, svc.RequestModerationEnabled(t.Context()))
+				decision, err := svc.Check(t.Context(), runtimeCacheTestInput("blocked"))
+				require.NoError(t, err)
+				require.True(t, decision.Allowed)
+			}
+			_, loads := repo.calls()
+			require.Equal(t, 1, loads)
+			require.Zero(t, svc.asyncEnqueued.Load())
+			require.Zero(t, svc.preBlockChecked.Load())
+		})
+	}
+}
+
+// TestRequestModerationEnabledFollowsConfigSaves toggles ordinary policy within its cache lifetime.
+// Saving a disabled state immediately bypasses review, and re-enabling restores
+// keyword blocking without another batch read or restarting the service.
+func TestRequestModerationEnabledFollowsConfigSaves(t *testing.T) {
+	repo := &contentModerationRuntimeSettingRepo{values: map[string]string{
+		SettingKeyRiskControlEnabled:      "true",
+		SettingKeyContentModerationConfig: runtimeCacheTestConfig(t, "blocked"),
+	}}
+	svc := runtimeCacheTestService(repo, time.Hour)
+	require.True(t, svc.RequestModerationEnabled(t.Context()))
+	for _, enabled := range []bool{false, true, false} {
+		_, err := svc.UpdateConfig(t.Context(), UpdateContentModerationConfigInput{Enabled: &enabled})
+		require.NoError(t, err)
+		require.Equal(t, enabled, svc.RequestModerationEnabled(t.Context()))
+		decision, err := svc.Check(t.Context(), runtimeCacheTestInput("blocked"))
+		require.NoError(t, err)
+		require.Equal(t, enabled, decision.Blocked)
+	}
+	_, loads := repo.calls()
+	require.Equal(t, 1, loads)
+}
+
+// TestRequestModerationEnabledUnavailableAllowsBypass covers missing service and initial read failure.
+// These conditions retain the established fail-open policy while leaving every
+// audit queue and synchronous moderation counter untouched.
+func TestRequestModerationEnabledUnavailableAllowsBypass(t *testing.T) {
+	var absent *ContentModerationService
+	require.False(t, absent.RequestModerationEnabled(t.Context()))
+	repo := &contentModerationRuntimeSettingRepo{getMultipleErr: errors.New("unavailable")}
+	svc := runtimeCacheTestService(repo, time.Hour)
+	require.False(t, svc.RequestModerationEnabled(t.Context()))
+	require.Zero(t, svc.asyncEnqueued.Load())
+	require.Zero(t, svc.preBlockChecked.Load())
+}

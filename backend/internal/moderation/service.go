@@ -43,7 +43,9 @@ import (
 // log insertion as separate effects. Cyber warning/media and account policy
 // instead commit together before authentication invalidation and notice
 // handling. Runtime snapshots publish immutable policy and keyword data,
-// retaining stale entries during deferred reload failures.
+// retaining stale entries during deferred reload failures. Entry adapters use
+// RequestModerationEnabled before building ordinary review input or recording
+// review milestones.
 
 // Moderation modes, action labels, protocol identifiers, and normalized limits
 // govern request admission, audit execution, retained observations, and
@@ -1997,11 +1999,33 @@ func (s *ContentModerationService) TestAPIKeys(ctx context.Context, input TestCo
 	return &TestContentModerationAPIKeysResult{Items: items, AuditResult: auditResult, ImageCount: imageCount}, nil
 }
 
+// RequestModerationEnabled reads the cached policy to decide whether ordinary
+// request moderation should run. Gate callers before building review input. Missing dependencies
+// and an initial settings failure disable review; expired snapshots use the
+// existing background refresh policy, and configuration saves replace local state.
+func (s *ContentModerationService) RequestModerationEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil || s.repo == nil {
+		return false
+	}
+	snapshot, err := s.loadRuntimeSnapshot(ctx)
+	if err != nil {
+		slog.Warn("content_moderation.skip_config_load_failed", "error", err)
+		return false
+	}
+	return snapshot.enabled()
+}
+
+// enabled applies the master switch, ordinary enablement, and configured mode.
+func (s *contentModerationRuntimeSnapshot) enabled() bool {
+	return s.riskControlEnabled && s.config.Enabled && s.config.Mode != ContentModerationModeOff
+}
+
 // Check returns a request-admission decision after risk enablement, ordinary
 // mode, group, and requested-model gates. Missing dependencies, configuration
 // load failures, disabled policy, unsupported empty extraction, and sample
-// misses allow the request. Pre-block keywords run first; a keyword_only miss
-// returns before hash checking, sampling, or external auditing.
+// misses allow the request. Disabled policy returns before per-request audit
+// logging or content extraction. Pre-block keywords run first; a keyword_only
+// miss returns before hash checking, sampling, or external auditing.
 //
 // An enabled flagged-hash match blocks even in observe mode and adds its hash
 // to a nonempty block message. Hash read errors are logged; returned membership
@@ -2034,13 +2058,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			"error", err)
 		return allow, nil
 	}
-	if !runtimeSnapshot.riskControlEnabled {
-		slog.Info("content_moderation.skip_feature_disabled",
-			"user_id", input.UserID,
-			"api_key_id", input.APIKeyID,
-			"group_id", contentModerationLogGroupID(input.GroupID),
-			"endpoint", input.Endpoint,
-			"protocol", input.Protocol)
+	if !runtimeSnapshot.enabled() {
 		return allow, nil
 	}
 	cfg := runtimeSnapshot.config
@@ -2067,24 +2085,6 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		"api_key_count", len(cfg.apiKeys()),
 		"pre_hash_check_enabled", cfg.PreHashCheckEnabled,
 		"record_non_hits", cfg.RecordNonHits)
-	if !cfg.Enabled {
-		slog.Info("content_moderation.skip_config_disabled",
-			"user_id", input.UserID,
-			"api_key_id", input.APIKeyID,
-			"group_id", contentModerationLogGroupID(input.GroupID),
-			"endpoint", input.Endpoint,
-			"protocol", input.Protocol)
-		return allow, nil
-	}
-	if cfg.Mode == ContentModerationModeOff {
-		slog.Info("content_moderation.skip_mode_off",
-			"user_id", input.UserID,
-			"api_key_id", input.APIKeyID,
-			"group_id", contentModerationLogGroupID(input.GroupID),
-			"endpoint", input.Endpoint,
-			"protocol", input.Protocol)
-		return allow, nil
-	}
 	if !inGroupScope {
 		slog.Info("content_moderation.skip_group_out_of_scope",
 			"user_id", input.UserID,

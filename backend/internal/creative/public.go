@@ -38,8 +38,8 @@ import (
 // choose parameter options independently from pricing, whose quote
 // availability is checked before new task funding.
 //
-// Creation validates and moderates before idempotency lookup, so replay still
-// depends on current admission. A new task obtains a price snapshot and hidden
+// Creation validates and, when enabled, moderates before idempotency lookup.
+// Replays therefore still depend on current admission. A new task obtains a price snapshot and hidden
 // Key, then persists metadata before reservation, transient input writes, and
 // enqueue progress. Those cross-store steps keep separate recovery markers;
 // creation failures can leave earlier work present for outbox recovery. Prompt
@@ -229,6 +229,10 @@ type (
 		// permission decision. Public requests NoMediaRetention, allows service
 		// errors, and blocks a successful nonnil denial before creating a task.
 		Check(context.Context, ModerationInput) (*ModerationDecision, error)
+		// RequestModerationEnabled reports whether cached ordinary policy permits entering review.
+		// False skips review input construction, including image encoding, and allows
+		// task submission to continue through its remaining validation and funding checks.
+		RequestModerationEnabled(context.Context) bool
 	}
 )
 
@@ -1437,8 +1441,8 @@ func Sha256Hex(data []byte) string {
 
 // ModerateCreativeRequest reviews validated prompt and media using an OpenAI
 // Images JSON shape with NoMediaRetention requested. Callers supply nonnil
-// validated input when review is configured; absent review and service errors
-// permit creation, while a successful nonnil denial blocks it.
+// validated input when review is enabled. Absent or disabled review and service
+// errors permit creation, while a successful nonnil denial blocks it.
 //
 // Source images keep their order and a supplied mask follows them in the
 // temporary image list. MIME and base64 bytes share each data URL, so the
@@ -1446,7 +1450,7 @@ func Sha256Hex(data []byte) string {
 // task. A configured nonblank request ID is reused; otherwise a fresh local ID
 // identifies this review before hidden Key creation and reservation.
 func (s *Public) ModerateCreativeRequest(ctx context.Context, userID int64, validated *ValidatedCreativeParams) error {
-	if s.Moderation == nil {
+	if s.Moderation == nil || !s.Moderation.RequestModerationEnabled(ctx) {
 		return nil
 	}
 	// Adapt ordered references and the optional mask to one temporary review list.

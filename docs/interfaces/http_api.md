@@ -339,7 +339,7 @@ app 为所有需要幂等的用户和管理员 HTTP 处理器绑定同一个协�
 
 `request_body_read_ms`、`preprocess_ms`、`user_slot_wait_ms`、`provider_slot_wait_ms` 分解 HTTP 首次准入前的耗时。原始 Body 的读取才计入读取时间，容量检查执行时间属于其他处理，等待只统计检查之间的排队。`retry_provider_slot_wait_ms` 单列后续等待。`provider_slot_acquired_ms` 是首次取得执行资格的时刻；它与连接、发送、响应和输出事件都不能作为时长相加。
 
-入口诊断还保存 `auth_started_ms`、`auth_finished_ms` 和 `moderation_started_ms`、`moderation_finished_ms`。认证范围包含选组、资金和 Key 准入；复合 Key 提前读正文时，它与正文读取区间重叠。审核时刻包围 HTTP 审核入口，即使审核配置关闭也会记录。它们都是相对请求入口的时刻，不能与四项准入耗时相加。
+入口诊断还保存 `auth_started_ms`、`auth_finished_ms` 和 `moderation_started_ms`、`moderation_finished_ms`。认证范围包含选组、资金和 Key 准入；复合 Key 提前读正文时，它与正文读取区间重叠。审核时刻包围启用状态下的 HTTP 审核入口；审核关闭时直接跳过该入口，这两项缺失。它们都是相对请求入口的时刻，不能与四项准入耗时相加。
 
 `request_body_read_started_ms` 是第一次调用原始 Body.Read 的时刻；`request_body_first_byte_ms` 和 `request_body_last_byte_ms` 是读取返回正数字节的首次、末次时刻。`request_body_read_finished_ms` 在 EOF 或读取错误时记录，`request_body_read_failed` 用 0 表示 EOF、1 表示错误，尚未结束时两项缺失。`request_body_received_bytes` 包含与错误一起返回的部分字节，记录解压前的传输正文大小；`request_content_length` 保留入口声明长度，未知长度缺失。解压和复合 Key 内存重放不会增加收到的字节数。读取开始前等待属于认证或其他处理，原始读取结束到审核入口之间包含解压、解析和校验。
 

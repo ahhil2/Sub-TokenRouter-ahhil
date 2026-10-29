@@ -1264,6 +1264,9 @@ func (p *cyberTestPorts) Find(context.Context, int64, *gin.Context, []byte) stri
 // StopKeepalive reports no active heartbeat to stop in this fixture.
 func (p *cyberTestPorts) StopKeepalive(*gin.Context) bool { return false }
 
+// RequestModerationEnabled lets ordinary error tests reach their configured check result.
+func (p *cyberTestPorts) RequestModerationEnabled(context.Context) bool { return true }
+
 // Check returns the injected failed check outcome for moderation error
 // handling.
 func (p *cyberTestPorts) Check(context.Context, moderation.ContentModerationCheckInput) (*moderation.ContentModerationDecision, error) {

@@ -224,6 +224,11 @@ func creativeGroupView(g *routing.Group, language string) *creative.GroupView {
 	}
 }
 
+// RequestModerationEnabled forwards the cached ordinary moderation gate before creative input encoding.
+func (m creativeModeration) RequestModerationEnabled(ctx context.Context) bool {
+	return m.service.RequestModerationEnabled(ctx)
+}
+
 // Check delegates the creative request and its media-retention choice to
 // moderation. It returns the Allowed decision when available and retains the
 // service error; a nil moderation result remains nil.

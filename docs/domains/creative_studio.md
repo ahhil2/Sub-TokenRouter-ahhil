@@ -196,7 +196,7 @@ app 固定唯一生产实例，提供商目录复用 creative/provider 对原生
 
 ## 审核无留存
 
-创建任务时，prompt 与全部上传图（含 mask）会构造 OpenAI Images 协议报文送内容审核，且必须开启 `ContentModerationCheckInput.NoMediaRetention`：
+创建任务时先检查共享内容审核开关。审核关闭则直接继续任务流程；审核开启时，prompt 与全部上传图（含 mask）会构造 OpenAI Images 协议报文送内容审核，且必须开启 `ContentModerationCheckInput.NoMediaRetention`：
 
 - 无媒体留存模式下，审核日志只记录输入 hash、类别、分数和决策等元数据。命中的媒体不做快照，`input_excerpt` 和正文输入项也不保存，因此审核记录与 Ops 日志不会保存 base64 图片或 prompt 明文。
 - 审核服务自身失败不阻断创作台（fail-open 记日志）；命中阻断时返回 `403 CREATIVE_CONTENT_BLOCKED`。

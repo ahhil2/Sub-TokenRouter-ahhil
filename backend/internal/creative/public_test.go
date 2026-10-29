@@ -18,6 +18,11 @@ type patternCreativeSettings struct {
 	model               string // configured wildcard model name
 }
 
+// disabledCreativeModerator exposes a disabled policy with no callable Check method.
+type disabledCreativeModerator struct {
+	Moderator // unused actual review implementation
+}
+
 // GetCreativeModelSettings returns one generated allowlist entry using the
 // fixture model. The returned entry targets group one and permits generation
 // so wildcard rejection can be exercised by the caller.
@@ -71,4 +76,15 @@ func TestCreativePublicListChecksConfiguredSettings(t *testing.T) {
 	require.Equal(t, "gpt-image-2", result.Data[0].Model)
 	require.Equal(t, []string{"gpt-image-2"}, fixture.checked)
 	require.Zero(t, fixture.inventoryReads)
+}
+
+// RequestModerationEnabled prevents this fixture from constructing or reviewing creative content.
+func (disabledCreativeModerator) RequestModerationEnabled(context.Context) bool { return false }
+
+// TestModerateCreativeRequestDisabledSkipsInput passes no validated body under disabled policy.
+// Returning successfully proves the entry skips image encoding, metadata access,
+// and the fixture's unavailable Check implementation before continuing submission.
+func TestModerateCreativeRequestDisabledSkipsInput(t *testing.T) {
+	service := &Public{Moderation: disabledCreativeModerator{}}
+	require.NoError(t, service.ModerateCreativeRequest(t.Context(), 1, nil))
 }

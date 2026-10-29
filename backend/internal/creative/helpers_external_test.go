@@ -496,6 +496,11 @@ func bindCreativeUsageFixture(results *creative.Results, logs usage.UsageLogRepo
 	}
 }
 
+// RequestModerationEnabled forwards runtime policy so creative fixtures share production review gating.
+func (m creativeModerationFixture) RequestModerationEnabled(ctx context.Context) bool {
+	return m.source.RequestModerationEnabled(ctx)
+}
+
 // Check forwards creative identity, body and retention controls to the native
 // moderation service. A nil result remains nil with its error; an available
 // result supplies Allowed while retaining the service error.

@@ -10,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
@@ -19,10 +21,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
-// ingressModerationStub models an immediate policy bypass or a service failure.
+// ingressModerationStub models an allowed review decision or a service failure.
 type ingressModerationStub struct {
 	ModerationPort       // unused warning operations
 	err            error // check failure result
+}
+
+// requestGateModeration models a runtime switch and counts actual review calls.
+type requestGateModeration struct {
+	ModerationPort      // unused warning operations
+	enabled        bool // current ordinary switch
+	checks         int  // actual review invocations
 }
 
 // TestBuildContentModerationInputTeamKeyUsesActorAndKeepsBillingAttribution
@@ -129,6 +138,9 @@ func newContentModerationHelperTestContext() *gin.Context {
 	return c
 }
 
+// RequestModerationEnabled keeps policy active for the ingress timing fixture's service calls.
+func (s ingressModerationStub) RequestModerationEnabled(context.Context) bool { return true }
+
 // Check simulates bounded policy work and returns its configured decision outcome.
 func (s ingressModerationStub) Check(context.Context, moderation.ContentModerationCheckInput) (*moderation.ContentModerationDecision, error) {
 	time.Sleep(time.Millisecond)
@@ -158,4 +170,43 @@ func TestRunContentModerationSeparatesIngressDelay(t *testing.T) {
 	c.Request = c.Request.WithContext(ctx)
 	require.Nil(t, RunContentModeration(nil, c, nil, nil, nil, authctx.AuthSubject{}, "", "", nil))
 	require.NotContains(t, stages.Snapshot(), "moderation_started_ms")
+}
+
+// RequestModerationEnabled returns the fixture's current ordinary policy switch.
+func (s *requestGateModeration) RequestModerationEnabled(context.Context) bool { return s.enabled }
+
+// Check counts admitted reviews and allows their input to continue.
+func (s *requestGateModeration) Check(context.Context, moderation.ContentModerationCheckInput) (*moderation.ContentModerationDecision, error) {
+	s.checks++
+	return &moderation.ContentModerationDecision{Allowed: true}, nil
+}
+
+// TestRunContentModerationDisabledBypassesReview toggles policy around three requests.
+// Disabled requests never build review metadata, invoke Check, emit review logs,
+// or establish review milestones; re-enabling immediately restores ordinary checks.
+func TestRunContentModerationDisabledBypassesReview(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	service := &requestGateModeration{}
+	for _, enabled := range []bool{false, true, false} {
+		service.enabled = enabled
+		c := newContentModerationHelperTestContext()
+		ctx, stages := timing.WithStages(c.Request.Context(), time.Now(), nil)
+		c.Request = c.Request.WithContext(ctx)
+		var endpoints ModerationEndpoints
+		if enabled {
+			endpoints = GatewayModerationEndpoints{}
+		}
+		decision := RunContentModeration(endpoints, c, zap.New(core), service, nil, authctx.AuthSubject{}, moderation.ContentModerationProtocolOpenAIChat, "model", []byte(`{"messages":[]}`))
+		if enabled {
+			require.True(t, decision.Allowed)
+			require.Contains(t, stages.Snapshot(), "moderation_started_ms")
+		} else {
+			require.Nil(t, decision)
+			require.NotContains(t, stages.Snapshot(), "moderation_started_ms")
+			require.NotContains(t, stages.Snapshot(), "moderation_finished_ms")
+		}
+	}
+	require.Equal(t, 1, service.checks)
+	require.Equal(t, 1, logs.FilterMessage("content_moderation.gateway_check_start").Len())
+	require.Equal(t, 1, logs.FilterMessage("content_moderation.gateway_check_done").Len())
 }

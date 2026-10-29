@@ -59,6 +59,10 @@ type ModerationEndpoints interface {
 // ModerationPort checks content and records or scopes upstream Cyber warning
 // evidence.
 type ModerationPort interface {
+	// RequestModerationEnabled reports whether cached policy enables ordinary
+	// moderation. Entry adapters call it before building review input or
+	// emitting audit logs; false lets the request continue without a check.
+	RequestModerationEnabled(context.Context) bool
 	// Check evaluates supplied protocol input and its risk/billing attribution
 	// using the caller context. The HTTP adapter returns a successful decision and
 	// logs errors before yielding an absent decision to its caller.
@@ -302,10 +306,13 @@ func SetOpenAICyberWarningPromptExcerpt(c *gin.Context, promptExcerpt string) {
 // billing attribution. Missing service or request state returns nil; a service
 // error is logged and also returns nil, leaving the caller to decide handling
 // for an absent decision. Successful decisions are returned with metadata
-// diagnostics when logging is supplied. Request timing brackets this gateway
-// check even when service policy is disabled and immediately allows the input.
+// diagnostics when logging is supplied. Disabled policy bypasses input
+// construction, service checks, review logs, and moderation timing milestones.
 func RunContentModeration(endpoints ModerationEndpoints, c *gin.Context, reqLog *zap.Logger, svc ModerationPort, apiKey *apikey.APIKey, subject authctx.AuthSubject, protocol string, model string, body []byte) *moderation.ContentModerationDecision {
 	if svc == nil || c == nil || c.Request == nil {
+		return nil
+	}
+	if !svc.RequestModerationEnabled(c.Request.Context()) {
 		return nil
 	}
 	if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
