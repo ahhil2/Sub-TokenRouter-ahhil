@@ -1,4 +1,8 @@
 <!doctype html>
+<!-- docs.html presents static setup instructions and protocol examples alongside
+     section navigation. Its nested responsive grids constrain article widths so
+     command examples and protocol tables scroll inside their own panels on
+     narrow screens. -->
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -237,6 +241,9 @@
 
       .content {
         display: grid;
+        /* Constrain article tracks so their code and table panels can scroll
+           locally without imposing their intrinsic content widths on the page. */
+        grid-template-columns: minmax(0, 1fr);
         gap: 18px;
       }
 
@@ -396,7 +403,7 @@
         }
 
         .layout {
-          grid-template-columns: 1fr;
+          grid-template-columns: minmax(0, 1fr);
         }
 
         .sidebar {

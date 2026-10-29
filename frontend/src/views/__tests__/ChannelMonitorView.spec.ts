@@ -5,23 +5,56 @@ import ChannelMonitorView from '../ChannelMonitorView.vue'
 import channelMonitor from '@/i18n/locales/zh/channelMonitor'
 import { getChannelMonitor } from '@/api/channelMonitor'
 
+/**
+ * ChannelMonitorView.spec.ts exercises monitoring refresh, stale data, document
+ * visibility, and role-dependent configuration. Mocked snapshots and timers expose
+ * refresh behavior and unmount cleanup, while layout assertions distinguish anonymous
+ * visitors, signed-in users, and administrators.
+ */
+
 const auth = vi.hoisted(() => ({ isAuthenticated: false, isAdmin: false }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
-vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div data-test="app-layout"><aside data-test="sidebar" /><slot /></div>' } }))
+vi.mock('@/components/layout/AppLayout.vue', () => ({
+  default: { template: '<div data-test="app-layout"><aside data-test="sidebar" /><slot /></div>' },
+}))
 vi.mock('@/api/channelMonitor', () => ({ getChannelMonitor: vi.fn() }))
 vi.mock('@/components/layout/AppHeader.vue', () => ({ default: { template: '<header />' } }))
 vi.mock('vue-i18n', async () => {
   const { ref } = await import('vue')
-  return { createI18n: () => ({ install() {} }), useI18n: () => ({ locale: ref('zh'), t: (key: string, values: Record<string, unknown> = {}) => {
-    const message = key.replace(/^channelMonitor\./, '').split('.').reduce<unknown>((value, part) => (value as Record<string, unknown>)[part], channelMonitor)
-    return String(message).replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''))
-  } }) }
+  return {
+    createI18n: () => ({ install() {} }),
+    useI18n: () => ({
+      locale: ref('zh'),
+      t: (key: string, values: Record<string, unknown> = {}) => {
+        const message = key
+          .replace(/^channelMonitor\./, '')
+          .split('.')
+          .reduce<unknown>(
+            (value, part) => (value as Record<string, unknown>)[part],
+            channelMonitor,
+          )
+        return String(message).replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''))
+      },
+    }),
+  }
 })
 
-const response = { generated_at: '2026-10-13T00:00:00Z', window_minutes: 90, slot_seconds: 270, refresh_seconds: 30, monitoring_enabled: true, channels: [] }
+const response = {
+  generated_at: '2026-10-13T00:00:00Z',
+  window_minutes: 90,
+  slot_seconds: 270,
+  refresh_seconds: 30,
+  monitoring_enabled: true,
+  channels: [],
+}
 
 function render() {
-  return mount(ChannelMonitorView, { global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh: { channelMonitor } } })], stubs: { ProviderIcon: true, ChannelMonitorCard: true, ChannelMonitorSettings: true } } })
+  return mount(ChannelMonitorView, {
+    global: {
+      plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh: { channelMonitor } } })],
+      stubs: { ProviderIcon: true, ChannelMonitorCard: true, ChannelMonitorSettings: true },
+    },
+  })
 }
 
 describe('ChannelMonitorView', () => {
@@ -32,7 +65,10 @@ describe('ChannelMonitorView', () => {
     vi.mocked(getChannelMonitor).mockReset().mockResolvedValue(response)
     vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
   })
-  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
 
   it('refreshes every thirty seconds and cleans up on unmount', async () => {
     const wrapper = render()
@@ -117,7 +153,12 @@ describe('ChannelMonitorView', () => {
     await flushPromises()
     await wrapper.get('[aria-controls="channel-monitor-settings"]').trigger('click')
     let finish: (value: typeof response) => void = () => {}
-    vi.mocked(getChannelMonitor).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    vi.mocked(getChannelMonitor).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
     await vi.advanceTimersByTimeAsync(30000)
     wrapper.findComponent({ name: 'ChannelMonitorSettings' }).vm.$emit('saved')
     finish(response)

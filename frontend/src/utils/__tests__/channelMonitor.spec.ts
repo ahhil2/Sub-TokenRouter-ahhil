@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { channelLatency, channelPercent, channelStatus } from '../channelMonitor'
 
+/**
+ * channelMonitor.spec.ts verifies availability classification and nullable monitoring
+ * display values. Its inputs distinguish missing measurements from failed traffic and
+ * exercise percentage and latency formatting, including the conversion from backend
+ * milliseconds to displayed seconds.
+ */
+
 describe('channel monitoring metrics', () => {
   it('classifies availability without treating missing data as success', () => {
     expect(channelStatus(null)).toBe('unknown')

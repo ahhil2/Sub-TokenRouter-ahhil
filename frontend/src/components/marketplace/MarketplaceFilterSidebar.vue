@@ -18,7 +18,11 @@
       >
         <Icon name="filter" size="sm" />
         {{ t('marketplace.filtersTitle') }}
-        <span v-if="activeCount" class="rounded-full bg-primary-50 px-2 text-xs text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">{{ activeCount }}</span>
+        <span
+          v-if="activeCount"
+          class="rounded-full bg-primary-50 px-2 text-xs text-primary-700 dark:bg-primary-500/10 dark:text-primary-300"
+          >{{ activeCount }}</span
+        >
         <Icon name="chevronDown" size="sm" :class="mobileExpanded ? 'rotate-180' : ''" />
       </button>
       <button
@@ -38,11 +42,21 @@
       :class="mobileExpanded ? 'block' : 'hidden'"
       data-testid="marketplace-filter-panel"
     >
-      <p class="text-xs leading-5 text-gray-500 dark:text-dark-400">{{ t('marketplace.filtersHint') }}</p>
+      <p class="text-xs leading-5 text-gray-500 dark:text-dark-400">{{
+        t('marketplace.filtersHint')
+      }}</p>
 
       <section class="space-y-2" :aria-label="t('marketplace.filterProvider')">
-        <h3 class="text-xs font-semibold text-gray-600 dark:text-dark-300">{{ t('marketplace.filterProvider') }}</h3>
-        <button type="button" class="marketplace-filter-option" :aria-pressed="brand === 'all'" data-testid="marketplace-provider-all" @click="brand = 'all'">
+        <h3 class="text-xs font-semibold text-gray-600 dark:text-dark-300">{{
+          t('marketplace.filterProvider')
+        }}</h3>
+        <button
+          type="button"
+          class="marketplace-filter-option"
+          :aria-pressed="brand === 'all'"
+          data-testid="marketplace-provider-all"
+          @click="brand = 'all'"
+        >
           <span class="min-w-0 flex-1 text-left">{{ t('marketplace.allProviders') }}</span>
           <span class="marketplace-filter-count">{{ totalGroups }}</span>
         </button>
@@ -57,14 +71,27 @@
           @click="brand = option.value"
         >
           <ProviderIcon :brand="option.value" size="16px" />
-          <span class="min-w-0 flex-1 truncate text-left" :title="option.label">{{ option.label }}</span>
+          <span class="min-w-0 flex-1 truncate text-left" :title="option.label">{{
+            option.label
+          }}</span>
           <span class="marketplace-filter-count">{{ option.count }}</span>
         </button>
       </section>
 
-      <section class="space-y-2 border-t border-gray-100 pt-4 dark:border-dark-700" :aria-label="t('marketplace.filterGroup')">
-        <h3 class="text-xs font-semibold text-gray-600 dark:text-dark-300">{{ t('marketplace.filterGroup') }}</h3>
-        <button type="button" class="marketplace-filter-option" :aria-pressed="groupId === 'all'" data-testid="marketplace-group-all" @click="groupId = 'all'">
+      <section
+        class="space-y-2 border-t border-gray-100 pt-4 dark:border-dark-700"
+        :aria-label="t('marketplace.filterGroup')"
+      >
+        <h3 class="text-xs font-semibold text-gray-600 dark:text-dark-300">{{
+          t('marketplace.filterGroup')
+        }}</h3>
+        <button
+          type="button"
+          class="marketplace-filter-option"
+          :aria-pressed="groupId === 'all'"
+          data-testid="marketplace-group-all"
+          @click="groupId = 'all'"
+        >
           <span class="min-w-0 flex-1 text-left">{{ t('marketplace.allGroups') }}</span>
           <span class="marketplace-filter-count">{{ groups.length }}</span>
         </button>
@@ -78,13 +105,26 @@
           data-testid="marketplace-group-option"
           @click="groupId = group.id"
         >
-          <span class="min-w-0 flex-1 break-words text-left [overflow-wrap:anywhere]">{{ group.name }}</span>
-          <span class="marketplace-filter-count" :aria-label="t('marketplace.rateMultiplierValue', { multiplier: `×${group.rate_multiplier}` })">×{{ group.rate_multiplier }}</span>
+          <span class="min-w-0 flex-1 break-words text-left [overflow-wrap:anywhere]">{{
+            group.name
+          }}</span>
+          <span
+            class="marketplace-filter-count"
+            :aria-label="
+              t('marketplace.rateMultiplierValue', { multiplier: `×${group.rate_multiplier}` })
+            "
+            >×{{ group.rate_multiplier }}</span
+          >
         </button>
       </section>
 
-      <section class="space-y-2 border-t border-gray-100 pt-4 dark:border-dark-700" :aria-label="t('marketplace.filterPricingMode')">
-        <h3 class="text-xs font-semibold text-gray-600 dark:text-dark-300">{{ t('marketplace.filterPricingMode') }}</h3>
+      <section
+        class="space-y-2 border-t border-gray-100 pt-4 dark:border-dark-700"
+        :aria-label="t('marketplace.filterPricingMode')"
+      >
+        <h3 class="text-xs font-semibold text-gray-600 dark:text-dark-300">{{
+          t('marketplace.filterPricingMode')
+        }}</h3>
         <button
           v-for="option in pricingOptions"
           :key="option.value"
@@ -107,7 +147,14 @@ import { ref, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
-import type { MarketplaceGroup } from '@/types'
+import type { MarketplaceGroup } from '@/api/marketplace.types'
+
+/**
+ * MarketplaceFilterSidebar.vue presents provider, group, and pricing-category filters
+ * supplied by the marketplace page. Selection values are parent-owned models, while
+ * local state controls mobile expansion; the reset event lets the page clear its
+ * complete filter state.
+ */
 
 type PricingFilter = 'all' | 'token' | 'image' | 'video' | 'unpriced'
 

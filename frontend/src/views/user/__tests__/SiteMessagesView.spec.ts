@@ -4,30 +4,66 @@ import SiteMessagesView from '../SiteMessagesView.vue'
 import MessageComposer from '@/components/messages/MessageComposer.vue'
 import type { MessageThread } from '@/api/siteMessages'
 
+/**
+ * SiteMessagesView.spec.ts verifies conversation access, safe text rendering, read
+ * visibility, and reply retries. Delayed API responses exercise administrator
+ * conversation switching, while request assertions check that ordinary users cannot
+ * redirect replies through URL or recipient overrides.
+ */
+
 const mocks = vi.hoisted(() => ({
   auth: { user: { id: 2 }, isAdmin: false },
   route: { query: {} as Record<string, string> },
-  replace: vi.fn(), refresh: vi.fn(), showSuccess: vi.fn(),
+  replace: vi.fn(),
+  refresh: vi.fn(),
+  showSuccess: vi.fn(),
   api: { conversations: vi.fn(), thread: vi.fn(), markRead: vi.fn(), send: vi.fn() },
 }))
 vi.mock('@/api/siteMessages', () => ({ siteMessagesAPI: mocks.api }))
-vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div><slot name="page-heading-actions" /><slot /></div>' } }))
+vi.mock('@/components/layout/AppLayout.vue', () => ({
+  default: { template: '<div><slot name="page-heading-actions" /><slot /></div>' },
+}))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => mocks.auth }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess }) }))
-vi.mock('@/stores/siteMessages', () => ({ useSiteMessagesStore: () => ({ refresh: mocks.refresh }) }))
-vi.mock('vue-router', () => ({ useRoute: () => mocks.route, useRouter: () => ({ replace: mocks.replace }) }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, locale: { value: 'zh-Hans' } }) }))
+vi.mock('@/stores/siteMessages', () => ({
+  useSiteMessagesStore: () => ({ refresh: mocks.refresh }),
+}))
+vi.mock('vue-router', () => ({
+  useRoute: () => mocks.route,
+  useRouter: () => ({ replace: mocks.replace }),
+}))
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (key: string) => key, locale: { value: 'zh-Hans' } }),
+}))
 
 function thread(userID = 2, body = 'Hello 😊'): MessageThread {
   return {
     contact: { id: userID, username: `User ${userID}`, email: `user${userID}@example.invalid` },
-    items: [{ id: userID * 10, user_id: userID, sender_id: 1, is_admin: true, body, created_at: '2026-10-08T12:00:00Z' }],
-    has_more: false, read_through_id: 0, peer_read_through_id: 0,
+    items: [
+      {
+        id: userID * 10,
+        user_id: userID,
+        sender_id: 1,
+        is_admin: true,
+        body,
+        created_at: '2026-10-08T12:00:00Z',
+      },
+    ],
+    has_more: false,
+    read_through_id: 0,
+    peer_read_through_id: 0,
   }
 }
 
 function mountView() {
-  return shallowMount(SiteMessagesView, { global: { stubs: { AppLayout: { template: '<div><slot name="page-heading-actions" /><slot /></div>' }, Icon: true } } })
+  return shallowMount(SiteMessagesView, {
+    global: {
+      stubs: {
+        AppLayout: { template: '<div><slot name="page-heading-actions" /><slot /></div>' },
+        Icon: true,
+      },
+    },
+  })
 }
 
 beforeEach(() => {
@@ -41,7 +77,10 @@ beforeEach(() => {
   mocks.api.markRead.mockResolvedValue(undefined)
   mocks.api.send.mockResolvedValue({ recipient_count: 1 })
 })
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 describe('SiteMessagesView', () => {
   it('ignores another user in the URL and renders message content as text', async () => {
@@ -88,12 +127,30 @@ describe('SiteMessagesView', () => {
     mocks.auth.isAdmin = true
     mocks.route.query = { user: '2' }
     let resolveFirst!: (value: MessageThread) => void
-    const first = new Promise<MessageThread>(resolve => { resolveFirst = resolve })
-    mocks.api.thread.mockImplementation((userID: number) => userID === 2 ? first : Promise.resolve(thread(3, 'Only user three')))
-    mocks.api.conversations.mockResolvedValue({ items: [{ user_id: 3, username: 'User three', email: 'three@example.invalid', body: 'Preview', unread_count: 1 }], has_more: false })
+    const first = new Promise<MessageThread>((resolve) => {
+      resolveFirst = resolve
+    })
+    mocks.api.thread.mockImplementation((userID: number) =>
+      userID === 2 ? first : Promise.resolve(thread(3, 'Only user three')),
+    )
+    mocks.api.conversations.mockResolvedValue({
+      items: [
+        {
+          user_id: 3,
+          username: 'User three',
+          email: 'three@example.invalid',
+          body: 'Preview',
+          unread_count: 1,
+        },
+      ],
+      has_more: false,
+    })
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.findAll('button').find(button => button.text().includes('User three'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('User three'))!
+      .trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Only user three')
     resolveFirst(thread(2, 'Stale private message'))

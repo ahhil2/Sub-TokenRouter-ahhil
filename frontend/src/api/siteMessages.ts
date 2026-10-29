@@ -1,5 +1,12 @@
 import { apiClient } from './client'
 
+/**
+ * siteMessages.ts provides conversation, recipient, and message operations for
+ * account messaging. Thread responses include both participants' read positions,
+ * and send requests carry a client identifier used by the server to recognize
+ * repeated submissions.
+ */
+
 export interface SiteMessage {
   id: number
   user_id: number
@@ -50,15 +57,22 @@ export const siteMessagesAPI = {
     return data
   },
   async conversations(search = '', page = 1) {
-    const { data } = await apiClient.get<MessagePage<MessageConversation>>('/site-messages/conversations', { params: { search, page } })
+    const { data } = await apiClient.get<MessagePage<MessageConversation>>(
+      '/site-messages/conversations',
+      { params: { search, page } },
+    )
     return data
   },
   async contacts(search = '', page = 1) {
-    const { data } = await apiClient.get<MessagePage<MessageContact>>('/site-messages/contacts', { params: { search, page } })
+    const { data } = await apiClient.get<MessagePage<MessageContact>>('/site-messages/contacts', {
+      params: { search, page },
+    })
     return data
   },
   async thread(userID: number, before = 0) {
-    const { data } = await apiClient.get<MessageThread>(`/site-messages/conversations/${userID}`, { params: { before } })
+    const { data } = await apiClient.get<MessageThread>(`/site-messages/conversations/${userID}`, {
+      params: { before },
+    })
     return data
   },
   async markRead(userID: number, throughID: number) {

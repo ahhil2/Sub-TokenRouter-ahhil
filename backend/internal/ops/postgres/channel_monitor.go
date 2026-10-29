@@ -25,7 +25,7 @@ WITH visible_groups AS MATERIALIZED (
  SELECT DISTINCT ON (ul.group_id, ul.api_key_id, COALESCE(NULLIF(ul.request_id, ''), ul.id::text))
  ul.group_id, ul.api_key_id, ul.request_id, ul.created_at,
  ul.input_tokens, ul.cache_creation_tokens, ul.cache_read_tokens,
- CASE WHEN ul.stream AND ul.first_token_ms > 0 THEN ul.first_token_ms END AS ttft
+ %s AS ttft
  FROM usage_logs ul JOIN visible_groups g ON g.id = ul.group_id
  WHERE ul.created_at >= $1 AND ul.created_at < $2
  ORDER BY ul.group_id, ul.api_key_id, COALESCE(NULLIF(ul.request_id, ''), ul.id::text), ul.created_at DESC
@@ -85,7 +85,7 @@ func (store *Store) ReadChannelMonitor(ctx context.Context, end time.Time) (*ops
 	start := end.Add(-ops.ChannelMonitorWindow)
 	slotDuration := ops.ChannelMonitorWindow / ops.ChannelMonitorSlots
 	sla := opsSLACountableSQL("e.status_code", "e.upstream_status_code", "e.upstream_errors", "e.error_owner", "e.is_business_limited", nil)
-	rows, err := store.db.QueryContext(ctx, fmt.Sprintf(channelMonitorSQL, sla), start, end, int(slotDuration/time.Second))
+	rows, err := store.db.QueryContext(ctx, fmt.Sprintf(channelMonitorSQL, usageTTFTSQL("ul"), sla), start, end, int(slotDuration/time.Second))
 	if err != nil {
 		return nil, err
 	}

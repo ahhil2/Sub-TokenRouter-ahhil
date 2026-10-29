@@ -1,0 +1,9 @@
+{
+  "gpt-image-2.5": {
+    "provider": "openai",
+    "attributes": {
+      "display_name": "GPT Image 2.5",
+      "output_modalities": ["image"]
+    }
+  }
+}

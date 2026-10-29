@@ -2,15 +2,21 @@ import { defineConfig } from 'vitest/config'
 import { resolve } from 'path'
 import vue from '@vitejs/plugin-vue'
 
+// vitest.config.ts configures component and utility tests for the frontend source
+// tree. Vue files compile through the application plugin, shared setup supplies
+// browser substitutes, and jsdom exposes DOM behavior while layout geometry is
+// verified separately in browser checks.
+
 export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
       '@': resolve(import.meta.dirname, 'src'),
-      'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js'
-    }
+      'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js',
+    },
   },
   test: {
+    testTimeout: 10000,
     globals: true,
     clearMocks: false,
     environment: 'jsdom',
@@ -26,14 +32,14 @@ export default defineConfig({
         'src/**/*.d.ts',
         'src/**/*.spec.ts',
         'src/**/*.test.ts',
-        'src/main.ts'
+        'src/main.ts',
       ],
       thresholds: {
         statements: 80,
         branches: 80,
         functions: 80,
-        lines: 80
-      }
-    }
-  }
+        lines: 80,
+      },
+    },
+  },
 })

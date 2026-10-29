@@ -2,7 +2,7 @@
 #
 # TokenRouter Installation Script
 # TokenRouter 安装脚本
-# Usage: curl -sSL https://raw.githubusercontent.com/TokenFlux/TokenRouter/main/deploy/install.sh | bash
+# Usage: curl -sSL https://raw.githubusercontent.com/ahhil2/Sub-TokenRouter-ahhil/main/deploy/install.sh | bash
 #
 
 set -e
@@ -31,7 +31,7 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-GITHUB_REPO="TokenFlux/TokenRouter"
+GITHUB_REPO="ahhil2/Sub-TokenRouter-ahhil"
 INSTALL_DIR="/opt/tokenrouter"
 SERVICE_NAME="tokenrouter"
 BINARY_NAME="tokenrouter"
@@ -759,7 +759,7 @@ install_service() {
     cat > /etc/systemd/system/${SERVICE_NAME}.service << EOF
 [Unit]
 Description=TokenRouter - AI API Gateway Platform
-Documentation=https://github.com/TokenFlux/TokenRouter
+Documentation=https://github.com/ahhil2/Sub-TokenRouter-ahhil
 After=network.target postgresql.service redis.service
 Wants=postgresql.service redis.service
 

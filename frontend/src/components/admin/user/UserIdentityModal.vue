@@ -7,8 +7,12 @@
       <p v-if="saved" role="status" class="text-sm">{{ t('identityGroups.saved') }}</p>
       <div v-for="code in codes" :key="code" class="flex flex-wrap items-center gap-2">
         <span class="mr-auto text-sm font-medium">{{ identityName(code) }}</span>
-        <button class="btn btn-primary" :disabled="busy" @click="change(code, 'add')">{{ t('identityGroups.add') }}</button>
-        <button class="btn btn-secondary" :disabled="busy" @click="change(code, 'remove')">{{ t('identityGroups.remove') }}</button>
+        <button class="btn btn-primary" :disabled="busy" @click="change(code, 'add')">{{
+          t('identityGroups.add')
+        }}</button>
+        <button class="btn btn-secondary" :disabled="busy" @click="change(code, 'remove')">{{
+          t('identityGroups.remove')
+        }}</button>
       </div>
     </div>
   </BaseDialog>
@@ -18,6 +22,13 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { changeIdentityMembers, identityName, type IdentityCode } from '@/api/identityGroups'
+
+/**
+ * UserIdentityModal.vue applies identity membership changes to the selected user
+ * identifiers. The dialog exposes separate add and remove actions, reports failed
+ * requests, and emits success after the server accepts a membership update.
+ */
+
 const props = defineProps<{ show: boolean; userIds: number[] }>()
 const emit = defineEmits<{ close: []; success: [] }>()
 const { t } = useI18n()
@@ -25,13 +36,25 @@ const codes: IdentityCode[] = ['bonus_5', 'bonus_10', 'ahhilai']
 const busy = ref(false)
 const error = ref('')
 const saved = ref(false)
-watch(() => props.show, () => { error.value = ''; saved.value = false })
+watch(
+  () => props.show,
+  () => {
+    error.value = ''
+    saved.value = false
+  },
+)
 async function change(code: IdentityCode, action: 'add' | 'remove') {
   busy.value = true
   error.value = ''
   saved.value = false
-  try { await changeIdentityMembers(code, props.userIds, action); saved.value = true; emit('success') }
-  catch { error.value = t('identityGroups.failed') }
-  finally { busy.value = false }
+  try {
+    await changeIdentityMembers(code, props.userIds, action)
+    saved.value = true
+    emit('success')
+  } catch {
+    error.value = t('identityGroups.failed')
+  } finally {
+    busy.value = false
+  }
 }
 </script>

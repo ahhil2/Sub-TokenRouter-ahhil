@@ -27,7 +27,10 @@ func (r *PriceResolver) ResolveImageQuote(ctx context.Context, input PricingInpu
 	return ImageQuote{UnitPrice: unit, IndependentPricing: resolved.UsesIndependentPricing()}, err
 }
 
-// resolvedImageUnitPrice 为展示、预占和结算复用同一逐尺寸查价顺序。
+// resolvedImageUnitPrice selects a fixed image price from resolved settings
+// and the model catalog. A per-request card lacking a fixed matching
+// price cannot use catalog image fallback; missing or invalid unit
+// prices return ErrModelPricingUnavailable.
 func (s *Calculator) resolvedImageUnitPrice(model, size string, resolved *ResolvedPricing) (float64, error) {
 	return pricing.ResolveImageUnitPrice(resolved, s.RawModelPricing(model), size)
 }

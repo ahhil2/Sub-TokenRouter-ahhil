@@ -21,53 +21,78 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
+// User usage handlers combine authenticated actor scope with optional report
+// selectors and metric visibility. Capture fixtures expose the filters and
+// sort values passed to storage, while encoded response assertions check user
+// costs, client IP and omission of administrator-only chart and routing data.
+//
+// Daily-key cases verify ownership before usage loading and inspect
+// conversion of a configured trend row into daily response fields. Ranking
+// cases read stored settings and examine forced visibility of the configured
+// ordering metric. These in-memory fixtures check forwarding and response
+// construction; they do not execute database grouping or request-alias
+// resolution.
+
+// dailyUsageRepoStub captures daily trend arguments and returns configured
+// measured usage rows.
 type dailyUsageRepoStub struct {
-	usage.UsageLogRepository
-	trend []usage.TrendDataPoint
+	usage.UsageLogRepository                        // unused usage repository method slots
+	trend                    []usage.TrendDataPoint // configured shared trend result rows
 
-	called      bool
-	startTime   time.Time
-	endTime     time.Time
-	granularity string
-	userID      int64
-	apiKeyID    int64
+	called      bool      // captured query invocation flag
+	startTime   time.Time // captured daily range start
+	endTime     time.Time // captured daily range end
+	granularity string    // captured trend bucket label
+	userID      int64     // captured authenticated actor identifier
+	apiKeyID    int64     // captured selected key identifier
 }
 
+// dailyUsageAPIKeyRepoStub supplies configured key ownership references for
+// daily route access checks.
 type dailyUsageAPIKeyRepoStub struct {
-	ports.KeyReader
-	keys map[int64]*ports.KeyReference
+	ports.KeyReader                               // unused key reader method slots
+	keys            map[int64]*ports.KeyReference // configured key ownership reference map
 }
 
+// dailyUsageHandlerResponse decodes the daily route's envelope, returned rows
+// and applied day count.
 type dailyUsageHandlerResponse struct {
-	Code int `json:"code"`
+	Code int `json:"code"` // decoded envelope result code
 	Data struct {
-		Items []usage.APIKeyDailyUsagePoint `json:"items"`
-		Days  int                           `json:"days"`
-	} `json:"data"`
+		Items []usage.APIKeyDailyUsagePoint `json:"items"` // decoded daily key usage rows
+		Days  int                           `json:"days"`  // decoded applied day count
+	} `json:"data"` // decoded user response payload
 }
 
+// userUsageRepoCapture records user query arguments and supplies configured
+// response data. Returned rows, statistics and grouping slices remain shared
+// with fixture input; cases configure them before synchronous requests.
 type userUsageRepoCapture struct {
-	usage.UsageLogRepository
-	listParams   pagination.PaginationParams
-	listFilters  usage.UsageLogFilters
-	statsFilters usage.UsageLogFilters
-	trendFilters usage.UsageLogFilters
-	groupFilters usage.UsageLogFilters
-	listRows     []usage.UsageLog
-	stats        *usage.UsageStats
-	modelStats   []usage.ModelStat
-	groupStats   []usage.GroupStat
+	usage.UsageLogRepository                             // unused usage repository method slots
+	listParams               pagination.PaginationParams // captured list pagination and sort
+	listFilters              usage.UsageLogFilters       // captured complete user list selectors
+	statsFilters             usage.UsageLogFilters       // captured complete user statistics selectors
+	trendFilters             usage.UsageLogFilters       // captured user trend selectors
+	groupFilters             usage.UsageLogFilters       // captured user group selectors
+	listRows                 []usage.UsageLog            // configured shared usage record rows
+	stats                    *usage.UsageStats           // configured shared usage summary pointer
+	modelStats               []usage.ModelStat           // configured shared model grouping rows
+	groupStats               []usage.GroupStat           // configured shared group grouping rows
 }
 
+// usageRankingSettingRepoStub returns configured stored ranking fields for
+// HTTP visibility tests.
 type usageRankingSettingRepoStub struct {
-	settings.Repository
-	values map[string]string
+	settings.Repository                   // unused settings repository method slots
+	values              map[string]string // configured stored ranking setting text
 }
 
+// usageRankingRepoCapture records ranking invocation and sort metric before
+// returning fixed payer data.
 type usageRankingRepoCapture struct {
-	usage.UsageLogRepository
-	called bool
-	sortBy usage.UsageRankingSortBy
+	usage.UsageLogRepository                          // unused usage repository method slots
+	called                   bool                     // captured query invocation flag
+	sortBy                   usage.UsageRankingSortBy // captured ranking order metric
 }
 
 type userErrorsCapture struct {
@@ -146,6 +171,9 @@ func (s *dailyUsageRepoStub) GetUsageTrendWithFilters(
 	return s.trend, nil
 }
 
+// GetByID returns a copied key reference from the configured fixture map.
+// Missing IDs report the API-key not-found sentinel, letting the handler stop
+// before the daily usage query.
 func (s *dailyUsageAPIKeyRepoStub) GetByID(ctx context.Context, id int64) (*ports.KeyReference, error) {
 	key, ok := s.keys[id]
 	if !ok {
@@ -155,9 +183,11 @@ func (s *dailyUsageAPIKeyRepoStub) GetByID(ctx context.Context, id int64) (*port
 	return &clone, nil
 }
 
+// newDailyUsageTestRouter registers the owned-key daily route under a
+// supplied authenticated subject.
 func newDailyUsageTestRouter(usageRepo *dailyUsageRepoStub, apiKeyRepo *dailyUsageAPIKeyRepoStub, userID int64) *gin.Engine {
 	usageSvc := usage.NewUsageService(usageRepo)
-	// Key 查询返回所属用户，用于检查跨用户访问。
+	// Key lookup returns ownership data for cross-user access checks.
 	handler := NewUsageHandler(usageSvc, apiKeyRepo, nil, nil, timezone.NewCalendar(time.Local))
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -168,6 +198,9 @@ func newDailyUsageTestRouter(usageRepo *dailyUsageRepoStub, apiKeyRepo *dailyUsa
 	return router
 }
 
+// TestGetMyAPIKeyDailyUsageRejectsCrossUserAccess supplies a key owned by
+// another actor. It requires forbidden status and no call to the daily trend
+// repository.
 func TestGetMyAPIKeyDailyUsageRejectsCrossUserAccess(t *testing.T) {
 	usageRepo := &dailyUsageRepoStub{}
 	apiKeyRepo := &dailyUsageAPIKeyRepoStub{
@@ -185,6 +218,9 @@ func TestGetMyAPIKeyDailyUsageRejectsCrossUserAccess(t *testing.T) {
 	require.False(t, usageRepo.called)
 }
 
+// TestGetMyAPIKeyDailyUsageRejectsInvalidDays submits zero and ninety-one as
+// day counts for an owned key. It requires bad-request status and no usage
+// query for both fixtures.
 func TestGetMyAPIKeyDailyUsageRejectsInvalidDays(t *testing.T) {
 	for _, path := range []string{
 		"/user/api-keys/7/usage/daily?days=0",
@@ -209,6 +245,9 @@ func TestGetMyAPIKeyDailyUsageRejectsInvalidDays(t *testing.T) {
 	}
 }
 
+// TestGetMyAPIKeyDailyUsageReturnsEmptyData supplies an owned key and empty
+// trend rows. It requires HTTP success, the thirty-day default and an empty
+// decoded item collection.
 func TestGetMyAPIKeyDailyUsageReturnsEmptyData(t *testing.T) {
 	usageRepo := &dailyUsageRepoStub{trend: []usage.TrendDataPoint{}}
 	apiKeyRepo := &dailyUsageAPIKeyRepoStub{
@@ -229,6 +268,9 @@ func TestGetMyAPIKeyDailyUsageReturnsEmptyData(t *testing.T) {
 	require.Empty(t, got.Data.Items)
 }
 
+// TestGetMyAPIKeyDailyUsageAggregatesByDayForOwnedKey supplies an owned key
+// and one configured trend row. It checks user/key/day arguments, increasing
+// bounds and the daily response's converted cache-write fields.
 func TestGetMyAPIKeyDailyUsageAggregatesByDayForOwnedKey(t *testing.T) {
 	usageRepo := &dailyUsageRepoStub{
 		trend: []usage.TrendDataPoint{
@@ -280,6 +322,10 @@ func TestGetMyAPIKeyDailyUsageAggregatesByDayForOwnedKey(t *testing.T) {
 	}, got.Data.Items[0])
 }
 
+// ListWithFilters captures pagination and user selectors before returning
+// configured shared rows and a derived total. These cases inspect captures
+// after synchronous response construction and leave input rows stable during
+// conversion.
 func (s *userUsageRepoCapture) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters usage.UsageLogFilters) ([]usage.UsageLog, *pagination.PaginationResult, error) {
 	s.listParams = params
 	s.listFilters = filters
@@ -291,6 +337,9 @@ func (s *userUsageRepoCapture) ListWithFilters(ctx context.Context, params pagin
 	}, nil
 }
 
+// GetStatsWithFilters captures selectors and returns the configured shared
+// summary when present. Otherwise it returns an empty allocated summary,
+// allowing HTTP cases to observe filtering and user response selection.
 func (s *userUsageRepoCapture) GetStatsWithFilters(ctx context.Context, filters usage.UsageLogFilters) (*usage.UsageStats, error) {
 	s.statsFilters = filters
 	if s.stats != nil {
@@ -299,6 +348,8 @@ func (s *userUsageRepoCapture) GetStatsWithFilters(ctx context.Context, filters 
 	return &usage.UsageStats{}, nil
 }
 
+// GetUsageTrendWithFilters captures the reduced legacy selector signature and
+// returns an empty trend result.
 func (s *userUsageRepoCapture) GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, providerID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) ([]usage.TrendDataPoint, error) {
 	s.trendFilters = usage.UsageLogFilters{
 		UserID:      userID,
@@ -313,15 +364,21 @@ func (s *userUsageRepoCapture) GetUsageTrendWithFilters(ctx context.Context, sta
 	return []usage.TrendDataPoint{}, nil
 }
 
+// GetUsageTrendWithUsageFilters captures the complete selector set for user
+// snapshot scope assertions.
 func (s *userUsageRepoCapture) GetUsageTrendWithUsageFilters(_ context.Context, _, _ time.Time, _ string, filters usage.UsageLogFilters) ([]usage.TrendDataPoint, error) {
 	s.trendFilters = filters
 	return []usage.TrendDataPoint{}, nil
 }
 
+// GetModelStatsWithFilters returns the configured shared model grouping for
+// user response assertions.
 func (s *userUsageRepoCapture) GetModelStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, providerID, groupID int64, requestType *int16, stream *bool, billingType *int8) ([]usage.ModelStat, error) {
 	return s.modelStats, nil
 }
 
+// GetGroupStatsWithFilters captures reduced group selectors before returning
+// the configured grouping slice.
 func (s *userUsageRepoCapture) GetGroupStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, providerID, groupID int64, requestType *int16, stream *bool, billingType *int8) ([]usage.GroupStat, error) {
 	s.groupFilters = usage.UsageLogFilters{
 		UserID:      userID,
@@ -335,11 +392,15 @@ func (s *userUsageRepoCapture) GetGroupStatsWithFilters(ctx context.Context, sta
 	return s.groupStats, nil
 }
 
+// GetGroupStatsWithUsageFilters captures complete group selectors for user
+// snapshot scope assertions.
 func (s *userUsageRepoCapture) GetGroupStatsWithUsageFilters(_ context.Context, _, _ time.Time, filters usage.UsageLogFilters) ([]usage.GroupStat, error) {
 	s.groupFilters = filters
 	return s.groupStats, nil
 }
 
+// newUserUsageRequestTypeTestRouter constructs list, statistics, model and
+// snapshot routes with actor forty-two.
 func newUserUsageRequestTypeTestRouter(repo *userUsageRepoCapture) *gin.Engine {
 	usageSvc := usage.NewUsageService(repo)
 	handler := NewUsageHandler(usageSvc, nil, nil, nil, timezone.NewCalendar(time.Local))
@@ -355,6 +416,9 @@ func newUserUsageRequestTypeTestRouter(repo *userUsageRepoCapture) *gin.Engine {
 	return router
 }
 
+// TestUserUsageListRequestTypePriority sends WS v2 beside malformed stream
+// text. It checks authenticated actor and owned-team scope, nonpersonal
+// selection, captured category and absent legacy stream.
 func TestUserUsageListRequestTypePriority(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
@@ -372,6 +436,9 @@ func TestUserUsageListRequestTypePriority(t *testing.T) {
 	require.Nil(t, repo.listFilters.Stream)
 }
 
+// TestUserUsageListInvalidRequestType submits unsupported category text under
+// authenticated scope. It requires the list handler to return a bad-request
+// response for that category.
 func TestUserUsageListInvalidRequestType(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
@@ -383,6 +450,9 @@ func TestUserUsageListInvalidRequestType(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestUserUsageListInvalidStream submits malformed stream text with no
+// category under authenticated scope. It requires the list handler to reject
+// that boolean with bad-request status.
 func TestUserUsageListInvalidStream(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
@@ -394,6 +464,9 @@ func TestUserUsageListInvalidStream(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestParseUsageRankingTimeRangeDefaultsToToday supplies a fixed current
+// instant in Shanghai and no dates. It requires local today and tomorrow
+// midnights as the default ranking bounds.
 func TestParseUsageRankingTimeRangeDefaultsToToday(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodGet, "/usage/ranking?timezone=Asia/Shanghai", nil)
@@ -406,6 +479,9 @@ func TestParseUsageRankingTimeRangeDefaultsToToday(t *testing.T) {
 	require.Equal(t, "2026-05-07 00:00:00 +0800 CST", end.String())
 }
 
+// TestParseUsageRankingTimeRangeDateOnlyEndIsInclusive supplies Shanghai
+// start and end dates. It requires next-midnight end expansion and the
+// requested final date from the display helper.
 func TestParseUsageRankingTimeRangeDateOnlyEndIsInclusive(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodGet, "/usage/ranking?start_date=2026-05-01&end_date=2026-05-03&timezone=Asia/Shanghai", nil)
@@ -419,6 +495,9 @@ func TestParseUsageRankingTimeRangeDateOnlyEndIsInclusive(t *testing.T) {
 	require.Equal(t, "2026-05-03", usageRankingDisplayEndDate(end))
 }
 
+// TestParseUsageRankingTimeRangeRejectsInvalidRange supplies an end date
+// preceding the start. It requires the increasing-range diagnostic returned
+// by ranking date validation for that input.
 func TestParseUsageRankingTimeRangeRejectsInvalidRange(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodGet, "/usage/ranking?start_date=2026-05-03&end_date=2026-05-01&timezone=Asia/Shanghai", nil)
@@ -429,6 +508,9 @@ func TestParseUsageRankingTimeRangeRejectsInvalidRange(t *testing.T) {
 	require.ErrorContains(t, err, "end_date must be later than start_date")
 }
 
+// TestUserUsageListAdvancedFilters supplies group, model, funding category,
+// pricing mode and dates. It checks authenticated scope, selected values,
+// requested model source and present time pointers.
 func TestUserUsageListAdvancedFilters(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
@@ -477,6 +559,9 @@ func TestUserUsageListInvalidBillingMode(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestUserUsageListAllowsVideoBillingMode supplies the supported video
+// pricing mode. It requires successful handling and that exact mode in the
+// captured user usage selectors.
 func TestUserUsageListAllowsVideoBillingMode(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
@@ -489,6 +574,10 @@ func TestUserUsageListAllowsVideoBillingMode(t *testing.T) {
 	require.Equal(t, "video", repo.listFilters.BillingMode)
 }
 
+// TestUserUsageListKeepsUserBillingAndIPWithoutAdminCostFields supplies
+// billing and administrator observations in one row. It checks encoded user
+// costs, multiplier and IP plus omitted internal routing and provider-cost
+// fields.
 func TestUserUsageListKeepsUserBillingAndIPWithoutAdminCostFields(t *testing.T) {
 	ipAddress := "203.0.113.10"
 	upstreamModel := "upstream-private-model"
@@ -544,6 +633,10 @@ func TestUserUsageListKeepsUserBillingAndIPWithoutAdminCostFields(t *testing.T) 
 	require.NotContains(t, body, `"provider":`)
 }
 
+// TestUserUsageStatsUsesScopedFilters supplies charged totals and outbound
+// breakdowns. It checks authenticated and owned-team selectors, requested
+// dimension and encoded user totals with administrator summary fields
+// omitted.
 func TestUserUsageStatsUsesScopedFilters(t *testing.T) {
 	providerCost := 0.12
 	repo := &userUsageRepoCapture{
@@ -581,6 +674,9 @@ func TestUserUsageStatsUsesScopedFilters(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "endpoint_paths")
 }
 
+// TestUserUsageDashboardModelsOmitsProviderCost supplies a model row carrying
+// all cost meanings. It requires the user's standard and charged cost fields
+// while provider_cost remains absent from JSON.
 func TestUserUsageDashboardModelsOmitsProviderCost(t *testing.T) {
 	repo := &userUsageRepoCapture{
 		modelStats: []usage.ModelStat{{
@@ -605,6 +701,9 @@ func TestUserUsageDashboardModelsOmitsProviderCost(t *testing.T) {
 	require.NotContains(t, body, "provider_cost")
 }
 
+// TestUserUsageDashboardModelsRejectsAdminModelSources requests upstream
+// grouping with explicit dates. It requires the user model endpoint to return
+// bad request for that reporting source.
 func TestUserUsageDashboardModelsRejectsAdminModelSources(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
@@ -616,6 +715,9 @@ func TestUserUsageDashboardModelsRejectsAdminModelSources(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestUserUsageSnapshotUsesScopedFilters requests trend, model and group
+// sections with actor selectors. It checks captured trend/group scope and
+// requires provider-cost fields to remain absent from the combined response.
 func TestUserUsageSnapshotUsesScopedFilters(t *testing.T) {
 	repo := &userUsageRepoCapture{
 		modelStats: []usage.ModelStat{{Model: "gpt-5", ProviderCost: 0.07}},
@@ -641,6 +743,9 @@ func TestUserUsageSnapshotUsesScopedFilters(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "provider_cost")
 }
 
+// TestUserUsageSnapshotRejectsInvalidIncludeFlags supplies malformed values
+// for each tested section flag. It requires a bad-request response from all
+// three snapshot inclusion validation cases.
 func TestUserUsageSnapshotRejectsInvalidIncludeFlags(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
@@ -658,6 +763,9 @@ func TestUserUsageSnapshotRejectsInvalidIncludeFlags(t *testing.T) {
 	}
 }
 
+// TestUserUsageListSortParams supplies model sorting with uppercase direction
+// text. It requires successful handling and those exact strings in the
+// captured repository pagination request.
 func TestUserUsageListSortParams(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
@@ -671,6 +779,9 @@ func TestUserUsageListSortParams(t *testing.T) {
 	require.Equal(t, "ASC", repo.listParams.SortOrder)
 }
 
+// TestUserUsageListSortDefaults omits list sorting parameters under
+// authenticated scope. It requires created_at and descending defaults in the
+// captured repository pagination request after HTTP success.
 func TestUserUsageListSortDefaults(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
@@ -684,6 +795,9 @@ func TestUserUsageListSortDefaults(t *testing.T) {
 	require.Equal(t, "desc", repo.listParams.SortOrder)
 }
 
+// GetMultiple copies configured values for requested ranking keys into a new
+// map. Missing entries remain absent so the owning settings reader can apply
+// compatible defaults before HTTP projection.
 func (s *usageRankingSettingRepoStub) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
 	result := make(map[string]string, len(keys))
 	for _, key := range keys {
@@ -694,6 +808,8 @@ func (s *usageRankingSettingRepoStub) GetMultiple(_ context.Context, keys []stri
 	return result, nil
 }
 
+// GetUsageRanking records the chosen sort metric and returns fixed payer
+// metrics with range totals.
 func (r *usageRankingRepoCapture) GetUsageRanking(_ context.Context, _, _ time.Time, _ int, sortBy usage.UsageRankingSortBy) (*usage.UsageRankingResponse, error) {
 	r.called = true
 	r.sortBy = sortBy
@@ -716,6 +832,8 @@ func (r *usageRankingRepoCapture) GetUsageRanking(_ context.Context, _, _ time.T
 	}, nil
 }
 
+// newUsageRankingSettingsRouter constructs a ranking route with the supplied
+// stored settings and capture fixture.
 func newUsageRankingSettingsRouter(repo *usageRankingRepoCapture, values map[string]string) *gin.Engine {
 	settingSvc := usage.NewRuntimeSettings(&usageRankingSettingRepoStub{values: values})
 	h := NewUsageHandler(usage.NewUsageService(repo), nil, nil, settingSvc, timezone.NewCalendar(time.Local))
@@ -728,6 +846,9 @@ func newUsageRankingSettingsRouter(repo *usageRankingRepoCapture, values map[str
 	return router
 }
 
+// TestUsageRankingDisabledRejectsBeforeQuery stores disabled ranking
+// settings. It requires forbidden status and no ranking repository call for
+// the authenticated request handled by this fixture.
 func TestUsageRankingDisabledRejectsBeforeQuery(t *testing.T) {
 	repo := &usageRankingRepoCapture{}
 	router := newUsageRankingSettingsRouter(repo, map[string]string{
@@ -741,6 +862,9 @@ func TestUsageRankingDisabledRejectsBeforeQuery(t *testing.T) {
 	require.False(t, repo.called)
 }
 
+// TestUsageRankingProjectsHiddenFieldsAndUsesConfiguredSort stores request
+// sorting with every metric flag false. It checks the chosen sort, forced
+// request visibility and omitted token and charge fields.
 func TestUsageRankingProjectsHiddenFieldsAndUsesConfiguredSort(t *testing.T) {
 	repo := &usageRankingRepoCapture{}
 	router := newUsageRankingSettingsRouter(repo, map[string]string{
@@ -760,7 +884,7 @@ func TestUsageRankingProjectsHiddenFieldsAndUsesConfiguredSort(t *testing.T) {
 	require.Equal(t, usage.UsageRankingSortByRequests, repo.sortBy)
 
 	var envelope struct {
-		Data json.RawMessage `json:"data"`
+		Data json.RawMessage `json:"data"` // encoded ranking response payload
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
 	var payload map[string]json.RawMessage
@@ -784,7 +908,9 @@ func TestUsageRankingProjectsHiddenFieldsAndUsesConfiguredSort(t *testing.T) {
 	require.NotContains(t, rows[0], "actual_cost")
 }
 
-// TestRequestIDFiltersKeepScopeAndUseFullHistory 按 ID 查询时保留主体限制，并忽略缺省时间窗口。
+// TestRequestIDFiltersKeepScopeAndUseFullHistory sends spaced request
+// identity and a spoofed user selector to list and totals. It checks trimmed
+// identity, actor forty-two and the asserted absent default bounds.
 func TestRequestIDFiltersKeepScopeAndUseFullHistory(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)

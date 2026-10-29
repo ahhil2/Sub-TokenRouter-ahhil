@@ -1,28 +1,43 @@
 import { describe, expect, it } from 'vitest'
-import { pricingKind, videoPricingTiers } from '../marketplacePricing'
-import type { MarketplaceModelPricing } from '@/types'
+import { pricingKind, videoPricingEntries } from '../marketplacePricing'
 
-describe('video marketplace pricing', () => {
-  it('orders resolutions and preserves zero without inventing missing prices', () => {
-    const pricing: MarketplaceModelPricing = {
-      pricing_mode: 'video', price_status: 'priced', video_prices: { '1080p': 0.0324, '480p': 0 },
+/**
+ * marketplacePricing.spec.ts tests availability of public video quotes and their
+ * row identities. Fixtures distinguish free amounts from unavailable or invalid
+ * prices and keep named resolution entries separate from the optional default-
+ * price row.
+ */
+
+describe('video marketplace prices', () => {
+  /**
+   * A video quote combines named resolutions, a free resolution, and a free default.
+   * All rows remain visible with distinct keys and the default appears last.
+   */
+  it('keeps free dimensions and a default in separate rows', () => {
+    const quote = {
+      pricing_mode: 'video' as const,
+      price_status: 'priced' as const,
+      video_prices: { '768p': 0.12, '2k': 0, 'default-price': 0.3 },
+      video_price_per_second: 0,
     }
-    expect(pricingKind(pricing)).toBe('video')
-    expect(videoPricingTiers(pricing)).toEqual([
-      { resolution: '480p', price: 0 },
-      { resolution: '1080p', price: 0.0324 },
-    ])
+    expect(pricingKind(quote)).toBe('video')
+    const entries = videoPricingEntries(quote)
+    expect(entries).toHaveLength(4)
+    expect(new Set(entries.map((item) => item.key)).size).toBe(4)
+    expect(entries.at(-1)).toMatchObject({ resolution: null, price: 0 })
   })
-
-  it.each([undefined, -1, NaN, Infinity])('treats invalid or missing video price %s as unpriced', (price) => {
-    const pricing: MarketplaceModelPricing = {
-      pricing_mode: 'video', price_status: 'priced', video_prices: { '480p': price },
-    }
-    expect(pricingKind(pricing)).toBe('unpriced')
-    expect(videoPricingTiers(pricing)).toEqual([])
-  })
-
-  it('respects the backend unpriced status', () => {
-    expect(pricingKind({ pricing_mode: 'video', price_status: 'unpriced', video_prices: { '480p': 0.06 } })).toBe('unpriced')
+  /**
+   * Video quotes include a free default, missing amounts, invalid named amounts, and an
+   * unavailable status. Classification accepts the free quote and rejects the unusable
+   * combinations.
+   */
+  it('recognizes default-only video prices and rejects absent or invalid prices', () => {
+    const base = { pricing_mode: 'video' as const, price_status: 'priced' as const }
+    expect(pricingKind({ ...base, video_price_per_second: 0 })).toBe('video')
+    expect(pricingKind(base)).toBe('unpriced')
+    expect(pricingKind({ ...base, video_prices: { '2k': -1, '768p': Infinity } })).toBe('unpriced')
+    expect(pricingKind({ ...base, price_status: 'unpriced', video_price_per_second: 1 })).toBe(
+      'unpriced',
+    )
   })
 })

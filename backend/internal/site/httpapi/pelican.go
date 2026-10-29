@@ -6,9 +6,22 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
+
+// pelican.go serves public showcase reads and administrator generation tasks.
+// Public handlers restrict results to published entries, while administrator
+// handlers inherit authentication and auditing from their route group. Management
+// descriptions expose the same task and publication inputs to MCP clients.
+
+// PublishPelicanResultRequest carries the requested visibility of a generated result.
+type PublishPelicanResultRequest struct {
+	// Published distinguishes a supplied false from omission; the handler rejects
+	// absent and null values before asking the service to update visibility.
+	Published *bool `json:"published"`
+}
 
 type PelicanHandler struct{ service *site.PelicanService }
 
@@ -23,17 +36,20 @@ func RegisterPelicanPublicRoutes(group *gin.RouterGroup, handler *PelicanHandler
 	public.GET("/items/:id", func(ctx *gin.Context) { handler.result(ctx, true) })
 }
 
+// RegisterPelicanAdminRoutes mounts task and result operations with MCP descriptions.
+// The caller supplies the /api/v1/admin group with authentication and auditing
+// already installed; all operations retain that middleware chain.
 func RegisterPelicanAdminRoutes(admin *gin.RouterGroup, handler *PelicanHandler) {
 	group := admin.Group("/pelican-tests")
-	group.GET("", handler.tasks)
-	group.POST("", handler.save)
-	group.PUT("/:id", handler.save)
-	group.DELETE("/:id", handler.deleteTask)
-	group.POST("/:id/run", handler.run)
-	group.GET("/results", func(ctx *gin.Context) { handler.results(ctx, false) })
-	group.GET("/results/:id", func(ctx *gin.Context) { handler.result(ctx, false) })
-	group.PATCH("/results/:id", handler.publish)
-	group.DELETE("/results/:id", handler.deleteResult)
+	adminapi.Register(group, ManagementOperations["pelican.tasks.list"], handler.tasks)
+	adminapi.Register(group, ManagementOperations["pelican.tasks.create"], handler.save)
+	adminapi.Register(group, ManagementOperations["pelican.tasks.update"], handler.save)
+	adminapi.Register(group, ManagementOperations["pelican.tasks.delete"], handler.deleteTask)
+	adminapi.Register(group, ManagementOperations["pelican.tasks.run"], handler.run)
+	adminapi.Register(group, ManagementOperations["pelican.results.list"], func(ctx *gin.Context) { handler.results(ctx, false) })
+	adminapi.Register(group, ManagementOperations["pelican.results.get"], func(ctx *gin.Context) { handler.result(ctx, false) })
+	adminapi.Register(group, ManagementOperations["pelican.results.publish"], handler.publish)
+	adminapi.Register(group, ManagementOperations["pelican.results.delete"], handler.deleteResult)
 }
 
 func (handler *PelicanHandler) tasks(ctx *gin.Context) {
@@ -134,14 +150,15 @@ func (handler *PelicanHandler) result(ctx *gin.Context, public bool) {
 	httpx.Success(ctx, item)
 }
 
+// publish applies an explicit publication choice to an existing result.
+// The identifier must be positive and the JSON body must contain a non-null
+// published field; service validation controls which results may become public.
 func (handler *PelicanHandler) publish(ctx *gin.Context) {
 	id, ok := pelicanID(ctx)
 	if !ok {
 		return
 	}
-	var request struct {
-		Published *bool `json:"published"`
-	}
+	var request PublishPelicanResultRequest
 	ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 1024)
 	if err := ctx.ShouldBindJSON(&request); err != nil || request.Published == nil {
 		httpx.ErrorFrom(ctx, site.ErrPelicanInvalid)

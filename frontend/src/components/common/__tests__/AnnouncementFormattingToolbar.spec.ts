@@ -3,13 +3,21 @@ import { enableAutoUnmount, mount } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
 import AnnouncementFormattingToolbar from '../AnnouncementFormattingToolbar.vue'
 
+/**
+ * AnnouncementFormattingToolbar.spec.ts exercises announcement formatting through a
+ * real textarea selection and emitted model updates. The tests distinguish selected-
+ * text emphasis from whole-draft formatting and verify that requested font sizes are
+ * constrained to the supported range.
+ */
+
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 enableAutoUnmount(afterEach)
 
 const Harness = defineComponent({
   components: { AnnouncementFormattingToolbar },
   setup: () => ({ content: ref('公告 API 123') }),
-  template: '<div><AnnouncementFormattingToolbar input-id="notice-test" v-model="content" /><textarea id="notice-test" v-model="content" /></div>',
+  template:
+    '<div><AnnouncementFormattingToolbar input-id="notice-test" v-model="content" /><textarea id="notice-test" v-model="content" /></div>',
 })
 
 describe('AnnouncementFormattingToolbar', () => {
@@ -25,7 +33,9 @@ describe('AnnouncementFormattingToolbar', () => {
     wrapper.get('textarea').element.setSelectionRange(0, 0)
     await wrapper.get('input').setValue(99)
     await wrapper.findAll('button')[1].trigger('click')
-    expect(wrapper.get('textarea').element.value).toBe('<span style="font-size: 48px">公告 API 123</span>')
+    expect(wrapper.get('textarea').element.value).toBe(
+      '<span style="font-size: 48px">公告 API 123</span>',
+    )
     wrapper.get('textarea').element.setSelectionRange(0, 0)
     await wrapper.get('input').setValue(18)
     await wrapper.findAll('button')[1].trigger('click')

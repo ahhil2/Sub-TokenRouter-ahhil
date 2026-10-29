@@ -5,12 +5,19 @@ import AppSidebar from '../AppSidebar.vue'
 import { useAppStore, useAuthStore } from '@/stores'
 import { initTheme, setThemeMode, useTheme } from '@/composables/useTheme'
 
+/**
+ * AppSidebar.theme.spec.ts verifies sidebar theme controls against shared theme state
+ * and persistence. Desktop, collapsed, mobile, and administrator variants are
+ * exercised so toggling appearance updates the preference without unexpectedly closing
+ * the mobile navigation drawer.
+ */
+
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ path: '/dashboard', fullPath: '/dashboard' })
+  useRoute: () => ({ path: '/dashboard', fullPath: '/dashboard' }),
 }))
 
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key })
+  useI18n: () => ({ t: (key: string) => key }),
 }))
 
 vi.mock('@/stores', async () => {
@@ -21,21 +28,21 @@ vi.mock('@/stores', async () => {
     sidebarScrollTop: 0,
     backendModeEnabled: false,
     cachedPublicSettings: {},
-    setMobileOpen: vi.fn()
+    setMobileOpen: vi.fn(),
   })
   const authStore = reactive({ isAdmin: false })
   return {
     useAppStore: () => appStore,
     useAuthStore: () => authStore,
     useOnboardingStore: () => ({ isCurrentStep: () => false }),
-    useAdminSettingsStore: () => ({ fetch: vi.fn(), customMenuItems: [] })
+    useAdminSettingsStore: () => ({ fetch: vi.fn(), customMenuItems: [] }),
   }
 })
 
 vi.mock('@/composables/useBatchImageAccess', async () => {
   const { ref } = await import('vue')
   return {
-    useBatchImageAccess: () => ({ canUseBatchImage: ref(false), refreshBatchImageAccess: vi.fn() })
+    useBatchImageAccess: () => ({ canUseBatchImage: ref(false), refreshBatchImageAccess: vi.fn() }),
   }
 })
 

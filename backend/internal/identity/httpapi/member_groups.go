@@ -9,8 +9,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
+
+// member_groups.go serves identity memberships and group-specific pricing rates.
+// Administrator mutations use the authenticated subject for attribution and
+// delegate membership and rate validation to their services. Shared request
+// types keep HTTP binding and MCP input descriptions consistent.
+
+// ChangeMemberGroupRequest selects users and the membership operation to apply.
+type ChangeMemberGroupRequest struct {
+	UserIDs []int64 `json:"user_ids" binding:"required,min=1,max=500"`  // selected user identifiers
+	Action  string  `json:"action" binding:"required,oneof=add remove"` // membership change direction
+}
+
+// SetMemberGroupRatesRequest carries the identity pricing overrides to persist.
+type SetMemberGroupRatesRequest struct {
+	Rates []billing.IdentityRateInput `json:"rates" binding:"required,max=1000"` // requested pricing overrides
+}
 
 type MemberGroupRates interface {
 	IdentityRates(context.Context) ([]billing.IdentityRate, error)
@@ -23,14 +40,17 @@ type MemberGroupHandler struct {
 	InvalidateRates func(context.Context, []billing.IdentityRateInput)
 }
 
+// RegisterMemberGroupAdminRoutes mounts identity membership and pricing operations.
+// Callers provide an authenticated, audited /api/v1/admin group. The shared
+// management descriptions retain the handlers' request validation and actor attribution.
 func RegisterMemberGroupAdminRoutes(admin *gin.RouterGroup, handler *MemberGroupHandler) {
 	groups := admin.Group("/identity-groups")
-	groups.GET("", handler.List)
-	groups.GET("/users", handler.Users)
-	groups.GET("/:code/members", handler.Members)
-	groups.PUT("/:code/members", handler.Change)
-	groups.GET("/:code/rates", handler.GetRates)
-	groups.PUT("/:code/rates", handler.SetRates)
+	adminapi.Register(groups, ManagementOperations["identity_groups.list"], handler.List)
+	adminapi.Register(groups, ManagementOperations["identity_groups.users.list"], handler.Users)
+	adminapi.Register(groups, ManagementOperations["identity_groups.members.list"], handler.Members)
+	adminapi.Register(groups, ManagementOperations["identity_groups.members.update"], handler.Change)
+	adminapi.Register(groups, ManagementOperations["identity_groups.rates.get"], handler.GetRates)
+	adminapi.Register(groups, ManagementOperations["identity_groups.rates.update"], handler.SetRates)
 }
 
 func (handler *MemberGroupHandler) List(ctx *gin.Context) {
@@ -59,11 +79,11 @@ func (handler *MemberGroupHandler) listMembers(ctx *gin.Context, code string) {
 	httpx.Success(ctx, gin.H{"items": members, "total": total})
 }
 
+// Change adds or removes the selected users from the requested identity group.
+// The authenticated subject supplies the audit actor. Binding and service
+// validation reject invalid requests before a successful acknowledgement is returned.
 func (handler *MemberGroupHandler) Change(ctx *gin.Context) {
-	var input struct {
-		UserIDs []int64 `json:"user_ids" binding:"required,min=1,max=500"`
-		Action  string  `json:"action" binding:"required,oneof=add remove"`
-	}
+	var input ChangeMemberGroupRequest
 	if err := ctx.ShouldBindJSON(&input); err != nil {
 		httpx.BadRequest(ctx, "invalid membership change")
 		return
@@ -92,14 +112,15 @@ func (handler *MemberGroupHandler) GetRates(ctx *gin.Context) {
 	httpx.Success(ctx, rates)
 }
 
+// SetRates stores pricing overrides for the ahhilai identity using the authenticated actor.
+// It rejects other identity codes and invalid request bodies, then invalidates
+// configured rate readers after the service has persisted the update.
 func (handler *MemberGroupHandler) SetRates(ctx *gin.Context) {
 	if ctx.Param("code") != "ahhilai" {
 		httpx.BadRequest(ctx, "pricing identity required")
 		return
 	}
-	var input struct {
-		Rates []billing.IdentityRateInput `json:"rates" binding:"required,max=1000"`
-	}
+	var input SetMemberGroupRatesRequest
 	if err := ctx.ShouldBindJSON(&input); err != nil {
 		httpx.BadRequest(ctx, "invalid identity rates")
 		return

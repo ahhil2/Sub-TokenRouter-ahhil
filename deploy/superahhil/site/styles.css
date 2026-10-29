@@ -1,3 +1,7 @@
+/* styles.css defines the static landing page's colors, card layouts, navigation,
+   and decorative motion. Responsive grids keep cards within the page width,
+   while terminal examples scroll inside their cards so complete commands remain
+   available on narrow screens. */
 :root {
   color-scheme: dark;
   --bg: #050708;
@@ -219,6 +223,7 @@ a {
 
 .hero-card h1 {
   max-width: 680px;
+  overflow-wrap: anywhere;
   margin: 0 0 14px;
   font-size: clamp(44px, 6vw, 64px);
   line-height: 0.98;
@@ -606,7 +611,9 @@ code::selection {
 
   .hero-grid,
   .bottom-grid {
-    grid-template-columns: 1fr;
+    /* A zero track minimum lets the terminal's scroll area contain long commands
+       instead of making the single-column page wider than its viewport. */
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .api-grid,

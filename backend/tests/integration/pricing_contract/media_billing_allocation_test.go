@@ -21,10 +21,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestMediaAllocationRatesPreserveBalanceMultiplier 验证两类网关都保留订阅、余额各自的倍率；高峰只影响最终按 token 结算的请求。
+// Media completion submits separate subscription and balance factors alongside
+// a user cost calculated from preliminary plan evidence. The fixtures inspect
+// captured commands and logs across recorder paths, applying peak scaling to
+// token mode while image, per-request, and video modes retain
+// their media rates.
+
+// TestMediaAllocationRatesPreserveBalanceMultiplier records token and media
+// fixtures through OpenAI and Messages completion. It checks the submitted
+// funding factors, token-only peak scale, and the log's
+// preliminary subscription-plan rate.
 func TestMediaAllocationRatesPreserveBalanceMultiplier(t *testing.T) {
 	for _, gatewayKind := range []string{"openai", "generic"} {
 		for _, mode := range []routing.BillingMode{routing.BillingModeToken, routing.BillingModeImage, routing.BillingModePerRequest, routing.BillingModeVideo} {
+			// Video is supplied through OpenAIResult in this table. Skip the
+			// Messages row because that fixture is constructed
+			// with image quantities.
 			if gatewayKind == "generic" && mode == routing.BillingModeVideo {
 				continue
 			}

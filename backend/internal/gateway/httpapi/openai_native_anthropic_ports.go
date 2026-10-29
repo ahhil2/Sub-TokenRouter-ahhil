@@ -19,8 +19,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
 )
 
+// openai_native_anthropic_ports.go binds native Anthropic execution to
+// client-specific conversions and HTTP output.
+// Native Anthropic execution uses the selected provider's protocol key, model
+// policy and proxy while the client may speak Messages, Chat or Responses. The
+// adapter's kind selects client errors and output conversion, and shared
+// attempt state supplies credentials, request observations and synchronous
+// output until the runner closes the upstream response.
+
+// openAINativeAnthropicAdapter binds native Anthropic exchange to shared text
+// attempt services.
 type openAINativeAnthropicAdapter struct {
+	// openAIMessagesExecutionAdapter shares this attempt's provider, services and
+	// HTTP state; the native runner borrows them until response handling ends.
 	*openAIMessagesExecutionAdapter
+	// kind selects the client error and conversion format. The native entry
+	// constructor supplies Messages, Chat or Responses for the current call.
 	kind forward.NativeAnthropicKind
 }
 
@@ -43,8 +57,12 @@ func (adapter *openAINativeAnthropicAdapter) Error(status int, kind, message str
 	adapter.errorWriter()(adapter.c, status, kind, message)
 }
 
-func (adapter *openAINativeAnthropicAdapter) NormalizeThinking(body []byte, model string) ([]byte, bool) {
-	return gatewayprovider.NormalizeGLM53AnthropicThinking(body, model)
+// PrepareModel delegates attribute-sensitive body preparation for the
+// Anthropic Messages protocol. The selected model and provider guide the
+// shared attribute service; preparation errors return before the native runner
+// constructs or sends its request.
+func (adapter *openAINativeAnthropicAdapter) PrepareModel(ctx context.Context, body []byte, model string) ([]byte, error) {
+	return gatewayprovider.PrepareModelAttributeParameters(ctx, adapter.provider, model, body, adapter.s.modelAttributes(), "anthropic_messages")
 }
 
 func (adapter *openAINativeAnthropicAdapter) ThinkingFallback(effort *string, body []byte, model string) *string {
@@ -129,7 +147,10 @@ func (adapter *openAINativeAnthropicAdapter) OutputOptions() forward.AnthropicOu
 	return adapter.s.Output.AnthropicOptions(adapter.c, adapter.errorWriter())
 }
 
-// writeTextResponsesError 保留转换入口的原响应提交与错误形状。
+// writeTextResponsesError writes a Responses conversion error and marks
+// terminal output committed. It delegates formatting to
+// ForwardConversionOutput with Responses enabled, so outer attempt handling
+// sees the dedicated protocol rejection before further fallback decisions.
 func writeTextResponsesError(c *gin.Context, status int, code, message string) {
 	output := ForwardConversionOutput{Context: c, Responses: true, Commit: func() { MarkResponseCommitted(c) }}
 	output.Error(status, code, message)

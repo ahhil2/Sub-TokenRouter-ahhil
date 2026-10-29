@@ -1,3 +1,10 @@
+/**
+ * channelMonitor.ts supplies Chinese interface messages for public channel metrics and
+ * administrator monitoring settings. These locale keys are consumed by the
+ * corresponding pages and controls, with interpolation values provided by the
+ * component displaying each message.
+ */
+
 export default {
   title: '渠道监控',
   subtitle: '基于最近 90 分钟的请求记录，每 30 秒更新',
@@ -22,7 +29,8 @@ export default {
   loadFailed: '监控数据加载失败，请重试。',
   stale: '刷新失败，当前展示的是上次获取的数据，请留意更新时间。',
   configure: '监控配置',
-  configHint: '勾选要展示的分组，新增分组默认不展示。状态可按请求统计自动判断，也可手动指定。手动状态带有标记，可用率、缓存率和历史色块仍按实际请求计算。最多展示 200 个分组。',
+  configHint:
+    '勾选要展示的分组，新增分组默认不展示。状态可按请求统计自动判断，也可手动指定。手动状态带有标记，可用率、缓存率和历史色块仍按实际请求计算。最多展示 200 个分组。',
   configLoadFailed: '配置加载失败，请重试。',
   configSaveFailed: '配置保存失败，请检查分组是否仍然存在、数量是否超过 200，然后重试。',
   ineligible: '当前不对用户展示：分组须启用、非专属，并绑定启用的提供商。配置会保留。',
@@ -33,8 +41,18 @@ export default {
   saved: '配置已保存',
   manual: '手动',
   manualStatusHint: '管理员指定的展示状态。下方指标和历史色块按实际请求统计。',
-  status: { auto: '自动（按请求统计）', maintenance: '维护中', operational: '正常', degraded: '波动', failed: '异常', unknown: '暂无数据' },
-  availabilityDefinition: '可用率 = 成功请求 ÷（成功请求 + 失败请求）。排除业务额度限制和无上游错误的 401/403；≥95% 为正常，0% 为异常，其余为波动。',
-  cacheDefinition: '缓存率 = 缓存读取 Token ÷（输入 Token + 缓存写入 Token + 缓存读取 Token）。无样本显示为 —。',
-  ttftDefinition: '首 TOKEN P50 为成功流式请求的首 Token 延迟中位数。数据按请求入库时间统计，时区跟随浏览器。'
+  status: {
+    auto: '自动（按请求统计）',
+    maintenance: '维护中',
+    operational: '正常',
+    degraded: '波动',
+    failed: '异常',
+    unknown: '暂无数据',
+  },
+  availabilityDefinition:
+    '可用率 = 成功请求 ÷（成功请求 + 失败请求）。排除业务额度限制和无上游错误的 401/403；≥95% 为正常，0% 为异常，其余为波动。',
+  cacheDefinition:
+    '缓存率 = 缓存读取 Token ÷（输入 Token + 缓存写入 Token + 缓存读取 Token）。无样本显示为 —。',
+  ttftDefinition:
+    '首 TOKEN P50 为成功流式请求的首 Token 延迟中位数。数据按请求入库时间统计，时区跟随浏览器。',
 }

@@ -7,7 +7,11 @@
     :title="t('messages.title')"
   >
     <Icon name="chat" size="md" />
-    <span v-if="messages.unreadCount" aria-hidden="true" class="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary-600 px-1 text-center text-xs leading-4 text-white">
+    <span
+      v-if="messages.unreadCount"
+      aria-hidden="true"
+      class="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary-600 px-1 text-center text-xs leading-4 text-white"
+    >
       {{ messages.unreadCount > 99 ? '99+' : messages.unreadCount }}
     </span>
   </RouterLink>
@@ -19,6 +23,12 @@ import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useSiteMessagesStore } from '@/stores/siteMessages'
+
+/**
+ * MessageBell.vue displays unread messages using the shared account messaging store.
+ * It refreshes while the document is visible, checks visibility on a periodic timer,
+ * and removes its timer and document listener when the component unmounts.
+ */
 
 const { t } = useI18n()
 const messages = useSiteMessagesStore()

@@ -4,11 +4,28 @@ import ChannelMonitorSettings from '../ChannelMonitorSettings.vue'
 import { getChannelMonitorConfig, saveChannelMonitorConfig } from '@/api/channelMonitor'
 import channelMonitor from '@/i18n/locales/zh/channelMonitor'
 
-vi.mock('@/api/channelMonitor', () => ({ getChannelMonitorConfig: vi.fn(), saveChannelMonitorConfig: vi.fn() }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => {
-  const message = key.replace(/^channelMonitor\./, '').split('.').reduce<unknown>((value, part) => (value as Record<string, unknown>)[part], channelMonitor)
-  return String(message)
-} }) }))
+/**
+ * ChannelMonitorSettings.spec.ts exercises loading and saving public monitoring
+ * configuration through mocked endpoints. The cases cover cleared selections, failed
+ * initial loads, retries, and retained draft changes after save errors, protecting
+ * administrator intent across unsuccessful requests.
+ */
+
+vi.mock('@/api/channelMonitor', () => ({
+  getChannelMonitorConfig: vi.fn(),
+  saveChannelMonitorConfig: vi.fn(),
+}))
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({
+    t: (key: string) => {
+      const message = key
+        .replace(/^channelMonitor\./, '')
+        .split('.')
+        .reduce<unknown>((value, part) => (value as Record<string, unknown>)[part], channelMonitor)
+      return String(message)
+    },
+  }),
+}))
 
 function render() {
   return mount(ChannelMonitorSettings, { global: { stubs: { Select: true } } })
@@ -16,10 +33,26 @@ function render() {
 
 describe('ChannelMonitorSettings', () => {
   beforeEach(() => {
-    vi.mocked(getChannelMonitorConfig).mockReset().mockResolvedValue([
-      { group_id: 1, name: 'GPT', brand: 'OpenAI', enabled: true, status: 'auto', eligible: true },
-      { group_id: 2, name: 'Claude', brand: 'Anthropic', enabled: false, status: 'auto', eligible: false }
-    ])
+    vi.mocked(getChannelMonitorConfig)
+      .mockReset()
+      .mockResolvedValue([
+        {
+          group_id: 1,
+          name: 'GPT',
+          brand: 'OpenAI',
+          enabled: true,
+          status: 'auto',
+          eligible: true,
+        },
+        {
+          group_id: 2,
+          name: 'Claude',
+          brand: 'Anthropic',
+          enabled: false,
+          status: 'auto',
+          eligible: false,
+        },
+      ])
     vi.mocked(saveChannelMonitorConfig).mockReset().mockResolvedValue(undefined)
   })
 
@@ -34,7 +67,9 @@ describe('ChannelMonitorSettings', () => {
     wrapper.findAllComponents({ name: 'Select' })[1].vm.$emit('update:modelValue', 'maintenance')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(saveChannelMonitorConfig).toHaveBeenCalledWith([{ group_id: 2, enabled: true, status: 'maintenance' }])
+    expect(saveChannelMonitorConfig).toHaveBeenCalledWith([
+      { group_id: 2, enabled: true, status: 'maintenance' },
+    ])
     expect(wrapper.emitted('saved')).toHaveLength(1)
     expect(wrapper.text()).toContain('配置已保存')
     wrapper.unmount()

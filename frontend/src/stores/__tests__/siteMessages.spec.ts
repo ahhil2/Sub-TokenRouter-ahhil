@@ -3,7 +3,17 @@ import { reactive } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useSiteMessagesStore } from '../siteMessages'
 
-const mocks = vi.hoisted(() => ({ auth: { user: null as { id: number } | null }, summary: vi.fn() }))
+/**
+ * siteMessages.spec.ts checks unread-message state against controlled authentication
+ * changes and delayed summary responses. The tests verify shared pending requests,
+ * count clearing on logout, and rejection of a previous account response after
+ * switching users.
+ */
+
+const mocks = vi.hoisted(() => ({
+  auth: { user: null as { id: number } | null },
+  summary: vi.fn(),
+}))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => mocks.auth }))
 vi.mock('@/api/siteMessages', () => ({ siteMessagesAPI: { summary: mocks.summary } }))
 
@@ -16,7 +26,11 @@ beforeEach(() => {
 describe('site message unread state', () => {
   it('coalesces parallel requests and clears the badge on logout', async () => {
     let resolve!: (value: { unread_count: number }) => void
-    mocks.summary.mockReturnValue(new Promise(done => { resolve = done }))
+    mocks.summary.mockReturnValue(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
     const store = useSiteMessagesStore()
     const first = store.refresh()
     const second = store.refresh()
@@ -32,7 +46,11 @@ describe('site message unread state', () => {
 
   it('ignores a previous account response after switching accounts', async () => {
     let resolveOld!: (value: { unread_count: number }) => void
-    mocks.summary.mockReturnValueOnce(new Promise(done => { resolveOld = done }))
+    mocks.summary.mockReturnValueOnce(
+      new Promise((done) => {
+        resolveOld = done
+      }),
+    )
     const store = useSiteMessagesStore()
     const oldRequest = store.refresh()
     mocks.auth.user = { id: 3 }

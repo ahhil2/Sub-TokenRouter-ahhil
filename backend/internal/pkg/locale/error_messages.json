@@ -1,5 +1,6 @@
 {
   "en": {
+    "EMAIL_VERIFY_REQUIRED": "Complete email verification before continuing.",
     "HTTP_400": "Check the request parameters and try again.",
     "HTTP_401": "Your session has expired. Sign in again.",
     "HTTP_403": "You do not have permission to perform this action.",
@@ -160,6 +161,7 @@
     "LOCALIZATION_REQUIRED": "Use localization to update plan text."
   },
   "zh-Hans": {
+    "EMAIL_VERIFY_REQUIRED": "请先完成邮箱验证后再继续。",
     "HTTP_400": "请求参数无效，请检查后重试。",
     "HTTP_401": "登录状态已失效，请重新登录。",
     "HTTP_403": "你没有执行此操作的权限。",

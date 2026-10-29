@@ -1,7 +1,6 @@
 <template>
   <AuthLayout>
     <div class="space-y-6">
-      <!-- Title -->
       <div class="text-center">
         <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
           {{ t('auth.verifyYourEmail') }}
@@ -11,11 +10,24 @@
           <span class="font-medium text-gray-700 dark:text-gray-300">{{ email }}</span>
         </p>
         <p class="mt-2 text-sm text-gray-500 dark:text-dark-400" data-testid="email-spam-hint">
-          {{ t('auth.verificationDeliveryHintPrefix') }}<span class="whitespace-nowrap text-lg font-semibold">{{ t('auth.spamFolder') }}</span>
+          {{ t('auth.verificationDeliveryHintPrefix')
+          }}<span class="whitespace-nowrap text-lg font-semibold">{{ t('auth.spamFolder') }}</span>
         </p>
       </div>
 
-      <!-- No Data Warning -->
+      <div v-if="settingsError" role="alert" class="space-y-3">
+        <p class="text-sm text-red-600 dark:text-red-400">{{ t('auth.settingsLoadFailed') }}</p>
+        <button
+          type="button"
+          class="btn btn-secondary"
+          data-testid="retry-settings"
+          :disabled="settingsLoading"
+          @click="loadSettings"
+        >
+          {{ settingsLoading ? t('common.loading') : t('common.retry') }}
+        </button>
+      </div>
+
       <div
         v-if="!hasRegisterData"
         class="rounded-surface border border-amber-200 bg-amber-50 p-4 dark:border-amber-800/50 dark:bg-amber-900/20"
@@ -31,9 +43,7 @@
         </div>
       </div>
 
-      <!-- Verification Form -->
       <form v-else @submit.prevent="handleVerify" class="space-y-5">
-        <!-- Verification Code Input -->
         <div>
           <label for="code" class="input-label text-center">
             {{ t('auth.verificationCode') }}
@@ -54,7 +64,6 @@
           <p class="input-hint text-center">{{ t('auth.verificationCodeHint') }}</p>
         </div>
 
-        <!-- Code Status -->
         <div
           v-if="codeSent"
           class="rounded-surface border border-green-200 bg-green-50 p-4 dark:border-green-800/50 dark:bg-green-900/20"
@@ -69,7 +78,6 @@
           </div>
         </div>
 
-        <!-- Turnstile Widget for Resend -->
         <div v-if="actionCaptchaEnabled || (turnstileEnabled && showResendTurnstile)">
           <TurnstileWidget
             ref="turnstileRef"
@@ -108,10 +116,14 @@
           />
         </div>
 
-        <!-- Submit Button -->
         <button
           type="submit"
-          :disabled="isLoading || !verifyCode || (pendingOAuthCreateTurnstileRequired && !createAccountTurnstileToken)"
+          :disabled="
+            !settingsLoaded ||
+            isLoading ||
+            !verifyCode ||
+            (pendingOAuthCreateTurnstileRequired && !createAccountTurnstileToken)
+          "
           class="btn btn-primary w-full"
         >
           <Icon
@@ -125,7 +137,6 @@
           {{ isLoading ? t('auth.verifying') : t('auth.verifyAndCreate') }}
         </button>
 
-        <!-- Resend Code -->
         <div class="text-center">
           <button
             v-if="countdown > 0"
@@ -140,7 +151,9 @@
             type="button"
             @click="handleResendCode"
             :disabled="
-              isSendingCode || (turnstileEnabled && showResendTurnstile && !resendTurnstileToken)
+              !settingsLoaded ||
+              isSendingCode ||
+              (turnstileEnabled && showResendTurnstile && !resendTurnstileToken)
             "
             class="text-sm text-primary-600 transition-colors hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-primary-400 dark:hover:text-primary-300"
           >
@@ -154,7 +167,6 @@
       </form>
     </div>
 
-    <!-- Footer -->
     <template #footer>
       <button
         @click="handleBack"
@@ -173,11 +185,10 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
 import Icon from '@/components/icons/Icon.vue'
-import TurnstileWidget from '@/components/CaptchaChallenge.vue'
+import TurnstileWidget from '@/components/auth/CaptchaChallenge.vue'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
   persistOAuthTokenContext,
-  getPublicSettings,
   isOAuthLoginCompletion,
   type PendingOAuthSendVerifyCodeResponse,
   sendPendingOAuthVerifyCode,
@@ -189,131 +200,229 @@ import { extractApiErrorCode } from '@/utils/apiError'
 import {
   formatRegistrationEmailSuffixWhitelistForMessage,
   isRegistrationEmailSuffixAllowed,
-  normalizeRegistrationEmailSuffixWhitelist
+  normalizeRegistrationEmailSuffixWhitelist,
 } from '@/utils/registrationEmailPolicy'
-import { clearAllAffiliateCodes, loadAffiliateCode, oauthAffiliatePayload } from '@/utils/oauthAffiliate'
-import type { PublicSettings } from '@/types'
+import {
+  clearAllAffiliateCodes,
+  loadAffiliateCode,
+  oauthAffiliatePayload,
+} from '@/utils/oauthAffiliate'
 
-const { t, locale } = useI18n()
+// EmailVerifyView.vue restores a registration draft and verifies its email before
+// completing signup. Ordinary registration and pending OAuth creation share the
+// email code screen but use different endpoints and continuation metadata. Pending
+// provider identity can come from saved registration data or the auth store,
+// allowing an existing-account decision to return to its provider callback. Shared
+// application settings gate both delivery and creation; a failed load requires a
+// successful retry before either operation can start.
+//
+// Resend and account-creation captcha proofs remain separate. Sending a code
+// attempts saved-proof cleanup before clearing memory, even on request failure.
+// Suppressed parse or storage-write failures can leave the saved proof in place;
+// pending account creation acquires its own proof. Completed registration removes
+// stored credentials and attribution before navigation; unfinished OAuth responses
+// retain only the pending continuation needed by the callback.
 
-// ==================== Router & Stores ====================
+// t supplies authentication copy and locale controls formatting of permitted-email
+// suffix lists. Route and store services own navigation and completion of the
+// current registration action.
+const { t, locale } = useI18n() // message resolver and active locale
 
-const router = useRouter()
-const authStore = useAuthStore()
-const appStore = useAppStore()
+const router = useRouter() // application navigation service
+const authStore = useAuthStore() // shared authentication state owner
+const appStore = useAppStore() // public settings and toast owner
 
-// ==================== State ====================
+// The request and display state controls authentication progress, failure
+// feedback, and input visibility. Handlers publish successful completion
+// separately from merely starting or settling a request.
+const isLoading = ref<boolean>(false) // current form request busy flag
+// Settings readiness gates automatic delivery, resend, and account creation.
+// Failed reads preserve the restored draft until a successful user-requested retry.
+const settingsLoaded = ref<boolean>(false) // successfully applied verification policy
+const settingsLoading = ref<boolean>(false) // page settings request active
+const settingsError = ref<boolean>(false) // retryable policy loading failure
+// isSendingCode gates email delivery controls while the request is pending.
+// Delivery feedback and countdown values let the user distinguish sending from the
+// server-required resend wait.
+const isSendingCode = ref<boolean>(false) // email-code request busy flag
+// errorMessage holds the latest page-level failure while the nearby draft retains
+// user input. Toast delivery occurs in the corresponding watcher or request
+// handler.
+const errorMessage = ref<string>('') // current action failure message
+// codeSent records successful verification delivery separately from request
+// progress. The success content appears only after the code endpoint returns its
+// delivery response.
+const codeSent = ref<boolean>(false) // verification delivery success flag
+// verifyCode holds the email code entered on the verification page. It remains
+// independent from captcha proof and is validated before the registration request.
+const verifyCode = ref<string>('') // entered email verification code
+// countdown expresses the server resend delay in seconds. countdownTimer drives
+// its visible decrease and is replaced or released as the verification page
+// changes lifecycle.
+const countdown = ref<number>(0) // remaining resend wait seconds
+// countdownTimer owns the resend interval handle. Starting another countdown
+// replaces its scheduled work, and component unmount releases the remaining
+// interval.
+let countdownTimer: ReturnType<typeof setInterval> | null = null // owned resend interval handle
 
-const isLoading = ref<boolean>(false)
-const isSendingCode = ref<boolean>(false)
-const errorMessage = ref<string>('')
-const codeSent = ref<boolean>(false)
-const verifyCode = ref<string>('')
-const countdown = ref<number>(0)
-let countdownTimer: ReturnType<typeof setInterval> | null = null
-
-// Registration data from sessionStorage
+// PendingAuthTokenField selects the backend field carrying a pending
+// authentication token.
 type PendingAuthTokenField = 'pending_auth_token' | 'pending_oauth_token'
+// PendingAuthSessionSummary describes saved provider continuation metadata
+// restored by email verification.
 type PendingAuthSessionSummary = {
-  token: string
-  token_field: PendingAuthTokenField
-  provider: string
-  redirect?: string
+  token: string // pending authentication token
+
+  token_field: PendingAuthTokenField // backend pending token field
+
+  provider: string // authentication provider identifier
+
+  redirect?: string // post-authentication destination path
 }
+// PendingOAuthCreateAccountResponse describes authenticated or unfinished
+// responses from pending account creation.
 type PendingOAuthCreateAccountResponse = {
-  auth_result?: string
-  access_token: string
-  refresh_token?: string
-  expires_in?: number
-  token_type?: string
-  provider?: string
-  redirect?: string
+  auth_result?: string // authentication completion discriminator
+
+  access_token: string // authenticated account access token
+
+  refresh_token?: string // refresh session token
+
+  expires_in?: number // seconds
+
+  token_type?: string // authorization token type
+
+  provider?: string // authentication provider identifier
+
+  redirect?: string // post-authentication destination path
 }
 
-const email = ref<string>('')
-const password = ref<string>('')
-const initialTurnstileToken = ref<string>('')
-const initialTencentCaptchaRandstr = ref<string>('')
-const promoCode = ref<string>('')
-const invitationCode = ref<string>('')
-const affCode = ref<string>('')
-const pendingAuthToken = ref<string>('')
-const pendingAuthTokenField = ref<PendingAuthTokenField>('pending_auth_token')
-const pendingProvider = ref<string>('')
-const pendingRedirect = ref<string>('')
+// Restored registration credentials supply code delivery and final account
+// submission. This page displays the email but exposes no credential editors;
+// captcha proof and verification-code inputs have their own state below.
+const email = ref<string>('') // restored registration account email
+const password = ref<string>('') // restored registration account password
+// initialTurnstileToken restores the proof carried from registration. After a
+// request uses proof, sendCode attempts saved-proof cleanup before clearing this
+// field. Suppressed storage write failures can retain consumed proof in the draft;
+// a failed storage read interrupts cleanup before this local field is cleared.
+const initialTurnstileToken = ref<string>('') // initial saved verification proof
+// initialTencentCaptchaRandstr accompanies the saved Tencent ticket. sendCode
+// clears this local field with the ticket after saved-proof cleanup returns;
+// persistence failure can let a reload restore the consumed pair.
+const initialTencentCaptchaRandstr = ref<string>('') // initial saved Tencent random string
+// Saved promotion, invitation, and referral values accompany the restored
+// credential draft. Pending token metadata and adoption choices select OAuth
+// continuation when that draft came from a provider flow.
+const promoCode = ref<string>('') // pending registration promotion code
+const invitationCode = ref<string>('') // entered signup invitation code
+const affCode = ref<string>('') // pending registration referral code
+const pendingAuthToken = ref<string>('') // restored pending authentication token
+// pendingAuthTokenField selects the request property paired with pendingAuthToken.
+// Restored draft metadata takes precedence over the pending auth-store session
+// field.
+const pendingAuthTokenField = ref<PendingAuthTokenField>('pending_auth_token') // restored pending token field name
+const pendingProvider = ref<string>('') // restored authentication provider identity
+const pendingRedirect = ref<string>('') // restored authentication continuation destination
+// pendingAdoptionDecision restores explicit name and avatar choices from the
+// verification draft. Null leaves those request fields absent until a previous
+// step supplied decisions.
 const pendingAdoptionDecision = ref<{
-  adoptDisplayName?: boolean
-  adoptAvatar?: boolean
-} | null>(null)
-const hasRegisterData = ref<boolean>(false)
+  adoptDisplayName?: boolean // display name adoption choice
 
-// Public settings
-const turnstileEnabled = ref<boolean>(false)
-const turnstileSiteKey = ref<string>('')
-const tencentCaptchaEnabled = ref<boolean>(false)
-const tencentCaptchaAppId = ref<string>('')
-const tencentCaptchaRegion = ref<string>('cn')
-const aliyunCaptchaEnabled = ref<boolean>(false)
-const aliyunCaptchaSceneId = ref<string>('')
-const aliyunCaptchaPrefix = ref<string>('')
-const aliyunCaptchaRegion = ref<string>('cn')
-const publicSettings = ref<PublicSettings | null>(null)
-const siteName = computed(() => resolveLocalizedSiteName(publicSettings.value))
-const registrationEmailSuffixWhitelist = ref<string[]>([])
-const emailDomainQuotaEnabled = ref<boolean>(false)
+  adoptAvatar?: boolean // avatar adoption choice
+} | null>(null) // restored explicit profile adoption choices
+const hasRegisterData = ref<boolean>(false) // restored credential draft availability
 
-// Turnstile for resend
-const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
-const createAccountTurnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
-const resendTurnstileToken = ref<string>('')
-const resendTencentCaptchaRandstr = ref<string>('')
-const createAccountTurnstileToken = ref<string>('')
-const createAccountTencentCaptchaRandstr = ref<string>('')
-const showResendTurnstile = ref<boolean>(false)
+// These values carry public challenge configuration and local verification state
+// into the widget and request handlers. Provider-specific token and random-string
+// fields travel together when Tencent is enabled.
+const turnstileEnabled = ref<boolean>(false) // public Turnstile enable flag
+const turnstileSiteKey = ref<string>('') // public Turnstile widget identifier
+const tencentCaptchaEnabled = ref<boolean>(false) // public Tencent captcha enable flag
+const tencentCaptchaAppId = ref<string>('') // public Tencent application identifier
+const tencentCaptchaRegion = ref<string>('cn') // Tencent SDK region selector
+const aliyunCaptchaEnabled = ref<boolean>(false) // public Aliyun captcha enable flag
+const aliyunCaptchaSceneId = ref<string>('') // public Aliyun scene identifier
+const aliyunCaptchaPrefix = ref<string>('') // public Aliyun SDK prefix
+const aliyunCaptchaRegion = ref<string>('cn') // Aliyun SDK region selector
+// siteName uses the application's published branding during settings loading and
+// after failures, keeping registration labels consistent with the surrounding layout.
+const siteName = computed(() => appStore.siteName) // shared application display name
+const registrationEmailSuffixWhitelist = ref<string[]>([]) // normalized permitted signup email suffixes
+// emailDomainQuotaEnabled delegates non-whitelisted address admission to backend
+// domain quotas. Without that policy, the signup form applies the configured
+// suffix whitelist locally.
+const emailDomainQuotaEnabled = ref<boolean>(false) // backend email-domain quota policy
+
+// These values carry public challenge configuration and local verification state
+// into the widget and request handlers. Provider-specific token and random-string
+// fields travel together when Tencent is enabled.
+const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null) // captcha widget action handle
+const createAccountTurnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null) // account-creation challenge widget handle
+// resendTurnstileToken takes precedence over initial saved proof during email
+// delivery. Requests that dispatch proof clear it after clearStoredCaptchaProof
+// returns; a failed storage read interrupts that cleanup sequence.
+const resendTurnstileToken = ref<string>('') // fresh resend challenge proof
+const resendTencentCaptchaRandstr = ref<string>('') // paired resend Tencent random string
+// createAccountTurnstileToken belongs to pending OAuth account creation
+// independently of resend proof. The final creation attempt resets its dedicated
+// widget after settling.
+const createAccountTurnstileToken = ref<string>('') // fresh account-creation challenge proof
+const createAccountTencentCaptchaRandstr = ref<string>('') // paired creation Tencent random string
+const showResendTurnstile = ref<boolean>(false) // resend challenge display flag
 const aliyunCaptchaReady = computed(
   () =>
     aliyunCaptchaEnabled.value &&
     Boolean(aliyunCaptchaSceneId.value) &&
-    Boolean(aliyunCaptchaPrefix.value)
-)
-// 动作触发式验证码（腾讯/阿里云）：重发验证码、创建账号时弹窗验证
+    Boolean(aliyunCaptchaPrefix.value),
+) // complete Aliyun configuration flag
+
 const actionCaptchaEnabled = computed(
   () =>
-    (tencentCaptchaEnabled.value && Boolean(tencentCaptchaAppId.value)) ||
-    aliyunCaptchaReady.value
-)
+    (tencentCaptchaEnabled.value && Boolean(tencentCaptchaAppId.value)) || aliyunCaptchaReady.value,
+) // Tencent or Aliyun action gate
 const captchaEnabled = computed(
-  () =>
-    (turnstileEnabled.value && Boolean(turnstileSiteKey.value)) || actionCaptchaEnabled.value
-)
+  () => (turnstileEnabled.value && Boolean(turnstileSiteKey.value)) || actionCaptchaEnabled.value,
+) // available challenge provider flag
 
+// errors holds per-field validation feedback for the current form. The derived
+// toast selector chooses one active message so input validation has a single
+// visible notification source.
 const errors = ref({
-  code: '',
-  turnstile: ''
-})
+  code: '', // code field validation message
+  turnstile: '', // turnstile field validation message
+}) // field validation message collection
 
-const validationToastMessage = computed(
-  () => errors.value.code || errors.value.turnstile || ''
-)
+// validationToastMessage selects the first currently active validation error for
+// the toast watcher. Empty values clear the selection without emitting a
+// notification.
+const validationToastMessage = computed(() => errors.value.code || errors.value.turnstile || '') // first active validation toast message
+// Pending OAuth creation has its own captcha requirements and widget proof. These
+// computed flags enable that form gate independently from the resend-code
+// challenge.
 const pendingOAuthCreateTurnstileRequired = computed(
-  () => isPendingOAuthFlow() && turnstileEnabled.value
-)
+  () => isPendingOAuthFlow() && turnstileEnabled.value,
+) // pending creation Turnstile requirement
 const pendingOAuthCreateCaptchaEnabled = computed(
-  () => isPendingOAuthFlow() && captchaEnabled.value
-)
+  () => isPendingOAuthFlow() && captchaEnabled.value,
+) // pending creation captcha availability
 
+// Only changed nonempty validation messages reach the app toast, preventing an
+// unchanged reactive error from producing repeated notifications during field
+// updates.
 watch(validationToastMessage, (value, previousValue) => {
   if (value && value !== previousValue) {
     appStore.showError(value)
   }
 })
 
-// ==================== Lifecycle ====================
-
+// Restore saved credentials and pending provider metadata before loading
+// verification policy, so the initial email-code request selects the endpoint and
+// proof belonging to this continuation.
 onMounted(async () => {
   const activePendingSession = authStore.pendingAuthSession as PendingAuthSessionSummary | null
 
-  // Load registration data from sessionStorage
   const registerDataStr = sessionStorage.getItem('register_data')
   if (registerDataStr) {
     try {
@@ -327,17 +436,23 @@ onMounted(async () => {
       invitationCode.value = registerData.invitation_code || ''
       affCode.value = registerData.aff_code || loadAffiliateCode()
       pendingAuthToken.value = registerData.pending_auth_token || activePendingSession?.token || ''
-      pendingAuthTokenField.value = registerData.pending_auth_token_field || activePendingSession?.token_field || 'pending_auth_token'
+      pendingAuthTokenField.value =
+        registerData.pending_auth_token_field ||
+        activePendingSession?.token_field ||
+        'pending_auth_token'
       pendingProvider.value = registerData.pending_provider || activePendingSession?.provider || ''
       pendingRedirect.value = registerData.pending_redirect || activePendingSession?.redirect || ''
       pendingAdoptionDecision.value = registerData.pending_adoption_decision
         ? {
             adoptDisplayName: registerData.pending_adoption_decision.adopt_display_name === true,
-            adoptAvatar: registerData.pending_adoption_decision.adopt_avatar === true
+            adoptAvatar: registerData.pending_adoption_decision.adopt_avatar === true,
           }
         : null
       hasRegisterData.value = !!(email.value && password.value)
     } catch {
+      // A malformed saved draft cannot supply valid registration credentials. Mark
+      // it unavailable so mounted initialization skips the automatic
+      // verification-code request.
       hasRegisterData.value = false
     }
   } else if (activePendingSession) {
@@ -347,9 +462,24 @@ onMounted(async () => {
     pendingRedirect.value = activePendingSession.redirect || ''
   }
 
-  // Load public settings
+  await loadSettings()
+})
+
+// loadSettings prepares verification policy through the shared application loader.
+// Failed reads block delivery and creation while retaining the draft; a successful
+// retry resumes the initial email-code request when credentials are available.
+async function loadSettings(): Promise<void> {
+  if (settingsLoading.value) return
+  settingsLoading.value = true
+  settingsLoaded.value = false
+  settingsError.value = false
+
   try {
-    const settings = await getPublicSettings()
+    const settings = await appStore.fetchPublicSettings()
+    if (!settings) {
+      settingsError.value = true
+      return
+    }
     turnstileEnabled.value = settings.turnstile_enabled
     turnstileSiteKey.value = settings.turnstile_site_key || ''
     tencentCaptchaEnabled.value = settings.tencent_captcha_enabled === true
@@ -359,46 +489,57 @@ onMounted(async () => {
     aliyunCaptchaSceneId.value = settings.aliyun_captcha_scene_id || ''
     aliyunCaptchaPrefix.value = settings.aliyun_captcha_prefix || ''
     aliyunCaptchaRegion.value = settings.aliyun_captcha_region || 'cn'
-    publicSettings.value = settings
     registrationEmailSuffixWhitelist.value = normalizeRegistrationEmailSuffixWhitelist(
-      settings.registration_email_suffix_whitelist || []
+      settings.registration_email_suffix_whitelist || [],
     )
     emailDomainQuotaEnabled.value = settings.registration_email_domain_quota_enabled === true
+    settingsLoaded.value = true
   } catch (error) {
+    // Verification cannot choose captcha or email policy from defaults after a
+    // failed read, so preserve the draft and wait for the user's retry.
     console.error('Failed to load public settings:', error)
+    settingsError.value = true
+  } finally {
+    settingsLoading.value = false
   }
 
-  // Auto-send verification code if we have valid data
-  if (hasRegisterData.value) {
+  if (settingsLoaded.value && hasRegisterData.value) {
     await sendCode()
   }
-})
+}
 
+// Release the component-owned timer or rendered resource when this view leaves, so
+// detached UI does not retain its scheduled work.
 onUnmounted(() => {
+  // Release the existing resend interval before replacement or cleanup, preventing
+  // an old timer from continuing to decrement this component countdown.
   if (countdownTimer) {
     clearInterval(countdownTimer)
     countdownTimer = null
   }
 })
 
-function resolveLocalizedSiteName(settings: PublicSettings | null): string {
-  return settings?.site_name?.trim() || 'TokenRouter'
-}
-
-
-// ==================== Countdown ====================
-
+// startCountdown replaces the resend timer with a countdown in seconds. The
+// interval updates the displayed remaining time once per second and clears its
+// handle at expiry; component cleanup also releases it.
 function startCountdown(seconds: number): void {
   countdown.value = seconds
 
+  // Release the existing resend interval before replacement or cleanup, preventing
+  // an old timer from continuing to decrement this component countdown.
   if (countdownTimer) {
     clearInterval(countdownTimer)
   }
 
+  // Tick once per second to match the countdown units returned by the verification
+  // endpoint, and retain the handle for replacement or component cleanup.
   countdownTimer = setInterval(() => {
     if (countdown.value > 0) {
       countdown.value--
     } else {
+      // Release the existing resend interval before replacement or cleanup,
+      // preventing an old timer from continuing to decrement this component
+      // countdown.
       if (countdownTimer) {
         clearInterval(countdownTimer)
         countdownTimer = null
@@ -407,50 +548,74 @@ function startCountdown(seconds: number): void {
   }, 1000)
 }
 
-// ==================== Turnstile Handlers ====================
-
+// onTurnstileVerify stores the challenge token and optional Tencent random string.
+// It clears the captcha error so the current proof can enable the next guarded
+// form action.
 function onTurnstileVerify(token: string, randstr = ''): void {
   resendTurnstileToken.value = token
   resendTencentCaptchaRandstr.value = randstr
   errors.value.turnstile = ''
 }
 
+// onTurnstileExpire clears both challenge proof fields after widget expiration. It
+// publishes the translated expiry error, requiring a later verification callback
+// or action challenge before guarded submission can proceed.
 function onTurnstileExpire(): void {
   resendTurnstileToken.value = ''
   resendTencentCaptchaRandstr.value = ''
   errors.value.turnstile = t('auth.turnstileExpired')
 }
 
+// onTurnstileError clears both challenge proof fields after widget failure. It
+// publishes the translated verification error so a failed proof cannot remain
+// available for a later form submission.
 function onTurnstileError(): void {
   resendTurnstileToken.value = ''
   resendTencentCaptchaRandstr.value = ''
   errors.value.turnstile = t('auth.turnstileFailed')
 }
 
+// onCreateAccountTurnstileVerify stores the account-creation challenge token and
+// optional Tencent random string. It clears the captcha error so the current proof
+// can enable the next guarded form action.
 function onCreateAccountTurnstileVerify(token: string, randstr = ''): void {
   createAccountTurnstileToken.value = token
   createAccountTencentCaptchaRandstr.value = randstr
   errors.value.turnstile = ''
 }
 
+// onCreateAccountTurnstileExpire clears both account-creation challenge proof
+// fields after widget expiration. It publishes the translated expiry error,
+// requiring a later verification callback or action account-creation challenge
+// before guarded submission can proceed.
 function onCreateAccountTurnstileExpire(): void {
   createAccountTurnstileToken.value = ''
   createAccountTencentCaptchaRandstr.value = ''
   errors.value.turnstile = t('auth.turnstileExpired')
 }
 
+// onCreateAccountTurnstileError clears both account-creation challenge proof
+// fields after widget failure. It publishes the translated verification error so a
+// failed proof cannot remain available for a later form submission.
 function onCreateAccountTurnstileError(): void {
   createAccountTurnstileToken.value = ''
   createAccountTencentCaptchaRandstr.value = ''
   errors.value.turnstile = t('auth.turnstileFailed')
 }
 
+// resetCreateAccountTurnstile clears the account-creation proof and resets its
+// dedicated widget. Resend proof remains separate, so completing or failing
+// account creation does not overwrite that other challenge context.
 function resetCreateAccountTurnstile(): void {
   createAccountTurnstileToken.value = ''
   createAccountTencentCaptchaRandstr.value = ''
   createAccountTurnstileRef.value?.reset()
 }
 
+// acquireResendActionProof obtains a fresh proof only for enabled action-based
+// captcha providers. It returns true immediately otherwise; cancellation or an
+// unavailable widget returns false, and successful proof fields replace the resend
+// values.
 async function acquireResendActionProof(): Promise<boolean> {
   if (!actionCaptchaEnabled.value) return true
 
@@ -462,6 +627,9 @@ async function acquireResendActionProof(): Promise<boolean> {
   return true
 }
 
+// acquireCreateAccountActionProof requests the dedicated proof only for pending
+// OAuth account creation with action captcha enabled. Other flows return true
+// immediately; missing proof returns false and leaves submission to the caller.
 async function acquireCreateAccountActionProof(): Promise<boolean> {
   if (!isPendingOAuthFlow() || !actionCaptchaEnabled.value) return true
 
@@ -473,19 +641,25 @@ async function acquireCreateAccountActionProof(): Promise<boolean> {
   return true
 }
 
+// isPendingOAuthFlow reports whether a nonblank pending provider identifies OAuth
+// registration.
 function isPendingOAuthFlow(): boolean {
-	return Boolean(pendingProvider.value.trim())
+  return Boolean(pendingProvider.value.trim())
 }
 
-// pending OAuth 可能提交存量非白名单邮箱用于绑定已有账号，必须交由后端先解析用户。
+// shouldBypassRegistrationEmailPolicy delegates email eligibility to the backend
+// for quota or pending-auth flows. Pending OAuth may resolve an existing account
+// outside the signup whitelist, so those addresses reach backend identity
+// resolution.
 function shouldBypassRegistrationEmailPolicy(): boolean {
-	return (
-		emailDomainQuotaEnabled.value ||
-		isPendingOAuthFlow() ||
-		Boolean(pendingAuthToken.value.trim())
-	)
+  return (
+    emailDomainQuotaEnabled.value || isPendingOAuthFlow() || Boolean(pendingAuthToken.value.trim())
+  )
 }
 
+// resolvePendingOAuthCallbackRoute maps normalized LinuxDo, OIDC, and WeChat names
+// to their callbacks. All other names use the generic callback route, including
+// empty provider values and unlisted provider types.
 function resolvePendingOAuthCallbackRoute(provider: string): string {
   switch (provider.trim().toLowerCase()) {
     case 'linuxdo':
@@ -499,16 +673,25 @@ function resolvePendingOAuthCallbackRoute(provider: string): string {
   }
 }
 
+// isPendingOAuthSessionResponse identifies an unfinished account action by
+// auth_result.
 function isPendingOAuthSessionResponse(data: PendingOAuthCreateAccountResponse): boolean {
   return data.auth_result === 'pending_session'
 }
 
+// getPendingOAuthSendCodeSessionResponse returns a send-code response only when it
+// describes a pending session. Other responses return null, allowing sendCode to
+// distinguish an account-action transition from a delivered verification code.
 function getPendingOAuthSendCodeSessionResponse(
   data: PendingOAuthSendVerifyCodeResponse,
 ): PendingOAuthSendVerifyCodeResponse | null {
   return data.auth_result === 'pending_session' ? data : null
 }
 
+// persistPendingOAuthSession retains the pending token representation and provider
+// for callback recovery. A supplied nonblank provider and truthy redirect take
+// precedence over the current page metadata, preserving the continuation across
+// navigation.
 function persistPendingOAuthSession(provider: string, redirect?: string): void {
   authStore.setPendingAuthSession({
     token: pendingAuthToken.value,
@@ -518,28 +701,39 @@ function persistPendingOAuthSession(provider: string, redirect?: string): void {
   })
 }
 
-// ==================== Send Code ====================
-
+// sendCode sends email verification through ordinary or pending OAuth endpoints.
+// It chooses resend proof before the initial proof and delegates pending account
+// transitions back to the provider callback after removing registration data.
+// Requests that include proof attempt saved-proof cleanup before clearing local
+// fields, even after request failure. Suppressed parse or write errors can leave
+// stored proof intact; a storage read error propagates before local cleanup.
+// Failed Turnstile requests reopen the challenge, while a delivered code starts
+// the server-provided resend countdown. Calls before settings or credentials are
+// available, and calls during an active delivery, leave the endpoint untouched.
 async function sendCode(): Promise<void> {
+  if (!settingsLoaded.value || !hasRegisterData.value || isSendingCode.value) return
+
   isSendingCode.value = true
   errorMessage.value = ''
   let requestSucceeded = false
   let captchaProofUsed = false
 
-	try {
-		if (
-			!shouldBypassRegistrationEmailPolicy() &&
-			!isRegistrationEmailSuffixAllowed(email.value, registrationEmailSuffixWhitelist.value)
-		) {
-			errorMessage.value = buildEmailSuffixNotAllowedMessage()
-			appStore.showError(errorMessage.value)
-			return
-		}
+  try {
+    if (
+      !shouldBypassRegistrationEmailPolicy() &&
+      !isRegistrationEmailSuffixAllowed(email.value, registrationEmailSuffixWhitelist.value)
+    ) {
+      errorMessage.value = buildEmailSuffixNotAllowedMessage()
+      appStore.showError(errorMessage.value)
+      return
+    }
 
-		const requestPayload = {
+    const requestPayload = {
       email: email.value,
       [pendingAuthTokenField.value]: pendingAuthToken.value || undefined,
-      // 优先使用重发时新获取的 token（因为初始 token 可能已被使用）
+      // Prefer newly acquired resend proof over the initial saved proof because
+      // earlier code delivery may already have consumed the initial challenge
+      // result.
       turnstile_token:
         turnstileEnabled.value || aliyunCaptchaEnabled.value
           ? resendTurnstileToken.value || initialTurnstileToken.value || undefined
@@ -549,10 +743,10 @@ async function sendCode(): Promise<void> {
         : undefined,
       tencent_captcha_randstr: tencentCaptchaEnabled.value
         ? resendTencentCaptchaRandstr.value || initialTencentCaptchaRandstr.value || undefined
-        : undefined
+        : undefined,
     } as Parameters<typeof sendVerifyCode>[0]
     captchaProofUsed = Boolean(
-      requestPayload.turnstile_token || requestPayload.tencent_captcha_ticket
+      requestPayload.turnstile_token || requestPayload.tencent_captcha_ticket,
     )
     const response = isPendingOAuthFlow()
       ? await sendPendingOAuthVerifyCode(requestPayload)
@@ -562,7 +756,13 @@ async function sendCode(): Promise<void> {
     const pendingSendCodeSession = isPendingOAuthFlow()
       ? getPendingOAuthSendCodeSessionResponse(response as PendingOAuthSendVerifyCodeResponse)
       : null
+    // Code delivery can instead resolve an existing account. Preserve the returned
+    // continuation and leave verification before treating that response as a
+    // delivered code.
     if (pendingSendCodeSession) {
+      // Remove the credential-bearing draft before leaving this registration step,
+      // so the next route cannot accidentally resume the completed or abandoned
+      // draft.
       sessionStorage.removeItem('register_data')
       persistPendingOAuthSession(
         pendingSendCodeSession.provider || pendingProvider.value,
@@ -583,6 +783,9 @@ async function sendCode(): Promise<void> {
 
     appStore.showError(errorMessage.value)
   } finally {
+    // Any dispatched proof may have been consumed even if the request failed.
+    // Attempt saved-proof removal and clear local copies before exposing another
+    // resend attempt; clearStoredCaptchaProof suppresses persistence failures.
     if (captchaProofUsed) {
       clearStoredCaptchaProof()
       initialTurnstileToken.value = ''
@@ -598,6 +801,10 @@ async function sendCode(): Promise<void> {
   }
 }
 
+// clearStoredCaptchaProof attempts to remove consumed captcha fields from saved
+// registration data while retaining other draft fields. JSON parsing and storage
+// writes share a suppressed error path, so a failed write can leave consumed
+// proof persisted; the initial storage read occurs outside that catch.
 function clearStoredCaptchaProof(): void {
   const registerDataStr = sessionStorage.getItem('register_data')
   if (!registerDataStr) return
@@ -609,14 +816,22 @@ function clearStoredCaptchaProof(): void {
     delete registerData.tencent_captcha_randstr
     sessionStorage.setItem('register_data', JSON.stringify(registerData))
   } catch {
-    // 无效注册状态由现有的 onMounted 解析流程统一处理。
+    // Suppress parse and persistence failures so sendCode can finish its local
+    // proof cleanup. Malformed data stays unreadable, and a failed storage write
+    // can leave the consumed proof available in the saved registration draft.
   }
 }
 
-// ==================== Handlers ====================
-
+// handleResendCode prepares a fresh proof before repeating email verification.
+// Turnstile first reveals its widget and waits for a token; action captcha runs on
+// the click, and cancellation leaves the send endpoint untouched. Settings and
+// credentials must be available, and active delivery or countdown blocks resending.
 async function handleResendCode(): Promise<void> {
-  // Turnstile 继续使用已准备的凭证；腾讯验证码在本次操作时获取。
+  if (!settingsLoaded.value || !hasRegisterData.value || isSendingCode.value || countdown.value > 0)
+    return
+
+  // Turnstile needs its visible widget to prepare proof before sending, while
+  // action captcha opens during this click and can cancel the request.
   if (turnstileEnabled.value && !showResendTurnstile.value) {
     showResendTurnstile.value = true
     return
@@ -634,6 +849,9 @@ async function handleResendCode(): Promise<void> {
   await sendCode()
 }
 
+// validateForm checks the trimmed email verification code and updates its
+// validation message. Empty input and values other than six digits return false,
+// stopping verification before any account endpoint is called.
 function validateForm(): boolean {
   errors.value.code = ''
 
@@ -650,21 +868,31 @@ function validateForm(): boolean {
   return true
 }
 
+// handleVerify completes registration after validating the email code and current
+// email policy. Pending OAuth uses its separate creation proof and can return to a
+// provider callback without installing a token. Successful login persists token
+// context before accepting the token and removing saved registration data.
+// Ordinary signup delegates to the auth store, and both completed paths clear
+// affiliate state before navigation; failure keeps the draft while consuming local
+// proof. Settings and restored credentials are required before submission; an
+// active account request blocks repeated form events.
 async function handleVerify(): Promise<void> {
+  if (!settingsLoaded.value || !hasRegisterData.value || isLoading.value) return
+
   errorMessage.value = ''
 
-	if (!validateForm()) {
-		return
-	}
+  if (!validateForm()) {
+    return
+  }
 
-	if (
-		!shouldBypassRegistrationEmailPolicy() &&
-		!isRegistrationEmailSuffixAllowed(email.value, registrationEmailSuffixWhitelist.value)
-	) {
-		errorMessage.value = buildEmailSuffixNotAllowedMessage()
-		appStore.showError(errorMessage.value)
-		return
-	}
+  if (
+    !shouldBypassRegistrationEmailPolicy() &&
+    !isRegistrationEmailSuffixAllowed(email.value, registrationEmailSuffixWhitelist.value)
+  ) {
+    errorMessage.value = buildEmailSuffixNotAllowedMessage()
+    appStore.showError(errorMessage.value)
+    return
+  }
 
   if (!(await acquireCreateAccountActionProof())) {
     return
@@ -685,8 +913,8 @@ async function handleVerify(): Promise<void> {
         ...(tencentCaptchaEnabled.value && createAccountTurnstileToken.value
           ? {
               tencent_captcha_ticket: createAccountTurnstileToken.value,
-              tencent_captcha_randstr: createAccountTencentCaptchaRandstr.value
-          }
+              tencent_captcha_randstr: createAccountTencentCaptchaRandstr.value,
+            }
           : {}),
         ...oauthAffiliatePayload(affCode.value || loadAffiliateCode()),
       }
@@ -702,9 +930,15 @@ async function handleVerify(): Promise<void> {
 
       const { data } = await apiClient.post<PendingOAuthCreateAccountResponse>(
         '/auth/oauth/pending/create-account',
-        payload
+        payload,
       )
+      // Account creation can still require binding. Retain the returned
+      // continuation before navigation and leave token installation for a later
+      // authenticated response.
       if (isPendingOAuthSessionResponse(data)) {
+        // Remove the credential-bearing draft before leaving this registration
+        // step, so the next route cannot accidentally resume the completed or
+        // abandoned draft.
         sessionStorage.removeItem('register_data')
         persistPendingOAuthSession(data.provider || pendingProvider.value, data.redirect)
         await router.push(resolvePendingOAuthCallbackRoute(data.provider || pendingProvider.value))
@@ -714,11 +948,13 @@ async function handleVerify(): Promise<void> {
         throw new Error(t('auth.verifyFailed'))
       }
 
+      // Install the returned refresh context before the access token so session
+      // initialization observes the metadata belonging to this authenticated
+      // response.
       persistOAuthTokenContext(data)
       await authStore.setToken(data.access_token)
       authStore.clearPendingAuthSession?.()
     } else {
-      // Register with verification code
       await authStore.register({
         email: email.value,
         password: password.value,
@@ -727,22 +963,29 @@ async function handleVerify(): Promise<void> {
           turnstileEnabled.value || aliyunCaptchaEnabled.value
             ? initialTurnstileToken.value || undefined
             : undefined,
-        tencent_captcha_ticket: tencentCaptchaEnabled.value ? initialTurnstileToken.value || undefined : undefined,
-        tencent_captcha_randstr: tencentCaptchaEnabled.value ? initialTencentCaptchaRandstr.value || undefined : undefined,
+        tencent_captcha_ticket: tencentCaptchaEnabled.value
+          ? initialTurnstileToken.value || undefined
+          : undefined,
+        tencent_captcha_randstr: tencentCaptchaEnabled.value
+          ? initialTencentCaptchaRandstr.value || undefined
+          : undefined,
         promo_code: promoCode.value || undefined,
         invitation_code: invitationCode.value || undefined,
-        aff_code: affCode.value || undefined
+        aff_code: affCode.value || undefined,
       })
     }
 
-    // Clear session data
+    // Remove the credential-bearing draft before leaving this registration step,
+    // so the next route cannot accidentally resume the completed or abandoned
+    // draft.
     sessionStorage.removeItem('register_data')
+    // This path has completed authentication or account binding. Clear referral
+    // attribution before navigation so a later signup does not reuse the finished
+    // flow context.
     clearAllAffiliateCodes()
 
-    // Show success toast
     appStore.showSuccess(t('auth.accountCreatedSuccess', { siteName: siteName.value }))
 
-    // Redirect to dashboard
     await router.push(pendingRedirect.value || '/dashboard')
   } catch (error: unknown) {
     errorMessage.value = buildRegistrationErrorMessage(error, t('auth.verifyFailed'))
@@ -751,6 +994,8 @@ async function handleVerify(): Promise<void> {
   } finally {
     initialTurnstileToken.value = ''
     initialTencentCaptchaRandstr.value = ''
+    // The account-creation attempt has settled, so reset its dedicated challenge
+    // without replacing the separate proof state used by email resends.
     if (pendingOAuthCreateCaptchaEnabled.value) {
       resetCreateAccountTurnstile()
     }
@@ -758,37 +1003,52 @@ async function handleVerify(): Promise<void> {
   }
 }
 
+// handleBack discards the saved registration draft before opening the registration
+// page. This also removes its stored password and initial proof from session
+// storage when the user abandons verification.
 function handleBack(): void {
-  // Clear session data
+  // Remove the credential-bearing draft before leaving this registration step, so
+  // the next route cannot accidentally resume the completed or abandoned draft.
   sessionStorage.removeItem('register_data')
 
-  // Go back to registration
   router.push('/register')
 }
 
+// buildRegistrationErrorMessage localizes the backend email-domain quota
+// rejection. Other failures use the shared authentication formatter with the
+// caller fallback, keeping send-code and final registration errors consistent for
+// the user.
 function buildRegistrationErrorMessage(error: unknown, fallback: string): string {
   if (extractApiErrorCode(error) === 'EMAIL_DOMAIN_REGISTRATION_LIMIT') {
     return t('auth.emailDomainRegistrationLimit')
   }
-	return buildAuthErrorMessage(error, { fallback })
+  return buildAuthErrorMessage(error, { fallback })
 }
 
+// buildEmailSuffixNotAllowedMessage formats the current allowed email suffixes for
+// validation feedback. An empty normalized whitelist uses generic copy; Chinese
+// locales use their list separator and all locales use the translated overflow
+// label.
 function buildEmailSuffixNotAllowedMessage(): string {
-	const normalizedWhitelist = normalizeRegistrationEmailSuffixWhitelist(
-		registrationEmailSuffixWhitelist.value
-	)
-	if (normalizedWhitelist.length === 0) {
-		return t('auth.emailSuffixNotAllowed')
-	}
-	const separator = String(locale.value || '').toLowerCase().startsWith('zh') ? '、' : ', '
-	return t('auth.emailSuffixNotAllowedWithAllowed', {
-		suffixes: formatRegistrationEmailSuffixWhitelistForMessage(normalizedWhitelist, {
-			separator,
-			more: (count) => t('auth.emailSuffixAllowedMore', { count })
-		})
-	})
+  const normalizedWhitelist = normalizeRegistrationEmailSuffixWhitelist(
+    registrationEmailSuffixWhitelist.value,
+  )
+  if (normalizedWhitelist.length === 0) {
+    return t('auth.emailSuffixNotAllowed')
+  }
+  const separator = String(locale.value || '')
+    .toLowerCase()
+    .startsWith('zh')
+    ? '、'
+    : ', '
+  return t('auth.emailSuffixNotAllowedWithAllowed', {
+    suffixes: formatRegistrationEmailSuffixWhitelistForMessage(normalizedWhitelist, {
+      separator,
+      // more formats the translated count of additional allowed email suffixes.
+      more: (count) => t('auth.emailSuffixAllowedMore', { count }),
+    }),
+  })
 }
 </script>
 
-<style scoped>
-</style>
+<style scoped></style>

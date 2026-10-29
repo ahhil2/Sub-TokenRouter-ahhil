@@ -1,5 +1,11 @@
 import { apiClient } from './client'
 
+/**
+ * channelMonitor.ts defines public channel snapshots and administrator visibility
+ * settings. Metrics may be absent when a reporting window has no usable samples;
+ * callers retain these null values so empty history is distinguishable from zero.
+ */
+
 export interface ChannelMetrics {
   requests: number
   successes: number
@@ -36,8 +42,14 @@ export interface ChannelMonitorGroupOption extends ChannelMonitorGroupConfig {
   eligible: boolean
 }
 
-export async function getChannelMonitorConfig(signal?: AbortSignal): Promise<ChannelMonitorGroupOption[]> {
-  return (await apiClient.get<{ groups: ChannelMonitorGroupOption[] }>('/admin/channel-monitors/config', { signal })).data.groups
+export async function getChannelMonitorConfig(
+  signal?: AbortSignal,
+): Promise<ChannelMonitorGroupOption[]> {
+  return (
+    await apiClient.get<{ groups: ChannelMonitorGroupOption[] }>('/admin/channel-monitors/config', {
+      signal,
+    })
+  ).data.groups
 }
 
 export async function saveChannelMonitorConfig(groups: ChannelMonitorGroupConfig[]): Promise<void> {
@@ -54,5 +66,7 @@ export interface ChannelMonitorSnapshot {
 }
 
 export async function getChannelMonitor(signal?: AbortSignal): Promise<ChannelMonitorSnapshot> {
-  return (await apiClient.get<ChannelMonitorSnapshot>('/channel-monitors', { signal, timeout: 10000 })).data
+  return (
+    await apiClient.get<ChannelMonitorSnapshot>('/channel-monitors', { signal, timeout: 10000 })
+  ).data
 }

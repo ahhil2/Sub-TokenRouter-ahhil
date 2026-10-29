@@ -1,6 +1,13 @@
 import type { ProviderBrandKey } from '@/utils/providerBrand'
-import type { ProviderPlatform } from '@/types'
+import type { ProviderPlatform } from '@/api/admin/providers.types'
 import { resolveProviderBrandKey } from '@/utils/providerBrand'
+
+/**
+ * keyGroupProviders.ts classifies routing groups into the provider filters offered
+ * during API-key creation. Explicit display brands take precedence over names,
+ * recognized domestic brands share a category, and mixed provider families are placed
+ * in the other category.
+ */
 
 export type KeyGroupProvider = 'anthropic' | 'openai' | 'domestic' | 'other'
 
@@ -28,15 +35,19 @@ const DOMESTIC_PROVIDER_BRANDS = new Set<ProviderBrandKey>([
   'minimax',
 ])
 
-export function getKeyGroupProvider(group: { display_brand?: string | null; name: string }): KeyGroupProvider {
+export function getKeyGroupProvider(group: {
+  display_brand?: string | null
+  name: string
+}): KeyGroupProvider {
   const brand = group.display_brand?.trim() || group.name
   const brandKey = resolveProviderBrandKey(brand)
   const normalizedBrand = brand.toLocaleLowerCase().replace(/[\s_-]+/g, '')
   const brandParts = brand.split(/[|,/+:，、]+|\b(?:and|with)\b|与|和|混合/iu)
-  const partProviders = new Set(brandParts
-    .map((part) => resolveProviderBrandKey(part))
-    .filter((key): key is ProviderBrandKey => key !== null)
-    .map(toKeyGroupProvider)
+  const partProviders = new Set(
+    brandParts
+      .map((part) => resolveProviderBrandKey(part))
+      .filter((key): key is ProviderBrandKey => key !== null)
+      .map(toKeyGroupProvider),
   )
 
   if (partProviders.size > 1) return 'other'

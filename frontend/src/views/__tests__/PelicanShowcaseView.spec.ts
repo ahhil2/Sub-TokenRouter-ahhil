@@ -3,6 +3,13 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import PelicanShowcaseView from '../PelicanShowcaseView.vue'
 import PelicanTestsView from '../admin/PelicanTestsView.vue'
 
+/**
+ * PelicanShowcaseView.spec.ts checks published drawing presentation and the active-
+ * preview budget. Server fixtures supply the displayed prompt and results, including
+ * failure cases, while shared administrator rendering is checked against the same
+ * server-provided prompt.
+ */
+
 enableAutoUnmount(afterEach)
 
 const { results, catalog, result, tasks } = vi.hoisted(() => ({
@@ -13,12 +20,18 @@ const { results, catalog, result, tasks } = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/pelican', () => ({ pelicanApi: { results, catalog, result, tasks } }))
-vi.mock('@/api/admin/groups', () => ({ default: {}, getAll: vi.fn().mockResolvedValue([]), getModelsListCandidates: vi.fn().mockResolvedValue([]) }))
-vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div><slot /></div>' } }))
+vi.mock('@/api/admin/groups', () => ({
+  default: {},
+  getAll: vi.fn().mockResolvedValue([]),
+  getModelsListCandidates: vi.fn().mockResolvedValue([]),
+}))
+vi.mock('@/components/layout/AppLayout.vue', () => ({
+  default: { template: '<div><slot /></div>' },
+}))
 vi.mock('@/components/layout/AppHeader.vue', () => ({ default: { template: '<header />' } }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ isAuthenticated: false }) }))
-vi.mock('vue-i18n', async importOriginal => ({
-  ...await importOriginal<typeof import('vue-i18n')>(),
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
@@ -41,17 +54,29 @@ const global = {
     RouterLink: true,
     ConfirmDialog: true,
     BaseDialog: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
-    PelicanCard: { name: 'PelicanCard', props: ['item', 'active'], emits: ['visible', 'open'], template: '<article />' },
+    PelicanCard: {
+      name: 'PelicanCard',
+      props: ['item', 'active'],
+      emits: ['visible', 'open'],
+      template: '<article />',
+    },
     PelicanPreview: true,
   },
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  results.mockResolvedValue({ items, has_more: false, prompt: '来自服务端的提示词\n每次独立选择场景。' })
+  results.mockResolvedValue({
+    items,
+    has_more: false,
+    prompt: '来自服务端的提示词\n每次独立选择场景。',
+  })
   catalog.mockResolvedValue([])
   tasks.mockResolvedValue([])
-  result.mockImplementation(async (id: number) => ({ ...items[id - 1], html: '<html><svg></svg></html>' }))
+  result.mockImplementation(async (id: number) => ({
+    ...items[id - 1],
+    html: '<html><svg></svg></html>',
+  }))
 })
 
 describe('pelican gallery', () => {
@@ -62,7 +87,9 @@ describe('pelican gallery', () => {
     expect(wrapper.get('details').attributes('open')).toBeUndefined()
     expect(wrapper.get('details p').classes()).toContain('whitespace-pre-wrap')
     const grid = wrapper.get('section > div')
-    expect(grid.classes()).toEqual(expect.arrayContaining(['grid-cols-1', 'sm:grid-cols-2', 'xl:grid-cols-4']))
+    expect(grid.classes()).toEqual(
+      expect.arrayContaining(['grid-cols-1', 'sm:grid-cols-2', 'xl:grid-cols-4']),
+    )
     expect(grid.findAll('article')).toHaveLength(8)
   })
 
@@ -72,10 +99,10 @@ describe('pelican gallery', () => {
     const cards = wrapper.findAllComponents({ name: 'PelicanCard' })
     for (const card of cards) card.vm.$emit('visible', card.props('item').id, true)
     await flushPromises()
-    expect(cards.filter(card => card.props('active'))).toHaveLength(6)
+    expect(cards.filter((card) => card.props('active'))).toHaveLength(6)
     cards[0].vm.$emit('open', items[0])
     await flushPromises()
-    expect(cards.filter(card => card.props('active'))).toHaveLength(5)
+    expect(cards.filter((card) => card.props('active'))).toHaveLength(5)
     expect(wrapper.findComponent({ name: 'PelicanPreview' }).exists()).toBe(true)
     cards[0].vm.$emit('visible', 1, false)
     await flushPromises()

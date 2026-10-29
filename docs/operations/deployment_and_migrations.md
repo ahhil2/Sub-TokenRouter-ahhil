@@ -15,7 +15,9 @@
 
 标准发布先生成一次前端静态资源，再由独立的 runner 把同一份前端嵌进各平台的 Go 二进制，并行交叉编译；最后的发布阶段统一归档二进制，并用 Linux `amd64` 和 `arm64` 的产物组装多架构镜像和必要的运行时工具。GitHub Release 同时发布 Linux `amd64`、Linux `arm64` 等产物，具体的矩阵以 [release workflow](../../.github/workflows/release.yml) 为准。
 
-源码镜像的前端阶段校验 `.node-version`，再按 `frontend/package.json` 的 `packageManager` 字段安装 pnpm，本地和 CI 读取同样的版本声明。默认 Node 镜像使用 26.10.0，覆盖 `NODE_IMAGE` 时仍需满足完整版本检查。Node 26 镜像通过 npm 安装声明的 pnpm 版本，冻结安装前复制 workspace 配置。
+源码镜像的前端阶段校验 `.node-version`，再按 `frontend/package.json` 的 `packageManager` 字段安装 pnpm，本地和 CI 读取同样的版本声明。默认 Node 镜像使用 26.12.1，覆盖 `NODE_IMAGE` 时仍需满足完整版本检查。Node 26 镜像通过 npm 安装声明的 pnpm 版本，冻结安装前复制 workspace 配置。
+
+Go 构建使用 1.27.3，后端模块、两个开发工具模块和三份源码 Dockerfile 同步声明该版本。Go 标准库的安全修复需要重新编译并部署应用二进制才能生效。Node.js 用于依赖安装、前端构建和开发工具；标准生产镜像由 Go 进程提供嵌入的静态资源。
 
 前端构建会导入 `backend/internal/pkg/locale/manifest.json` 和 `error_messages.json`。根目录和 `deploy/` 的 Dockerfile 在前端构建阶段将这些文件复制到 `/app/backend/internal/pkg/locale/`，与源码中的相对导入路径一致。
 
@@ -27,7 +29,7 @@
 | 完整 Compose | `deploy/docker-compose.yml`、`docker-compose.local.yml` | 应用、PostgreSQL、Redis；分别使用命名卷或本地目录 |
 | 独立应用容器 | `deploy/docker-compose.standalone.yml` | PostgreSQL 和 Redis 由部署环境提供 |
 | 源码开发 Compose | `deploy/docker-compose.dev.yml` | 在本地构建应用，并启动配套的依赖 |
-| SuperAHHil 定制部署 | `deploy/superahhil/compose.yaml` | 从本仓库构建应用，配套 PostgreSQL、Redis，黑色页面由宿主机 Caddy 提供 |
+| SuperAHHil 定制部署 | `deploy/superahhil/compose.yaml` | 使用本仓库 Release 镜像或本地源码构建，配套 PostgreSQL、Redis，黑色页面由宿主机 Caddy 提供 |
 | Apple Container | `deploy/apple-container.sh` | 独立脚本管理容器、卷和健康状态 |
 
 应用至少依赖 PostgreSQL 和 Redis。`/app/data` 或等价的 `DATA_DIR` 保存配置、安装锁和本地的运维产物；数据库、Redis 和对象存储各有自己的生命周期，只备份应用数据目录，不算完成了系统备份。
@@ -72,7 +74,7 @@ Apple container 的新栈使用 `org.tokenrouter.stack` 标签；已有的 `sub2
 
 - 已经进入任何环境的文件，不能修改、删除或改名；修正需要新建迁移。
 - 文件里不放可执行的 Down 段；runner 不解析 Goose 的 Up 和 Down 标记。
-- 普通迁移尽量写成幂等的，并在 SQL 里用中文注释说明变更原因和兼容窗口。
+- 普通迁移尽量写成幂等的，并在 SQL 里用英文注释说明变更原因和兼容窗口。
 - schema、数据回填、Repository 查询和 Ent schema 的变化，放在同一个兼容序列里设计；确实无法让新旧二进制共存时，在[版本升级说明](upgrade_notes.md)里写明停机升级、备份和回滚的步骤。
 
 ## 新增与同步迁移
@@ -89,6 +91,12 @@ Apple container 的新栈使用 `org.tokenrouter.stack` 标签；已有的 `sub2
 - `schema_migrations` 里的文件名符合预期，已有文件的 checksum 没有变。
 
 ## 升级与恢复
+
+### 容器内的网页更新
+
+本定制版从 `ahhil2/Sub-TokenRouter-ahhil` 获取 Release。镜像入口将程序安装到 `/app/data/runtime/tokenrouter`，应用用户拥有该目录，因此网页更新器可以下载、备份和替换程序。`/app/data` 需要持久化，同一镜像的容器重启或重建会继续运行已安装的版本。
+
+入口记录镜像内程序的 SHA-256。镜像内程序变化时，启动前用镜像版本替换运行目录中的程序，并保留上一份程序为 `.backup`；使用新镜像或回退镜像都属于这种切换。网页更新不会修改镜像记录，因此普通重启不会覆盖网页安装的版本。容器需要 `restart: unless-stopped` 或等价策略，供网页重启请求结束进程后自动恢复服务。共享同一程序目录的多个容器不受支持。
 
 ### 通用规则
 
@@ -110,3 +118,7 @@ Apple container 的新栈使用 `org.tokenrouter.stack` 标签；已有的 `sub2
 系统维护锁使用幂等表和 scope、key；processing 记录的 response_body 里保存一个独立的所有者令牌，续租和释放时，同时比较业务操作 ID 和令牌。旧的、没有令牌的记录，在原来的锁窗口内继续阻止认领，过期后可以被接管；普通的 HTTP 幂等记录不使用这套维护认领接口。回退旧二进制之前，先停止并等待维护操作完成，数据库恢复或二进制替换进行到一半时，不要切换实现。
 
 相关文档：[系统架构](../architecture/system_architecture.md)、[配置](../interfaces/configuration.md)、[版本升级说明](upgrade_notes.md)、[运维目录](index.md)。
+
+## MCP 管理接入
+
+迁移 304 创建独立的 MCP 令牌表，保存认证摘要和加密凭据，迁移 305 增加默认关闭的跳过浏览器确认设置。服务沿用现有 PostgreSQL、Redis 和持久加密密钥；创建与复制令牌要求配置固定的 `TOTP_ENCRYPTION_KEY`（或 `totp.encryption_key`），所有实例使用相同值，并与数据库一起备份。入口与网页使用同一监听端口，反向代理需要允许 `/mcp`。浏览器确认链接使用 `frontend_url`，原生客户端通过专用 Bearer 令牌连接，部署时按需限制管理入口的网络可达范围。令牌迁移、回退和临时数据规则见 [MCP 管理接口](../interfaces/mcp_management.md#client_setup)。

@@ -1,13 +1,17 @@
+# compose.yaml runs the SuperAHHil application with PostgreSQL and Redis for a
+# new installation. Persistent directories retain application state, required
+# environment variables supply credentials, and the read-only model supplement
+# declares site-specific capabilities consumed by the application's catalog loader.
 name: superahhil
 
 services:
   tokenrouter:
-    image: local/superahhil:${IMAGE_TAG:-0.3.0-custom}
+    image: ${TOKENROUTER_IMAGE:-ghcr.io/ahhil2/tokenrouter:0.4.1}
     build:
       context: ../..
       dockerfile: Dockerfile
       args:
-        VERSION: ${APP_VERSION:-0.3.0-superahhil}
+        VERSION: ${APP_VERSION:-0.4.1}
         COMMIT: ${APP_COMMIT:-local}
         DATE: ${BUILD_DATE:-}
     restart: unless-stopped
@@ -20,12 +24,14 @@ services:
       - "127.0.0.1:${HOST_PORT:-18080}:8080"
     volumes:
       - ./data:/app/data
+      - ./model_supplements.json:/app/model_supplements.json:ro
     environment:
       AUTO_SETUP: "true"
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: "8080"
       SERVER_MODE: release
       GOMEMLIMIT: 1536MiB
+      PRICING_FALLBACK_FILE: /app/model_supplements.json
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
       DATABASE_USER: tokenrouter

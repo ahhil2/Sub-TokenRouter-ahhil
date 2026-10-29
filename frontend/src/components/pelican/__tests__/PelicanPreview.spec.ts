@@ -2,10 +2,18 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { enableAutoUnmount, mount } from '@vue/test-utils'
 import PelicanPreview from '../PelicanPreview.vue'
 
+/**
+ * PelicanPreview.spec.ts checks generated documents inside the drawing preview frame.
+ * The component tests inspect sandbox configuration, retained interactive controls,
+ * gallery thumbnail pointer behavior, and empty-document handling without invoking an
+ * actual model drawing provider.
+ */
+
 enableAutoUnmount(afterEach)
 
 describe('PelicanPreview', () => {
-  const html = '<html><body><svg></svg><button id="pause">暂停</button><script>document.getElementById("pause").addEventListener("click", () => {})</script></body></html>'
+  const html =
+    '<html><body><svg></svg><button id="pause">暂停</button><script>document.getElementById("pause").addEventListener("click", () => {})</script></body></html>'
 
   it('renders generated HTML in an isolated iframe with working controls retained', () => {
     const wrapper = mount(PelicanPreview, { props: { html, title: '骑车动画', interactive: true } })
