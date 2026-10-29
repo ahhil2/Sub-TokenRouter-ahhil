@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
 // Key request admission translates the limiter result into either standard or
@@ -157,4 +159,29 @@ func TestGetAPIKeyIDFromContext(t *testing.T) {
 		c.Set("api_key", &apikey.APIKey{ID: 12345})
 		require.Equal(t, int64(12345), APIKeyIDFromContext(c))
 	})
+}
+
+// TestAuthorizationRejectionRetainsIngressTiming sends missing credentials through
+// both authentication middleware variants. Each rejects before body consumption
+// and records authorization completion even though downstream handlers never run.
+func TestAuthorizationRejectionRetainsIngressTiming(t *testing.T) {
+	for _, auth := range []gin.HandlerFunc{
+		NewAPIKeyAuthorization(nil, nil, APIKeyAuthorizationOptions{}),
+		NewGoogleAPIKeyAuthorization(nil, nil, APIKeyAuthorizationOptions{}),
+	} {
+		router := gin.New()
+		var stages *timing.Stages
+		router.Use(TextRequestTiming(), func(c *gin.Context) {
+			stages = timing.StagesFromContext(c.Request.Context())
+			c.Next()
+		}, auth)
+		router.POST("/v1/messages", func(c *gin.Context) { t.Error("rejected request reached handler") })
+		writer := httptest.NewRecorder()
+		router.ServeHTTP(writer, httptest.NewRequest(http.MethodPost, "/v1/messages", nil))
+		require.Equal(t, 401, writer.Code)
+		got := stages.FailureSnapshot()
+		require.Contains(t, got, "auth_started_ms")
+		require.Contains(t, got, "auth_finished_ms")
+		require.NotContains(t, got, "request_body_read_started_ms")
+	}
 }

@@ -10,8 +10,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
@@ -28,7 +30,8 @@ import (
 // classified independently from billing and retry commitment. Failed writes
 // discard their observation, while successful writes can establish content
 // before a later flush. Every platform shares the same request collector and
-// first-event rules, including protocol conversion at the HTTP boundary.
+// first-event rules, including protocol conversion at the HTTP boundary. Slow
+// ingress and failed body reads emit numeric diagnostics for request correlation.
 
 // The request-local writer binding lets upstream sinks identify delivery through
 // intervening model-restoration and capture writers without bypassing those writers.
@@ -126,6 +129,12 @@ func TextRequestTiming() gin.HandlerFunc {
 		defer stopCancellation()
 		defer func() {
 			stages.Finish()
+			diagnostics := stages.FailureSnapshot()
+			// Three seconds selects slow ingress for correlated diagnostics. These
+			// numeric fields exclude request bodies, credentials, and raw network errors.
+			if diagnostics["request_body_read_ms"] >= 3000 || diagnostics["moderation_started_ms"] >= 3000 || diagnostics["auth_finished_ms"] >= 3000 || diagnostics["request_body_read_failed"] == 1 {
+				logging.FromContext(ctx).Info("gateway.ingress_timing", zap.Any("ingress", diagnostics))
+			}
 			if ctx.Err() != nil {
 				writer.disconnected()
 			}
@@ -346,4 +355,17 @@ func timingVisible(data, event string) bool { return timing.UsefulOutput(data, e
 // request completion can still report the upstream and persistence outcomes later.
 func (w *timingWriter) disconnected() {
 	timing.ObserveClientDisconnect(w.ctx, time.Now())
+}
+
+// observeAuthorizationTiming starts authentication and admission observation.
+// Call the returned function before invoking downstream handlers and defer it
+// for early rejections. Repeated completion retains the first endpoint; body
+// reads for composite keys remain part of this overlapping authorization interval.
+func observeAuthorizationTiming(c *gin.Context) func() {
+	stages := timing.StagesFromContext(c.Request.Context())
+	if stages == nil {
+		return func() {}
+	}
+	stages.Mark("auth_started_ms")
+	return func() { stages.Mark("auth_finished_ms") }
 }

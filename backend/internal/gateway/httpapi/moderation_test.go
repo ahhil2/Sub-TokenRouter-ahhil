@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -11,9 +14,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
+
+// ingressModerationStub models an immediate policy bypass or a service failure.
+type ingressModerationStub struct {
+	ModerationPort       // unused warning operations
+	err            error // check failure result
+}
 
 // TestBuildContentModerationInputTeamKeyUsesActorAndKeepsBillingAttribution
 // supplies distinct team actor and owner records. It requires actor risk
@@ -117,4 +127,35 @@ func newContentModerationHelperTestContext() *gin.Context {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	return c
+}
+
+// Check simulates bounded policy work and returns its configured decision outcome.
+func (s ingressModerationStub) Check(context.Context, moderation.ContentModerationCheckInput) (*moderation.ContentModerationDecision, error) {
+	time.Sleep(time.Millisecond)
+	return &moderation.ContentModerationDecision{Allowed: true}, s.err
+}
+
+// TestRunContentModerationSeparatesIngressDelay measures a long wait before policy evaluation.
+// Both allow and error paths retain separate entry and completion times, and
+// absent moderation services do not manufacture a check that never happened.
+func TestRunContentModerationSeparatesIngressDelay(t *testing.T) {
+	for _, checkErr := range []error{nil, context.Canceled} {
+		synctest.Test(t, func(t *testing.T) {
+			c := newContentModerationHelperTestContext()
+			ctx, stages := timing.WithStages(c.Request.Context(), time.Now(), nil)
+			c.Request = c.Request.WithContext(ctx)
+			time.Sleep(215 * time.Second)
+			svc := ingressModerationStub{err: checkErr}
+			decision := RunContentModeration(GatewayModerationEndpoints{}, c, nil, svc, nil, authctx.AuthSubject{}, moderation.ContentModerationProtocolOpenAIChat, "model", []byte(`{"messages":[]}`))
+			require.Equal(t, checkErr == nil, decision != nil)
+			got := stages.FailureSnapshot()
+			require.Equal(t, int64(215000), got["moderation_started_ms"])
+			require.Equal(t, int64(215001), got["moderation_finished_ms"])
+		})
+	}
+	c := newContentModerationHelperTestContext()
+	ctx, stages := timing.WithStages(c.Request.Context(), time.Now(), nil)
+	c.Request = c.Request.WithContext(ctx)
+	require.Nil(t, RunContentModeration(nil, c, nil, nil, nil, authctx.AuthSubject{}, "", "", nil))
+	require.NotContains(t, stages.Snapshot(), "moderation_started_ms")
 }

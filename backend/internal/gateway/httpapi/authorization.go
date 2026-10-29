@@ -126,10 +126,14 @@ func EffectiveAPIKey(c *gin.Context) (*apikey.APIKey, bool) {
 // payer and Fast policy. Actor principal publication follows funding admission,
 // and key request capacity is reserved immediately before downstream processing.
 // The release callback runs after c.Next returns, covering waiting and streaming
-// performed by later handlers. Observation callbacks can run before admission succeeds.
+// performed by later handlers. Timing ends before downstream work, including
+// on rejection; composite body reads overlap this authorization interval.
+// Observation callbacks can run before admission succeeds.
 func NewAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscriptionService AuthorizationSubscriptions, options APIKeyAuthorizationOptions) gin.HandlerFunc {
 	options.Authentication.Google = false
 	return func(c *gin.Context) {
+		finishAuth := observeAuthorizationTiming(c)
+		defer finishAuth()
 		access, ok := keyhttp.Authenticate(c, apiKeyService, options.Authentication)
 		if !ok {
 			return
@@ -232,6 +236,9 @@ func NewAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscriptionSer
 		// Hold the key lease while downstream handlers wait or stream. Returning
 		// from their chain releases admission capacity even when they finish with an error.
 		defer release()
+		// End authorization before downstream work; the deferred call also covers
+		// early rejection and keeps the first observation when the chain later returns.
+		finishAuth()
 		c.Next()
 	}
 }
@@ -245,10 +252,13 @@ func NewAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscriptionSer
 // replace its subscription after usage-window maintenance. Principal publication
 // and key capacity reservation follow successful admission; the lease is released
 // after downstream handlers return. Google credential and error handling are
-// selected on a copy of Authentication options supplied by the caller.
+// selected on a copy of Authentication options supplied by the caller. Timing
+// ends before downstream work and includes composite body reads when needed.
 func NewGoogleAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscriptionService AuthorizationSubscriptions, options APIKeyAuthorizationOptions) gin.HandlerFunc {
 	options.Authentication.Google = true
 	return func(c *gin.Context) {
+		finishAuth := observeAuthorizationTiming(c)
+		defer finishAuth()
 		access, ok := keyhttp.Authenticate(c, apiKeyService, options.Authentication)
 		if !ok {
 			return
@@ -358,6 +368,9 @@ func NewGoogleAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscript
 		// Hold the key lease while downstream handlers wait or stream. Returning
 		// from their chain releases admission capacity even when they finish with an error.
 		defer release()
+		// End authorization before downstream work; the deferred call also covers
+		// early rejection and keeps the first observation when the chain later returns.
+		finishAuth()
 		c.Next()
 	}
 }

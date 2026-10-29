@@ -212,7 +212,9 @@ func (s *Stages) ReadBody(body io.ReadCloser) io.ReadCloser {
 
 // Read forwards bytes and errors unchanged and records elapsed reader work.
 // Failed and partial reads still consume time. Admission clipping excludes
-// any late body activity from an already frozen initial breakdown.
+// any late body activity from an already frozen initial breakdown. Raw byte
+// counts and read milestones describe the encoded stream, including partial
+// data returned with an error; only EOF establishes successful completion.
 //
 // The underlying read runs outside the collector lock so cancellation and
 // snapshot publication do not wait behind network input. The completed interval
@@ -220,9 +222,33 @@ func (s *Stages) ReadBody(body io.ReadCloser) io.ReadCloser {
 // elapsed portion before the endpoint contributes to the original body duration.
 func (r *stageBody) Read(p []byte) (int, error) {
 	start := time.Now()
+	r.stages.mu.Lock()
+	if _, exists := r.stages.events["request_body_read_started_ms"]; !exists {
+		r.stages.events["request_body_read_started_ms"] = start.Sub(r.stages.start).Milliseconds()
+		r.stages.events["request_body_received_bytes"] = 0
+	}
+	r.stages.mu.Unlock()
 	n, err := r.ReadCloser.Read(p)
 	end := time.Now()
 	r.stages.mu.Lock()
+	// Read may return bytes together with EOF or an error. Retain those bytes
+	// before classifying termination so truncated uploads keep their received length.
+	r.stages.events["request_body_received_bytes"] += int64(n)
+	if n > 0 {
+		if _, exists := r.stages.events["request_body_first_byte_ms"]; !exists {
+			r.stages.events["request_body_first_byte_ms"] = end.Sub(r.stages.start).Milliseconds()
+		}
+		r.stages.events["request_body_last_byte_ms"] = end.Sub(r.stages.start).Milliseconds()
+	}
+	if err != nil {
+		if _, exists := r.stages.events["request_body_read_finished_ms"]; !exists {
+			r.stages.events["request_body_read_finished_ms"] = end.Sub(r.stages.start).Milliseconds()
+			r.stages.events["request_body_read_failed"] = 0
+			if err != io.EOF {
+				r.stages.events["request_body_read_failed"] = 1
+			}
+		}
+	}
 	if !r.stages.end.IsZero() && end.After(r.stages.end) {
 		end = r.stages.end
 	}

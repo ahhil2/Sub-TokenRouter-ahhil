@@ -125,6 +125,10 @@ gzip_types text/plain text/css application/json application/javascript applicati
 
 仓库内 Caddy 配置没有设置 `flush_interval`，让 Caddy 自动刷新 `text/event-stream` 响应，同时把客户端取消向上游传播。不要全局设置它：正值会增加流式延迟，而 Caddy 2.6.2 的特殊 `-1` 模式还会让反向代理请求在客户端断开后继续执行。配置用一个明确的响应内容类型列表决定压缩哪些内容。`text/*` 或简写的 `encode gzip zstd` 都会匹配 `text/event-stream`，可能把 SSE 缓冲到响应结束才发出，所以不要这样替换。流式响应应保持不压缩，Web 管理界面、JSON 和静态资源仍可压缩。
 
+Caddy 的 HTTP 后端传输同时发送请求正文和等待响应。`transport http` 的 `read_timeout` 会在等待后端响应时开始计时，慢上传期间也可能到期并关闭连接，表现为应用正文截断和客户端 502。定制部署的 `deploy/superahhil/Caddyfile.example` 使用 `response_header_timeout 300s`，在请求发送完成后限制响应头等待，不设置后端 `read_timeout`。`write_timeout 300s` 继续限制向后端写入停顿；入口请求头和正文大小限制仍然适用。已部署实例需要单独修改 Caddy 配置并验证后热加载，应用 Release 不会替换宿主机配置。
+
+排查慢请求时，把原始正文读取、认证、审核入口和提供商等待分开比较，字段定义见 [响应与错误](../interfaces/http_api.md#response_errors)。移除读取超时能减少慢上传截断，不能使原有网络停顿自动消失。验收要同时比较客户端完整耗时、审核前 P95/P99、超过 10 秒与 60 秒的比例、正文读取失败和代理 502；正文读取失败未进入审核，需单列计数。若调整代理请求缓冲，应保留代理接收正文的时间，防止等待移到应用日志之外。
+
 CDN 部署应先通过防火墙限制源站，只允许当前 CDN 出口 CIDR 连接；再把这些准确网段配置为 Caddy 可信代理，并根据 Caddy 解析后的 `{client_ip}` 生成上游请求头。例如：
 
 ```caddyfile

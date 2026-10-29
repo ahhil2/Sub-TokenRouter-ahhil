@@ -1,3 +1,7 @@
+# Caddyfile.example serves the customized site and proxies application traffic.
+# The backend header deadline starts after uploading the request. Socket read
+# deadlines can expire during upload because the HTTP transport waits for a
+# response concurrently, so upload stalls must not use that response-read timer.
 example.com {
 	encode zstd gzip
 	request_body {
@@ -44,8 +48,8 @@ example.com {
 		reverse_proxy 127.0.0.1:18080 {
 			transport http {
 				dial_timeout 30s
+				# Wait for headers after the complete request has been sent.
 				response_header_timeout 300s
-				read_timeout 300s
 				write_timeout 300s
 			}
 		}

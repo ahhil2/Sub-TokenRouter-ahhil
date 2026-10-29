@@ -14,6 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/moderationflow"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
@@ -301,10 +302,15 @@ func SetOpenAICyberWarningPromptExcerpt(c *gin.Context, promptExcerpt string) {
 // billing attribution. Missing service or request state returns nil; a service
 // error is logged and also returns nil, leaving the caller to decide handling
 // for an absent decision. Successful decisions are returned with metadata
-// diagnostics when logging is supplied.
+// diagnostics when logging is supplied. Request timing brackets this gateway
+// check even when service policy is disabled and immediately allows the input.
 func RunContentModeration(endpoints ModerationEndpoints, c *gin.Context, reqLog *zap.Logger, svc ModerationPort, apiKey *apikey.APIKey, subject authctx.AuthSubject, protocol string, model string, body []byte) *moderation.ContentModerationDecision {
 	if svc == nil || c == nil || c.Request == nil {
 		return nil
+	}
+	if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
+		stages.Mark("moderation_started_ms")
+		defer stages.Mark("moderation_finished_ms")
 	}
 	input := BuildContentModerationInput(endpoints, c, apiKey, subject, protocol, model, body)
 	if reqLog != nil {

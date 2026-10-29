@@ -16,9 +16,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
@@ -377,6 +380,11 @@ func TestTextRequestTimingCompositeCompressedRead(t *testing.T) {
 				router.ServeHTTP(httptest.NewRecorder(), req)
 				got := stages.Snapshot()
 				require.Equal(t, int64(2000), got["request_body_read_ms"])
+				require.Equal(t, int64(len(payload)), got["request_body_received_bytes"])
+				require.Equal(t, int64(0), got["request_body_read_started_ms"])
+				require.Equal(t, int64(1000), got["request_body_first_byte_ms"])
+				require.Equal(t, int64(2000), got["request_body_read_finished_ms"])
+				require.Equal(t, int64(0), got["request_body_read_failed"])
 				require.Equal(t, int64(3000), got["preprocess_ms"])
 				require.Zero(t, got["user_slot_wait_ms"])
 				require.Zero(t, got["provider_slot_wait_ms"])
@@ -545,4 +553,69 @@ func TestRequestIdentifierResponseUsesOriginalDispatch(t *testing.T) {
 	require.Equal(t, 7, int(saved.Attempts[0].ProviderID))
 	require.Equal(t, "second", saved.Attempts[1].RequestID)
 	require.Equal(t, 200, saved.Attempts[1].Status)
+}
+
+// TestObserveAuthorizationTimingExcludesDownstreamWork simulates successful admission
+// followed by a slow handler and deferred cleanup. The first authorization end
+// remains fixed, and routes without a text collector continue normally.
+func TestObserveAuthorizationTimingExcludesDownstreamWork(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		observeAuthorizationTiming(c)()
+		ctx, stages := timing.WithStages(c.Request.Context(), time.Now(), nil)
+		c.Request = c.Request.WithContext(ctx)
+		finish := observeAuthorizationTiming(c)
+		time.Sleep(2 * time.Second)
+		finish()
+		time.Sleep(time.Minute)
+		finish()
+		got := stages.FailureSnapshot()
+		require.Equal(t, int64(0), got["auth_started_ms"])
+		require.Equal(t, int64(2000), got["auth_finished_ms"])
+	})
+}
+
+// TestTextRequestTimingFailedUploadPersistsDiagnostics interrupts an upload before moderation.
+// Request completion retains partial byte counts and emits a correlated numeric
+// log. Prompt contents stay outside the log, and provider attempts remain absent.
+func TestTextRequestTimingFailedUploadPersistsDiagnostics(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		core, logs := observer.New(zap.InfoLevel)
+		var saved telemetry.RequestRecord
+		router := gin.New()
+		router.Use(middleware.RequestLogger(func(record telemetry.RequestRecord) { saved = record }))
+		router.Use(func(c *gin.Context) {
+			requestID, _ := c.Request.Context().Value(telemetry.RequestID).(string)
+			logger := zap.New(core).With(zap.String("request_id", requestID))
+			c.Request = c.Request.WithContext(logging.IntoContext(c.Request.Context(), logger))
+			c.Next()
+		}, TextRequestTiming())
+		router.POST("/v1/messages", func(c *gin.Context) {
+			_, err := io.ReadAll(c.Request.Body)
+			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+			c.Status(http.StatusBadRequest)
+		})
+		reader, writer := io.Pipe()
+		t.Cleanup(func() {
+			require.NoError(t, reader.Close())
+			require.NoError(t, writer.Close())
+		})
+		go func() {
+			_, _ = writer.Write([]byte("private-prompt"))
+			time.Sleep(5 * time.Second)
+			_ = writer.CloseWithError(io.ErrUnexpectedEOF)
+		}()
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", reader)
+		router.ServeHTTP(httptest.NewRecorder(), req)
+		require.Equal(t, int64(14), saved.FailureTimings["request_body_received_bytes"])
+		require.Equal(t, int64(1), saved.FailureTimings["request_body_read_failed"])
+		require.Equal(t, int64(5000), saved.FailureTimings["request_body_read_finished_ms"])
+		require.NotContains(t, saved.FailureTimings, "moderation_started_ms")
+		require.Empty(t, saved.Attempts)
+		entries := logs.FilterMessage("gateway.ingress_timing").All()
+		require.Len(t, entries, 1)
+		require.Equal(t, saved.RequestID, entries[0].ContextMap()["request_id"])
+		require.NotContains(t, fmt.Sprint(entries[0].ContextMap()), "private-prompt")
+	})
 }
