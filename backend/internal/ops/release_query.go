@@ -30,10 +30,12 @@ import (
 // Release queries share one repository target, a cached-response lifetime in
 // seconds, and fixed fetch/result limits for selecting rollback candidates.
 const (
-	updateCacheTTL        = 1200                           // cached release lifetime in seconds
-	githubRepo            = "ahhil2/Sub-TokenRouter-ahhil" // queried GitHub owner/repository identity
-	maxRollbackVersions   = 3                              // maximum displayed rollback candidate count
-	rollbackFetchPageSize = 15                             // requested recent release page count
+	updateCacheTTL = 1200 // cached release lifetime in seconds
+	// GitHubRepository identifies release requests and isolates cached versions
+	// from repositories used by earlier deployments.
+	GitHubRepository      = "ahhil2/Sub-TokenRouter-ahhil"
+	maxRollbackVersions   = 3  // maximum displayed rollback candidate count
+	rollbackFetchPageSize = 15 // requested recent release page count
 )
 
 // ReleaseQueryClient supplies latest and recent GitHub release records for
@@ -300,7 +302,7 @@ func (s *ReleaseQuery) GetFromCache(ctx context.Context) (*UpdateInfo, error) {
 // platform filtering, and compares the remaining tag permissively against this
 // running version.
 func (s *ReleaseQuery) FetchLatestRelease(ctx context.Context) (*UpdateInfo, error) {
-	release, err := s.githubClient.FetchLatestRelease(ctx, githubRepo)
+	release, err := s.githubClient.FetchLatestRelease(ctx, GitHubRepository)
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +383,7 @@ func NormalizeRollbackVersion(raw string) (string, bool) { return normalizeRollb
 // returned slice is new but retained release records and their asset slices
 // remain shared with the client result, so callers treat them as stable.
 func (s *ReleaseQuery) FetchRollbackCandidates(ctx context.Context) ([]*GitHubRelease, error) {
-	releases, err := s.githubClient.FetchRecentReleases(ctx, githubRepo, rollbackFetchPageSize)
+	releases, err := s.githubClient.FetchRecentReleases(ctx, GitHubRepository, rollbackFetchPageSize)
 	if err != nil {
 		return nil, err
 	}

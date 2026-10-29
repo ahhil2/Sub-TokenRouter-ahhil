@@ -55,6 +55,22 @@ func (s *UpdateCacheSuite) TestGetUpdateInfo_Missing() {
 	require.True(s.T(), errors.Is(err, redis.Nil), "expected redis.Nil for missing update info")
 }
 
+// TestGetUpdateInfo_IgnoresLegacyRepository seeds the legacy cache with an upstream
+// release. Reads and writes for the customized repository must use an independent
+// value, leaving that legacy record untouched.
+func (s *UpdateCacheSuite) TestGetUpdateInfo_IgnoresLegacyRepository() {
+	require.NoError(s.T(), s.rdb.Set(s.ctx, "update:latest", "upstream-release", time.Minute).Err())
+	_, err := s.cache.GetUpdateInfo(s.ctx)
+	require.ErrorIs(s.T(), err, redis.Nil)
+	require.NoError(s.T(), s.cache.SetUpdateInfo(s.ctx, "custom-release", time.Minute))
+	info, err := s.cache.GetUpdateInfo(s.ctx)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "custom-release", info)
+	legacy, err := s.rdb.Get(s.ctx, "update:latest").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "upstream-release", legacy)
+}
+
 // TestSetAndGetUpdateInfo writes an opaque version string with a positive
 // expiration and reads it back. It checks byte-for-byte value retrieval through
 // the shared update-info key.

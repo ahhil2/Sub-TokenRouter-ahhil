@@ -64,6 +64,8 @@ Ops 的构造和启动分开，app 在完成全部绑定后，才启动采样、
 
 本定制版的更新与回退候选来自 `ahhil2/Sub-TokenRouter-ahhil` 的 GitHub Releases。发布查询由 Ops 的 ReleaseQuery 和 GitHub provider 提供，负责版本比较、回退候选的过滤，结果缓存二十分钟；GitHub Token 的可信范围和重定向规则见[部署指南](../guides/deployment/index.md#升级)。下载校验和二进制替换由 Ops 的技术适配层执行；`ops/maintenance` 负责更新和回退、系统操作锁和重启请求的编排。实际的进程退出，由 `app/lifecycle`（只有一处）执行。
 
+发布元数据的 Redis 缓存键包含 `ops.GitHubRepository`。切换到定制仓库后，旧的 `update:latest` 缓存自行过期；网络请求失败时也不会借用其中的上游发布信息，避免更新时覆盖定制功能。
+
 `cleanup-ingress-reject-logs` 用精简版 bootstrap 装配 Ops 的分类和清理能力，不启动完整的 worker。它默认 dry-run，参数是 `--before`、`--batch-size`、`--execute`，分类版本是 `ingress-reject-v1`；它只清理匹配的分析事件。
 
 相关文档：[可观测性与数据生命周期](observability_and_data_lifecycle.md)、[使用记录与运维预聚合](pre_aggregation.md)、[提供商维护](provider_maintenance.md)。

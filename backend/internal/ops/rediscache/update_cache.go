@@ -14,12 +14,14 @@ import (
 // Release checks share a Redis value containing the latest version, release
 // metadata, and write timestamp. Redis expiration limits stored availability,
 // while ReleaseQuery also checks timestamp age when decoding the cached
-// response for its own running version.
+// response for its own running version. Repository-specific keys prevent a
+// customized deployment from installing an upstream release cached before the
+// update source changed when a later network request fails.
 
 // updateCacheKey names the shared latest-release value read by all ReleaseQuery
-// instances using this Redis database and retained for their supplied
-// expiration lifetime.
-const updateCacheKey = "update:latest"
+// instances targeting the same repository in this Redis database. Legacy
+// unscoped records expire independently and cannot supply update metadata here.
+const updateCacheKey = "update:latest:" + ops.GitHubRepository
 
 // updateCache stores the serialized latest-release response in the application
 // Redis database.

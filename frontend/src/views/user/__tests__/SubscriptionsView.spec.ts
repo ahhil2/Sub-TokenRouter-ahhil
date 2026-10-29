@@ -24,9 +24,9 @@ vi.mock('@/api/subscriptions', () => ({
   },
 }))
 
-// createTestI18n supplies the subscription and confirmation labels used by this page
-// fixture. Missing runtime compilation can leave keys visible, so assertions accept the
-// specific labels exercised by each case.
+// createTestI18n installs English labels for the subscription and confirmation
+// fixtures. The runtime compiles these messages, so assertions check the rendered
+// labels while API requests remain mocked by the suite.
 function createTestI18n() {
   return createI18n({
     legacy: false,
@@ -347,7 +347,7 @@ describe('SubscriptionsView', () => {
     await flushPromises()
     await wrapper.get('[data-testid="revoke-subscription"]').trigger('click')
     const dialog = wrapper.get('[data-testid="revoke-dialog"]')
-    expect(dialog.text()).toContain('userSubscriptions.revokeConfirmWithoutReplacement')
+    expect(dialog.text()).toContain('No queued pack will replace this plan.')
 
     await wrapper.get('[data-testid="revoke-dialog-confirm"]').trigger('click')
     await wrapper.vm.$nextTick()
