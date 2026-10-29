@@ -361,6 +361,10 @@ Vue 的最低版本为 `3.5.42`，该版本修复了 `@vue/server-renderer` 属�
 
 Axios 的 Node 重定向依赖 `follow-redirects` 通过 workspace override 固定低版本的替换值为 `1.16.1`，修复数组形式请求头和特殊字符敏感请求头在跨域重定向时的剥离问题。对应公告为 [GHSA-q3jh-wrc6-jgq8](https://github.com/advisories/GHSA-q3jh-wrc6-jgq8) 和 [GHSA-8r9p-f939-6h3c](https://github.com/advisories/GHSA-8r9p-f939-6h3c)；安全检查继续使用现有高危例外规则。
 
+Vue I18n 使用 `11.4.14` 或更高的 11.x 版本，消息编译器与运行库同步升级，以修复 [GHSA-83rm-6c8r-g728](https://github.com/advisories/GHSA-83rm-6c8r-g728) 中的翻译参数 HTML 转义问题。应用使用 `legacy: false` 的组合式 API；升级时验证语言切换、占位符和全部语言消息编译，并重新构建前端。
+
+后端 `golang.org/x/net` 的最低版本为 `v0.62.0`，修复 [GO-2026-6860](https://pkg.go.dev/vuln/GO-2026-6860) 中 HTML 文本节点合并的平方级复杂度问题。Ollama 用量解析会调用该 HTML 解析器，依赖升级后需要重新编译后端并运行解析测试与安全扫描。
+
 DOMPurify 用于 Markdown 页面、公告、支付说明和 SVG 图标的内容清理。直接依赖和 workspace override 的最低版本均为 `3.4.17`，包含 [GHSA-cg2g-xh64-v4q7](https://github.com/advisories/GHSA-cg2g-xh64-v4q7) 和 [GHSA-mrv2-3pqr-j5jr](https://github.com/advisories/GHSA-mrv2-3pqr-j5jr) 的修复。更新时同步锁文件，并验证 HTML 内容清理、SVG 图形与滤镜保留、前端构建和安全审计。
 
 管理员用量导出通过动态导入 `xlsx` 生成工作簿，调用 `aoa_to_sheet`、`sheet_add_aoa` 和 `write`。依赖固定为 [SheetJS 官方分发](https://docs.sheetjs.com/docs/getting-started/installation/nodejs/)的 `0.20.3` tarball，锁文件记录下载地址和完整性校验值。该版本包含原型污染和 ReDoS 的修复。升级时验证分页数据追加、工作簿序列化、前端生产构建和安全扫描。
