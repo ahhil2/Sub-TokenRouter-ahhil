@@ -1,6 +1,6 @@
 # SuperAHHil 部署与开发
 
-本仓库保存应用源码和黑色站点页面。应用由根目录 `Dockerfile` 构建，Caddy 提供 `deploy/superahhil/site/` 中的首页、登录、注册和文档页面，其余请求反向代理到应用。
+本仓库保存应用源码和黑色站点页面。应用使用本仓库的 Release 镜像，也可由根目录 `Dockerfile` 构建。Caddy 提供 `deploy/superahhil/site/` 中的首页、登录、注册和文档页面，其余请求反向代理到应用。
 
 ## 来源与定制
 

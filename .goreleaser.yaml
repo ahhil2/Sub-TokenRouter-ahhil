@@ -1,3 +1,7 @@
+# .goreleaser.yaml packages platform binaries, checksum files, and container images
+# for the repository selected by the release workflow. CI supplies precompiled
+# binaries and annotated tag notes; local runs compile the same platform matrix
+# before publishing archives and the installation guide for this customized deployment.
 version: 2
 
 project_name: tokenrouter
@@ -178,4 +182,4 @@ release:
     ## 📚 Documentation
 
     - [GitHub Repository](https://github.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }})
-    - [Installation Guide](https://github.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }}/blob/main/docs/guides/deployment/index.md)
+    - [Installation Guide](https://github.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }}/blob/main/docs/guides/deployment/superahhil.md)
