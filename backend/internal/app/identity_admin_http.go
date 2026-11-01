@@ -76,7 +76,9 @@ func provideKeyAdmin(client *dbent.Client, keys *keypostgres.KeyStore, users *id
 	return &apikey.Admin{Keys: keys, Users: users, Groups: keyGroups{Repository: groups}, Mutations: mutations, Invalidator: invalidator, RateLimits: cache}
 }
 
-// provideIdentityAdminHTTP 绑定 Key 展示和实时并发读取函数，用户管理规则由 identity 执行。
+// provideIdentityAdminHTTP binds the administrator user handler to Key display, live
+// concurrency and invitation relationship readers. Each reader loads one page of data in a
+// single batch call, while user administration rules stay in the identity package.
 func provideIdentityAdminHTTP(admin *identity.UserAdmin, keys *apikey.Admin, concurrency *scheduler.ConcurrencyService, totp *identity.TotpService, users *identity.UserService, settings *identity.RuntimeSettings, affiliates promotion.AffiliateRepository) *identityhttp.AdminUserHandler[keydto.APIKey[routingdto.Group]] {
 	listKeys := func(ctx context.Context, id int64, page, size int, sortBy, order string) ([]keydto.APIKey[routingdto.Group], int64, error) {
 		rows, total, err := keys.GetUserAPIKeys(ctx, id, page, size, sortBy, order)

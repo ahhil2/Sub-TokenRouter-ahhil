@@ -203,7 +203,9 @@ func (s *RefundWorkflow) PrepDeduct(ctx context.Context, o *Order, p *RefundPlan
 		return nil
 	}
 	p.DeductionType = DeductionTypeBalance
-	// 非强制退款必须先确认余额足以完成权益回收，避免无提示地少扣余额。
+	// The deduction includes any gifted credit recorded in the recharge snapshot. A
+	// non-forced refund stops when the balance cannot cover it, so the wallet is never
+	// silently under-deducted.
 	creditToDeduct := o.RechargeSnapshot.RefundCredit(p.RefundAmount)
 	if u.Balance < creditToDeduct && !force {
 		return &RefundResult{Success: false, Warning: "user balance is insufficient for deduction, use force", RequireForce: true}
