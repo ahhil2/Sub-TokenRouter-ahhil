@@ -50,27 +50,13 @@ func TestIdentityRedeemTransactions(t *testing.T) {
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, database)))
 	repository := NewRedeemCodeRepository(client)
 	transactions := NewRedeemMutations(client, RedeemWriters{Balances: NewBalanceStore(client)})
-	runtime := billing.RedeemRuntime{Now: time.Now, RechargeIdentity: func(ctx context.Context, userID int64) (string, error) {
-		rows, queryErr := dbent.TxFromContext(ctx).Client().QueryContext(ctx, `SELECT identity_code FROM user_identity_memberships WHERE user_id=$1 AND category='recharge'`, userID)
-		if queryErr != nil {
-			return "", queryErr
-		}
-		defer func() { _ = rows.Close() }()
-		var code string
-		if rows.Next() {
-			queryErr = rows.Scan(&code)
-		}
-		if queryErr != nil {
-			return "", queryErr
-		}
-		return code, rows.Err()
-	}}
+	runtime := billing.RedeemRuntime{Now: time.Now}
 	service := billing.NewRedeemService(repository, identityRedeemReader{database}, nil, nil, nil, transactions, nil, nil, runtime)
 	ctx := t.Context()
 	code := &billing.RedeemCode{Code: "identity-shared-transaction", Type: billing.RedeemTypeBalance, Value: 100, MaxUses: 3, Status: billing.StatusUnused}
 	require.NoError(t, repository.Create(ctx, code))
 	var userIDs []int64
-	for index, identityCode := range []string{"", "bonus_5", "bonus_10"} {
+	for _, identityCode := range []string{"", "bonus_5", "bonus_10"} {
 		var userID int64
 		require.NoError(t, database.QueryRow(`INSERT INTO users(email,password_hash,username) VALUES($1,'hash','redeemer') RETURNING id`, "redeemer-"+identityCode+"@test.local").Scan(&userID))
 		userIDs = append(userIDs, userID)
@@ -80,7 +66,8 @@ func TestIdentityRedeemTransactions(t *testing.T) {
 		}
 		result, redeemErr := service.Redeem(ctx, userID, code.Code)
 		require.NoError(t, redeemErr)
-		require.Equal(t, 100+float64(index)*5, result.RechargeSnapshot.CreditedAmount)
+		// Identity membership adds no recharge gift, so every user receives the face value.
+		require.Equal(t, 100.0, result.RechargeSnapshot.CreditedAmount)
 		usage, usageErr := repository.GetUsageByRedeemCodeAndUser(ctx, code.ID, userID)
 		require.NoError(t, usageErr)
 		require.Equal(t, result.RechargeSnapshot, usage.RechargeSnapshot)
@@ -111,7 +98,7 @@ func TestIdentityRedeemTransactions(t *testing.T) {
 	require.ErrorContains(t, err, "injected usage failure")
 	member, err := (identityRedeemReader{database}).GetByID(ctx, userIDs[1])
 	require.NoError(t, err)
-	require.Equal(t, 105.0, member.Balance)
+	require.Equal(t, 100.0, member.Balance)
 	usage, err := repository.GetUsageByRedeemCodeAndUser(ctx, concurrent.ID, userIDs[1])
 	require.NoError(t, err)
 	require.Nil(t, usage)
@@ -120,5 +107,6 @@ func TestIdentityRedeemTransactions(t *testing.T) {
 	require.Equal(t, 1, stored.UsedCount)
 	member, err = (identityRedeemReader{database}).GetByID(ctx, userIDs[2])
 	require.NoError(t, err)
-	require.Equal(t, 220.0, member.Balance)
+	// Two redemptions of the 100-credit code with no identity gift.
+	require.Equal(t, 200.0, member.Balance)
 }

@@ -21,9 +21,8 @@ import (
 )
 
 // checkout_identity_integration_test.go checks recharge snapshots and order-linked
-// affiliate grants against PostgreSQL. Checkout reads the buyer's current recharge
-// identity and persists the resulting gift with the order. Changing that identity
-// afterward must leave the saved purchased and credited amounts intact.
+// affiliate grants against PostgreSQL. Identity groups grant no recharge gift, so a buyer in a discount identity still receives a no-gift snapshot crediting the order
+// amount. Changing that identity afterward must leave the saved amounts intact.
 //
 // Rebate accrual consumes the reloaded order's purchased-credit base through the
 // payment store's transaction and the promotion repository. The case checks both
@@ -31,9 +30,9 @@ import (
 // exercise its persisted audit claim. Shared affiliate settings are restored after
 // the test so subsequent refund and payment cases retain their initial policy.
 
-// TestCheckoutIdentitySnapshotAndRebatePostgres changes recharge identity after
-// saving an order with a five-percent gift. Reloaded snapshots keep that gift,
-// and a replayed ten-percent affiliate grant credits the purchased base once.
+// TestCheckoutIdentitySnapshotAndRebatePostgres saves an order for a bonus_5 member and
+// then moves the buyer to bonus_10. The reloaded snapshot credits the order amount with no
+// gift, and a replayed ten-percent affiliate grant credits the purchased base once.
 func TestCheckoutIdentitySnapshotAndRebatePostgres(t *testing.T) {
 	ctx := t.Context()
 	client := testEntClient(t)
@@ -83,9 +82,7 @@ func TestCheckoutIdentitySnapshotAndRebatePostgres(t *testing.T) {
 				policy, nil, nil, promotion.Runtime{})
 		},
 	})
-	checkout := payment.NewCheckout(orders, nil, nil, nil, payment.CheckoutRuntime{
-		RechargeIdentity: members.RechargeIdentity,
-	})
+	checkout := payment.NewCheckout(orders, nil, nil, nil, payment.CheckoutRuntime{})
 	order, err := checkout.CreateOrderInTx(ctx,
 		payment.CreateOrderRequest{UserID: buyer.ID, OrderType: payment.OrderTypeBalance, PaymentType: payment.TypeStripe},
 		&payment.Buyer{ID: buyer.ID, Email: buyer.Email, Username: buyer.Username}, nil,
@@ -99,12 +96,12 @@ func TestCheckoutIdentitySnapshotAndRebatePostgres(t *testing.T) {
 		require.NoError(t, cleanupErr)
 		require.NoError(t, client.PaymentOrder.DeleteOneID(order.ID).Exec(context.Background()))
 	})
-	require.Equal(t, 105.0, order.RechargeSnapshot.CreditedAmount)
+	require.Equal(t, 100.0, order.RechargeSnapshot.CreditedAmount)
 	require.NoError(t, members.ChangeMembers(ctx, inviter.ID, "bonus_10", []int64{buyer.ID}, true))
 	saved, err := orders.Order(ctx, order.ID)
 	require.NoError(t, err)
-	require.Equal(t, "bonus_5", saved.RechargeSnapshot.IdentityCode)
-	require.Equal(t, 105.0, saved.RechargeSnapshot.CreditedAmount)
+	require.Empty(t, saved.RechargeSnapshot.IdentityCode)
+	require.Equal(t, 100.0, saved.RechargeSnapshot.CreditedAmount)
 	require.Equal(t, 100.0, payment.AffiliateRebateBasePoints(saved))
 	require.NoError(t, client.PaymentOrder.UpdateOneID(order.ID).SetStatus(payment.OrderStatusCompleted).Exec(ctx))
 

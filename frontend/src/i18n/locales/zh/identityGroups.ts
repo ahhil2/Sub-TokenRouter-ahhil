@@ -1,6 +1,6 @@
 /**
  * identityGroups.ts supplies Chinese interface messages for identity membership, rate
- * overrides, and recharge benefits. These locale keys are consumed by the
+ * overrides, balance discounts, and historical recharge gifts. These locale keys are consumed by the
  * corresponding pages and controls, with interpolation values provided by the
  * component displaying each message.
  */
@@ -11,7 +11,7 @@ export default {
   members: '管理成员',
   rates: '设置倍率',
   count: '{count} 位成员',
-  bonus: '余额兑换码和在线余额充值额外赠送 {percent}%',
+  discount: '余额消费时按普通分组默认倍率的 {percent}% 计费，个人专属倍率和 AHHilAI 倍率优先。',
   pricing: '统一配置各普通分组的消费倍率，个人专属倍率优先。',
   search: '搜索用户名、邮箱或用户 ID',
   searchButton: '搜索',
@@ -20,7 +20,7 @@ export default {
   add: '加入身份组',
   remove: '移出身份组',
   selected: '已选择 {count} 位用户',
-  replace: '加入另一档充值身份会替换现有的 5% 或 10% 身份；AHHilAI 可以同时拥有。',
+  replace: '95折和9折只能二选一，加入另一档会替换现有身份；AHHilAI 可以同时拥有。',
   previous: '上一页',
   next: '下一页',
   page: '第 {page} 页，共 {total} 位用户',
@@ -44,7 +44,6 @@ export default {
   base: '基础额度',
   gift: '赠送额度',
   credited: '到账额度',
-  snapshot: '在线充值的赠送比例在下单时固定。',
   refund: '退款时按比例收回赠送额度。',
   select: '选择用户',
 }

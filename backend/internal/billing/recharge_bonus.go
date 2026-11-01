@@ -8,18 +8,18 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// recharge_bonus.go calculates credited recharge amounts and selects the bonus
-// snapshot used by redemption. A payment order captures identity at checkout;
-// fulfillment can happen after membership changes, so payment redemption uses
-// that saved snapshot. A typed nil snapshot identifies a historical payment
-// whose purchased amount is credited directly. Ordinary code redemption reads
-// current membership when its positive amount is being redeemed.
+// recharge_bonus.go calculates credited recharge amounts and selects the snapshot used by
+// redemption. Identity groups grant no recharge gift: payment orders created by checkout
+// and ordinary code redemptions credit the purchased amount with no bonus. A payment order
+// is credited from the snapshot saved at checkout, so an older order whose snapshot records
+// a gift is credited with that gift, and a typed nil snapshot identifies a
+// historical payment whose purchased amount is credited directly.
 //
-// Decimal arithmetic rounds purchased and gifted amounts to eight decimal
-// places before saving the credited total. Refunds recover credit in proportion
-// to the stored purchased amount, including its gift. The selected snapshot is
-// copied before returning it to redemption, and a mismatched payment amount
-// stops credit rather than combining terms from different purchases.
+// Decimal arithmetic rounds purchased and gifted amounts to eight decimal places before
+// saving the credited total. Refunds recover credit in proportion to the stored purchased
+// amount, including any recorded gift. The selected snapshot is copied before returning
+// it to redemption, and a mismatched payment amount stops credit rather than combining
+// terms from different purchases.
 
 // RechargeSnapshot records purchased credit and the identity bonus applied to it.
 // BaseAmount plus BonusAmount equals CreditedAmount; IdentityCode selects the
@@ -96,32 +96,20 @@ func ContextPaymentRecharge(ctx context.Context, snapshot *RechargeSnapshot) con
 	return context.WithValue(ctx, paymentRechargeKey{}, snapshot)
 }
 
-// rechargeSnapshot selects saved payment terms or calculates current redemption
-// terms for a nonnil code. A saved payment snapshot is copied and its base must
-// match the code value before credit can proceed.
+// rechargeSnapshot selects saved payment terms or no-gift terms for a nonnil code. A saved
+// payment snapshot is copied and its base must match the code value before credit can
+// proceed; a gift recorded in an older order's snapshot is credited as saved.
 //
-// A present typed nil payment value selects an ordinary historical recharge;
-// absence of the payment marker permits a current identity lookup for positive
-// code values. Identity lookup errors stop redemption, preventing an unavailable
-// membership read from silently producing a different credited amount.
-func (s *RedeemService) rechargeSnapshot(ctx context.Context, userID int64, code *RedeemCode) (*RechargeSnapshot, error) {
-	if snapshot, present := ctx.Value(paymentRechargeKey{}).(*RechargeSnapshot); present {
-		if snapshot != nil {
-			copy := *snapshot
-			if copy.BaseAmount != code.Value {
-				return nil, fmt.Errorf("payment recharge snapshot amount mismatch")
-			}
-			return &copy, nil
+// A present typed nil payment value selects an ordinary historical recharge. Absence of
+// the payment marker means an ordinary code redemption, which credits the code value with
+// no gift.
+func (s *RedeemService) rechargeSnapshot(ctx context.Context, _ int64, code *RedeemCode) (*RechargeSnapshot, error) {
+	if snapshot, present := ctx.Value(paymentRechargeKey{}).(*RechargeSnapshot); present && snapshot != nil {
+		copy := *snapshot
+		if copy.BaseAmount != code.Value {
+			return nil, fmt.Errorf("payment recharge snapshot amount mismatch")
 		}
-		return CalculateRecharge(code.Value, "")
+		return &copy, nil
 	}
-	identityCode := ""
-	if code.Value > 0 && s.runtime.RechargeIdentity != nil {
-		var err error
-		identityCode, err = s.runtime.RechargeIdentity(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return CalculateRecharge(code.Value, identityCode)
+	return CalculateRecharge(code.Value, "")
 }

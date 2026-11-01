@@ -113,7 +113,6 @@ type (
 // RedeemRuntime supplies payment-history eligibility, grant timestamps,
 // observation and post-grant dispatch.
 type RedeemRuntime struct {
-	RechargeIdentity func(context.Context, int64) (string, error)
 	// HasPaidOrder 查询用户成功付款的历史，查询失败时停止发放权益。
 	HasPaidOrder func(context.Context, int64) (bool, error)
 	Now          func() time.Time
@@ -422,7 +421,8 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 		s.tryAccrueAffiliateRebateForRedeem(ctx, userID, redeemCode.Value)
 	}
 
-	// 重新获取更新后的兑换码
+	// Reload the updated code for its count and recipient fields. The reread does not
+	// carry the recharge snapshot computed in this redemption, so restore it afterwards.
 	snapshot := redeemCode.RechargeSnapshot
 	redeemCode, err = s.redeemRepo.GetByID(ctx, redeemCode.ID)
 	if err != nil {

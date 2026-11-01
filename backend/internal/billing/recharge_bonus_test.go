@@ -2,7 +2,6 @@ package billing
 
 import (
 	"context"
-	"errors"
 	"math"
 	"testing"
 	"time"
@@ -67,27 +66,28 @@ func (balance *bonusRedeemBalance) ApplyBalance(_ context.Context, _ int64, amou
 
 func (balance *bonusRedeemBalance) ApplyConcurrency(context.Context, int64, int) error { return nil }
 
-func TestRedeemBonusPerUseAndDuplicate(t *testing.T) {
+// TestRedeemCreditsCodeValueWithoutIdentityGift redeems one multi-use balance code for two
+// users after identity recharge gifts were removed. Each user receives exactly the code
+// value with a no-gift snapshot, affiliate accrual uses that value, and a repeat
+// redemption by the same user is still rejected without changing the balance.
+func TestRedeemCreditsCodeValueWithoutIdentityGift(t *testing.T) {
 	store := &bonusRedeemStore{code: RedeemCode{ID: 1, Code: "test-code", Type: RedeemTypeBalance, Value: 100, MaxUses: 3, Status: StatusUnused}, usages: make(map[int64]*RedeemCodeUsage)}
 	balance := &bonusRedeemBalance{}
 	affiliate := &bonusRedeemAffiliate{}
-	code := "bonus_5"
-	service := NewRedeemService(store, balance, nil, nil, nil, balance, nil, affiliate, RedeemRuntime{Now: time.Now, RechargeIdentity: func(context.Context, int64) (string, error) { return code, nil }})
-	result, err := service.Redeem(context.Background(), 1, "test-code")
-	require.NoError(t, err)
-	require.Equal(t, 100.0, result.Value)
-	require.Equal(t, 105.0, result.RechargeSnapshot.CreditedAmount)
-	code = "bonus_10"
-	result, err = service.Redeem(context.Background(), 2, "test-code")
-	require.NoError(t, err)
-	require.Equal(t, 110.0, result.RechargeSnapshot.CreditedAmount)
-	require.Equal(t, 105.0, store.usages[1].RechargeSnapshot.CreditedAmount)
-	require.Equal(t, 110.0, store.usages[2].RechargeSnapshot.CreditedAmount)
-	require.Equal(t, 215.0, balance.amount)
+	service := NewRedeemService(store, balance, nil, nil, nil, balance, nil, affiliate, RedeemRuntime{Now: time.Now})
+	for _, userID := range []int64{1, 2} {
+		result, err := service.Redeem(context.Background(), userID, "test-code")
+		require.NoError(t, err)
+		require.Equal(t, 100.0, result.Value)
+		require.Equal(t, 100.0, result.RechargeSnapshot.CreditedAmount)
+		require.Zero(t, result.RechargeSnapshot.BonusAmount)
+		require.Empty(t, result.RechargeSnapshot.IdentityCode)
+	}
+	require.Equal(t, 200.0, balance.amount)
 	require.Equal(t, []float64{100, 100}, affiliate.bases)
-	_, err = service.Redeem(context.Background(), 1, "test-code")
+	_, err := service.Redeem(context.Background(), 1, "test-code")
 	require.ErrorIs(t, err, ErrRedeemCodeAlreadyUsed)
-	require.Equal(t, 215.0, balance.amount)
+	require.Equal(t, 200.0, balance.amount)
 }
 
 func TestCalculateRecharge(t *testing.T) {
@@ -129,10 +129,7 @@ func TestRechargeSnapshotRefundCredit(t *testing.T) {
 }
 
 func TestRechargeSnapshotPaymentIsFixed(t *testing.T) {
-	service := &RedeemService{runtime: RedeemRuntime{RechargeIdentity: func(context.Context, int64) (string, error) {
-		t.Fatal("payment must not query current identity")
-		return "", nil
-	}}}
+	service := &RedeemService{}
 	original, err := CalculateRecharge(100, "bonus_5")
 	require.NoError(t, err)
 	code := &RedeemCode{Type: RedeemTypeBalance, Value: 100}
@@ -148,12 +145,16 @@ func TestRechargeSnapshotPaymentIsFixed(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestRechargeSnapshotIdentityFailureStopsCredit(t *testing.T) {
-	failure := errors.New("identity unavailable")
-	service := &RedeemService{runtime: RedeemRuntime{RechargeIdentity: func(context.Context, int64) (string, error) { return "", failure }}}
-	_, err := service.rechargeSnapshot(context.Background(), 1, &RedeemCode{Type: RedeemTypeBalance, Value: 100})
-	require.ErrorIs(t, err, failure)
-	snapshot, err := service.rechargeSnapshot(context.Background(), 1, &RedeemCode{Type: RedeemTypeBalance, Value: -1})
-	require.NoError(t, err)
-	require.Equal(t, -1.0, snapshot.CreditedAmount)
+// TestRechargeSnapshotOrdinaryCodeHasNoGift selects terms for ordinary code redemptions,
+// which carry no payment snapshot. Positive and negative code values are credited as
+// supplied with no identity and no gift.
+func TestRechargeSnapshotOrdinaryCodeHasNoGift(t *testing.T) {
+	service := &RedeemService{}
+	for _, value := range []float64{100, -1} {
+		snapshot, err := service.rechargeSnapshot(context.Background(), 1, &RedeemCode{Type: RedeemTypeBalance, Value: value})
+		require.NoError(t, err)
+		require.Equal(t, value, snapshot.CreditedAmount)
+		require.Zero(t, snapshot.BonusAmount)
+		require.Empty(t, snapshot.IdentityCode)
+	}
 }

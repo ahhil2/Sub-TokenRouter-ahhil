@@ -1,6 +1,6 @@
 /**
  * identityGroups.ts supplies English interface messages for identity membership, rate
- * overrides, and recharge benefits. These locale keys are consumed by the
+ * overrides, balance discounts, and historical recharge gifts. These locale keys are consumed by the
  * corresponding pages and controls, with interpolation values provided by the
  * component displaying each message.
  */
@@ -11,7 +11,8 @@ export default {
   members: 'Manage members',
   rates: 'Set rates',
   count: '{count} members',
-  bonus: 'Receive {percent}% extra on balance codes and online balance top-ups.',
+  discount:
+    'Balance usage is billed at {percent}% of the routing group default rate. Personal and AHHilAI rates take precedence.',
   pricing: 'Set rates for routing groups. Personal rates take precedence.',
   search: 'Search username, email or user ID',
   searchButton: 'Search',
@@ -21,7 +22,7 @@ export default {
   remove: 'Remove identity',
   selected: '{count} users selected',
   replace:
-    'Assigning a recharge identity replaces the existing 5% or 10% identity. AHHilAI can coexist.',
+    'A user can hold only one of the 95% and 90% discount identities; assigning one replaces the other. AHHilAI can coexist.',
   previous: 'Previous',
   next: 'Next',
   page: 'Page {page}, {total} users',
@@ -46,7 +47,6 @@ export default {
   base: 'Base credit',
   gift: 'Bonus credit',
   credited: 'Total credit',
-  snapshot: 'Online recharge bonuses are fixed when the order is created.',
   refund: 'Refunds also reclaim the proportional bonus.',
   select: 'Select user',
 }

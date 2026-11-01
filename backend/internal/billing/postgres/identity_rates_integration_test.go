@@ -6,9 +6,13 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/lib/pq"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
@@ -80,4 +84,100 @@ func TestIdentityRatePrioritySQL(t *testing.T) {
 	}
 	_, err = database.Exec(`INSERT INTO user_identity_memberships(user_id,category,identity_code) VALUES($1,'recharge','bonus_5'),($1,'recharge','bonus_10')`, userID)
 	require.Error(t, err)
+}
+
+func TestIdentityRateBatchUpdate(t *testing.T) {
+	dsn := os.Getenv("TOKENROUTER_IDENTITY_TEST_DSN")
+	if dsn == "" {
+		t.Skip("requires isolated identity database")
+	}
+	require.Contains(t, strings.ToLower(dsn), "identity_test")
+	database, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	store := NewUserGroupRateRepository(database)
+	groupIDs := make([]int64, 3)
+	for index := range groupIDs {
+		require.NoError(t, database.QueryRow(`INSERT INTO groups(name,rate_multiplier) VALUES($1,1) RETURNING id`, "identity-batch-"+strconv.Itoa(index)).Scan(&groupIDs[index]))
+	}
+	t.Cleanup(func() {
+		_, _ = database.Exec(`DELETE FROM identity_group_rates WHERE group_id = ANY($1)`, pq.Array(groupIDs))
+	})
+	count := func(query string, args ...any) int {
+		var value int
+		require.NoError(t, database.QueryRow(query, args...).Scan(&value))
+		return value
+	}
+	first, second := 0.3, 0.7
+	require.NoError(t, store.UpdateIdentityRates(ctx, 1, []billing.IdentityRateInput{{GroupID: groupIDs[0], RateMultiplier: &first}, {GroupID: groupIDs[1], RateMultiplier: &second}}))
+	changes := count(`SELECT COUNT(*) FROM identity_group_changes WHERE identity_code='ahhilai' AND action='rates'`)
+	updated := 0.5
+	require.NoError(t, store.UpdateIdentityRates(ctx, 1, []billing.IdentityRateInput{{GroupID: groupIDs[0]}, {GroupID: groupIDs[1], RateMultiplier: &updated}, {GroupID: groupIDs[2], RateMultiplier: &first}}))
+	assert.Zero(t, count(`SELECT COUNT(*) FROM identity_group_rates WHERE identity_code='ahhilai' AND group_id=$1`, groupIDs[0]))
+	assert.Equal(t, 1, count(`SELECT COUNT(*) FROM identity_group_rates WHERE identity_code='ahhilai' AND group_id=$1 AND rate_multiplier=0.5`, groupIDs[1]))
+	assert.Equal(t, 1, count(`SELECT COUNT(*) FROM identity_group_rates WHERE identity_code='ahhilai' AND group_id=$1 AND rate_multiplier=0.3`, groupIDs[2]))
+	assert.Equal(t, changes+1, count(`SELECT COUNT(*) FROM identity_group_changes WHERE identity_code='ahhilai' AND action='rates'`))
+	changes++
+	err = store.UpdateIdentityRates(ctx, 1, []billing.IdentityRateInput{{GroupID: groupIDs[1], RateMultiplier: &first}, {GroupID: 2147483000}})
+	require.Error(t, err)
+	assert.Equal(t, 1, count(`SELECT COUNT(*) FROM identity_group_rates WHERE identity_code='ahhilai' AND group_id=$1 AND rate_multiplier=0.5`, groupIDs[1]))
+	assert.Equal(t, changes, count(`SELECT COUNT(*) FROM identity_group_changes WHERE identity_code='ahhilai' AND action='rates'`))
+	require.NoError(t, store.UpdateIdentityRates(ctx, 1, nil))
+}
+
+// TestIdentityRateDiscountPriority checks balance rate resolution for a bonus_10 member.
+// Without other overrides a group is charged at 90% of its default rate, an AHHilAI
+// override wins over the discount, a personal override wins over both, and a user with
+// no identity has no effective rate. The all-groups read applies the same sources.
+func TestIdentityRateDiscountPriority(t *testing.T) {
+	dsn := os.Getenv("TOKENROUTER_IDENTITY_TEST_DSN")
+	if dsn == "" {
+		t.Skip("requires isolated identity database")
+	}
+	require.Contains(t, strings.ToLower(dsn), "identity_test")
+	database, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	store := NewUserGroupRateRepository(database)
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	var memberID, plainID int64
+	require.NoError(t, database.QueryRow(`INSERT INTO users(email,password_hash,username) VALUES($1,'hash','discount') RETURNING id`, "discount-"+suffix+"@test.local").Scan(&memberID))
+	require.NoError(t, database.QueryRow(`INSERT INTO users(email,password_hash,username) VALUES($1,'hash','plain') RETURNING id`, "plain-"+suffix+"@test.local").Scan(&plainID))
+	groupIDs := make([]int64, 3)
+	for index, rate := range []float64{2, 1, 1.5} {
+		require.NoError(t, database.QueryRow(`INSERT INTO groups(name,rate_multiplier) VALUES($1,$2) RETURNING id`, "discount-"+suffix+"-"+strconv.Itoa(index), rate).Scan(&groupIDs[index]))
+	}
+	t.Cleanup(func() {
+		_, _ = database.Exec(`DELETE FROM identity_group_rates WHERE group_id = ANY($1)`, pq.Array(groupIDs))
+	})
+	_, err = database.Exec(`INSERT INTO user_identity_memberships(user_id,category,identity_code) VALUES($1,'recharge','bonus_10')`, memberID)
+	require.NoError(t, err)
+	rate := func(userID, groupID int64) *float64 {
+		value, readErr := store.EffectiveGroupRate(ctx, userID, groupID)
+		require.NoError(t, readErr)
+		return value
+	}
+	require.InDelta(t, 1.8, *rate(memberID, groupIDs[0]), 1e-9)
+	require.Nil(t, rate(plainID, groupIDs[0]))
+
+	_, err = database.Exec(`INSERT INTO user_identity_memberships(user_id,category,identity_code) VALUES($1,'pricing','ahhilai')`, memberID)
+	require.NoError(t, err)
+	_, err = database.Exec(`INSERT INTO identity_group_rates(identity_code,group_id,rate_multiplier) VALUES('ahhilai',$1,0.5)`, groupIDs[0])
+	require.NoError(t, err)
+	require.InDelta(t, 0.5, *rate(memberID, groupIDs[0]), 1e-9)
+
+	_, err = database.Exec(`INSERT INTO user_group_rate_multipliers(user_id,group_id,rate_multiplier) VALUES($1,$2,0.3)`, memberID, groupIDs[1])
+	require.NoError(t, err)
+	require.InDelta(t, 0.3, *rate(memberID, groupIDs[1]), 1e-9)
+
+	all, err := store.EffectiveGroupRates(ctx, memberID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.5, all[groupIDs[0]], 1e-9)
+	assert.InDelta(t, 0.3, all[groupIDs[1]], 1e-9)
+	assert.InDelta(t, 1.35, all[groupIDs[2]], 1e-9)
+	plain, err := store.EffectiveGroupRates(ctx, plainID)
+	require.NoError(t, err)
+	assert.Empty(t, plain)
 }

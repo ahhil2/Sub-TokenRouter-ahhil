@@ -6,18 +6,49 @@ import (
 	"encoding/json"
 	"math"
 
+	"github.com/lib/pq"
+
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-const effectiveIdentityRatesSQL = `SELECT DISTINCT ON (group_id) group_id,rate_multiplier FROM (
+// identity_rates.go reads and edits identity-based balance multipliers. It resolves the
+// effective multiplier a user pays for a group, lists every group with its AHHilAI
+// override, and replaces AHHilAI overrides in bulk for the admin settings page.
+//
+// The effective rate takes the first available source: a personal override, then an
+// AHHilAI group override, then the group default discounted for bonus_5 and bonus_10
+// members (factors come from billing.IdentityRateDiscountSQL). A user with none of these
+// has no effective multiplier, and callers use the undiscounted group default. Bulk edits
+// run in one transaction under a lock on the identity row, record the previous overrides
+// in the change audit, and use set-based statements so the number of round trips does not
+// grow with the number of groups. A missing group rolls back the whole edit, so neither
+// the overrides nor the audit trail change.
+
+// effectiveIdentityRatesSQL selects per-group candidate multipliers with their
+// priority; callers append a filter and ORDER BY group_id,priority for DISTINCT ON.
+var effectiveIdentityRatesSQL = buildEffectiveIdentityRatesSQL()
+
+// buildEffectiveIdentityRatesSQL builds the effective rate candidate query with the
+// discount identities and factors taken from the billing discount table.
+func buildEffectiveIdentityRatesSQL() string {
+	codes, factor := billing.IdentityRateDiscountSQL("m.identity_code")
+	return `SELECT DISTINCT ON (group_id) group_id,rate_multiplier FROM (
     SELECT group_id,rate_multiplier,0 AS priority FROM user_group_rate_multipliers
     WHERE user_id=$1 AND rate_multiplier IS NOT NULL
     UNION ALL
     SELECT r.group_id,r.rate_multiplier,1 AS priority FROM identity_group_rates r
     JOIN user_identity_memberships m ON m.identity_code=r.identity_code WHERE m.user_id=$1
+    UNION ALL
+    SELECT g.id,g.rate_multiplier*` + factor + `,2 AS priority FROM groups g
+    JOIN user_identity_memberships m ON m.user_id=$1 AND m.identity_code IN (` + codes + `)
+    WHERE g.deleted_at IS NULL
 ) rates`
+}
 
+// EffectiveGroupRate returns the multiplier userID pays for groupID, or nil when no
+// personal override, AHHilAI override or discount identity applies. Earlier sources take
+// precedence, and a configured zero multiplier is returned as zero rather than nil.
 func (store *GroupRateStore) EffectiveGroupRate(ctx context.Context, userID, groupID int64) (*float64, error) {
 	rows, err := store.sql.QueryContext(ctx, effectiveIdentityRatesSQL+` WHERE group_id=$2 ORDER BY group_id,priority`, userID, groupID)
 	if err != nil {
@@ -76,6 +107,18 @@ func (store *GroupRateStore) IdentityRates(ctx context.Context) ([]billing.Ident
 	return rates, rows.Err()
 }
 
+// UpdateIdentityRates applies the supplied ahhilai multipliers and records the change
+// under actorID. An input with a nil multiplier removes that group's override, and any
+// other input sets or replaces it. Groups not listed keep their current overrides.
+//
+// Inputs are rejected before any write when there are more than 1000, when a group ID
+// is not positive or repeats, or when a multiplier is negative, not finite, or at least
+// 1e12. A group that does not exist or is deleted returns INVALID_IDENTITY_RATES.
+//
+// The identity row is locked first so concurrent edits serialize, and the previous
+// overrides are captured for the audit entry before anything changes. Existence is
+// checked once for all groups, then deletes and upserts run as one statement each. Any
+// failure rolls back the overrides and the audit entry together.
 func (store *GroupRateStore) UpdateIdentityRates(ctx context.Context, actorID int64, rates []billing.IdentityRateInput) error {
 	if len(rates) > 1000 {
 		return apperror.BadRequest("INVALID_IDENTITY_RATES", "too many group rates")
@@ -120,21 +163,38 @@ func (store *GroupRateStore) UpdateIdentityRates(ctx context.Context, actorID in
 	if err != nil {
 		return err
 	}
+	// Split the validated input once so each write below is a single set-based statement
+	// whose round trips stay constant as the group count grows. Group IDs are unique
+	// after validation.
+	groupIDs := make([]int64, 0, len(rates))
+	clearIDs := make([]int64, 0, len(rates))
+	setIDs := make([]int64, 0, len(rates))
+	setValues := make([]float64, 0, len(rates))
 	for _, rate := range rates {
-		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM groups WHERE id=$1 AND deleted_at IS NULL)`, rate.GroupID).Scan(&exists); err != nil {
+		groupIDs = append(groupIDs, rate.GroupID)
+		if rate.RateMultiplier == nil {
+			clearIDs = append(clearIDs, rate.GroupID)
+			continue
+		}
+		setIDs = append(setIDs, rate.GroupID)
+		setValues = append(setValues, *rate.RateMultiplier)
+	}
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM groups WHERE id=ANY($1) AND deleted_at IS NULL`, pq.Array(groupIDs)).Scan(&existing); err != nil {
+		return err
+	}
+	if existing != len(groupIDs) {
+		return apperror.BadRequest("INVALID_IDENTITY_RATES", "group not found")
+	}
+	if len(clearIDs) > 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM identity_group_rates WHERE identity_code='ahhilai' AND group_id=ANY($1)`, pq.Array(clearIDs)); err != nil {
 			return err
 		}
-		if !exists {
-			return apperror.BadRequest("INVALID_IDENTITY_RATES", "group not found")
-		}
-		if rate.RateMultiplier == nil {
-			_, err = tx.ExecContext(ctx, `DELETE FROM identity_group_rates WHERE identity_code='ahhilai' AND group_id=$1`, rate.GroupID)
-		} else {
-			_, err = tx.ExecContext(ctx, `INSERT INTO identity_group_rates(identity_code,group_id,rate_multiplier) VALUES('ahhilai',$1,$2)
-                ON CONFLICT(identity_code,group_id) DO UPDATE SET rate_multiplier=EXCLUDED.rate_multiplier`, rate.GroupID, *rate.RateMultiplier)
-		}
-		if err != nil {
+	}
+	if len(setIDs) > 0 {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO identity_group_rates(identity_code,group_id,rate_multiplier)
+                SELECT 'ahhilai', input.group_id, input.rate FROM unnest($1::bigint[], $2::float8[]) AS input(group_id, rate)
+                ON CONFLICT(identity_code,group_id) DO UPDATE SET rate_multiplier=EXCLUDED.rate_multiplier`, pq.Array(setIDs), pq.Array(setValues)); err != nil {
 			return err
 		}
 	}

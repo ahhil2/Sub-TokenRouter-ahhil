@@ -4,6 +4,8 @@ import { apiClient } from './client'
  * identityGroups.ts exposes identity membership, group-rate administration, and
  * recharge snapshot shapes to account and payment screens. A nullable rate means
  * inheritance, while a numeric zero remains an explicit free rate for the group.
+ * bonus_5 and bonus_10 discount group default balance rates to 95% and 90%; recharge
+ * snapshots still describe gifts recorded on orders placed before gifts ended.
  */
 
 export type IdentityCode = 'bonus_5' | 'bonus_10' | 'ahhilai'
@@ -33,7 +35,7 @@ export interface RechargeSnapshot {
   credited_amount: number
 }
 
-const names: Record<string, string> = { bonus_5: '5%额外', bonus_10: '10%额外', ahhilai: 'AHHilAI' }
+const names: Record<string, string> = { bonus_5: '95折', bonus_10: '9折', ahhilai: 'AHHilAI' }
 export const identityName = (code: string) => names[code] ?? code
 
 export async function listIdentityGroups() {
@@ -69,7 +71,7 @@ export async function updateIdentityRates(
 }
 export async function getMyIdentities() {
   return (
-    await apiClient.get<{ identity_groups: IdentityCode[]; bonus_rate: number }>(
+    await apiClient.get<{ identity_groups: IdentityCode[]; rate_discount: number }>(
       '/user/identity-groups',
     )
   ).data

@@ -185,7 +185,7 @@ let memberRequest = 0
 const description = (code: IdentityCode) =>
   code === 'ahhilai'
     ? t('identityGroups.pricing')
-    : t('identityGroups.bonus', { percent: code === 'bonus_5' ? 5 : 10 })
+    : t('identityGroups.discount', { percent: code === 'bonus_5' ? 95 : 90 })
 async function loadGroups() {
   loading.value = true
   error.value = ''
@@ -251,8 +251,7 @@ async function changeMembers(action: 'add' | 'remove') {
   memberError.value = ''
   try {
     await changeIdentityMembers(activeCode.value, selected.value, action)
-    await loadMembers()
-    await loadGroups()
+    await Promise.all([loadMembers(), loadGroups()])
   } catch {
     memberError.value = t('identityGroups.failed')
   } finally {

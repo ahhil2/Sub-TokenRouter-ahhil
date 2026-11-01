@@ -16,8 +16,18 @@ import (
 
 type memberGroupHTTPStore struct {
 	identity.MemberGroupRepository
-	changed bool
-	actor   int64
+	changed     bool               // whether ChangeMembers was called
+	actor       int64              // actor recorded by ChangeMembers
+	memberships map[int64][]string // identity codes returned by Memberships
+}
+
+// Memberships returns the fixture's identity codes for the requested users.
+func (store *memberGroupHTTPStore) Memberships(_ context.Context, ids []int64) (map[int64][]string, error) {
+	result := make(map[int64][]string, len(ids))
+	for _, id := range ids {
+		result[id] = store.memberships[id]
+	}
+	return result, nil
 }
 
 func (store *memberGroupHTTPStore) ChangeMembers(_ context.Context, actor int64, _ string, _ []int64, _ bool) error {
@@ -60,4 +70,30 @@ func TestMemberGroupMutationUsesAuthenticatedActor(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 	require.True(t, store.changed)
 	require.EqualValues(t, 42, store.actor)
+}
+
+// TestMemberGroupSelfReportsRateDiscount reads the signed-in user's identity benefits. A
+// bonus_10 member alongside AHHilAI receives a 0.9 balance discount, and a user with no
+// identity receives 1 with an empty code list.
+func TestMemberGroupSelfReportsRateDiscount(t *testing.T) {
+	store := &memberGroupHTTPStore{memberships: map[int64][]string{7: {"ahhilai", "bonus_10"}}}
+	handler := &MemberGroupHandler{Groups: &identity.MemberGroups{Repository: store}}
+	for _, scenario := range []struct {
+		userID int64
+		body   string
+	}{
+		{7, `"identity_groups":["ahhilai","bonus_10"],"rate_discount":0.9`},
+		{8, `"identity_groups":[],"rate_discount":1`},
+	} {
+		router := gin.New()
+		router.Use(func(ctx *gin.Context) {
+			authctx.SetPrincipal(ctx, identity.Principal{UserID: scenario.userID}, 1, "user@test.local")
+			ctx.Next()
+		})
+		router.GET("/identity-groups", handler.Self)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/identity-groups", nil))
+		require.Equal(t, http.StatusOK, response.Code)
+		require.Contains(t, response.Body.String(), scenario.body)
+	}
 }

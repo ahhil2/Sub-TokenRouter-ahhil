@@ -8,12 +8,9 @@
         identityName(code)
       }}</span>
       <p v-if="codes.length === 0" class="text-sm text-gray-500">{{ t('identityGroups.none') }}</p>
-      <p v-if="bonusRate > 0" class="text-sm">{{
-        t('identityGroups.bonus', { percent: bonusRate * 100 })
+      <p v-if="rateDiscount < 1" class="text-sm">{{
+        t('identityGroups.discount', { percent: Math.round(rateDiscount * 100) })
       }}</p>
-      <p v-if="bonusRate > 0" class="text-xs text-gray-500"
-        >{{ t('identityGroups.snapshot') }} {{ t('identityGroups.refund') }}</p
-      >
     </template>
   </div>
 </template>
@@ -23,24 +20,22 @@ import { useI18n } from 'vue-i18n'
 import { getMyIdentities, identityName, type IdentityCode } from '@/api/identityGroups'
 
 /**
- * UserIdentityBenefits.vue loads the signed-in account identities and recharge bonus
- * rate. A successful response supplies identity labels and emits the rate to its
- * parent; a failed request displays an error instead of announcing loaded benefits.
+ * UserIdentityBenefits.vue loads the signed-in account identities and their balance rate
+ * discount. A discount below one is shown as the percentage of group default rates the
+ * user pays; a failed request displays an error instead of announcing loaded benefits.
  */
 
 const { t } = useI18n()
-const emit = defineEmits<{ loaded: [rate: number] }>()
-const codes = ref<IdentityCode[]>([])
-const bonusRate = ref(0)
-const loaded = ref(false)
-const error = ref('')
+const codes = ref<IdentityCode[]>([]) // identity codes held by the signed-in user
+const rateDiscount = ref(1) // factor applied to group default balance rates; 1 means none
+const loaded = ref(false) // whether the identity request has succeeded
+const error = ref('') // localized load failure message
 onMounted(async () => {
   try {
     const result = await getMyIdentities()
     codes.value = result.identity_groups
-    bonusRate.value = result.bonus_rate
+    rateDiscount.value = result.rate_discount
     loaded.value = true
-    emit('loaded', result.bonus_rate)
   } catch {
     error.value = t('identityGroups.failed')
   }

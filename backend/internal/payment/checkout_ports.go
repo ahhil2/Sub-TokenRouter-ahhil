@@ -72,7 +72,6 @@ type CheckoutStore interface {
 // CheckoutRuntime supplies buyer, provider, OAuth, observation, and audit
 // operations.
 type CheckoutRuntime struct {
-	RechargeIdentity func(context.Context, int64) (string, error)
 	// User returns a nonnil buyer on success for CreateOrder. The account state
 	// and profile are read before the local order is persisted.
 	User func(context.Context, int64) (*Buyer, error)

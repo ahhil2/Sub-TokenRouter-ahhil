@@ -47,3 +47,16 @@ func TestIdentityRateResolverReadsCurrentConfiguration(t *testing.T) {
 	_, err = resolver.ResolveChecked(context.Background(), 1, 1, 1)
 	require.ErrorIs(t, err, reader.err)
 }
+
+// TestIdentityRateDiscountTable checks the balance discount factors for each identity and
+// the SQL fragments generated from them. The generated code list and CASE expression are
+// pinned so the effective-rate query and the identity table cannot silently drift apart.
+func TestIdentityRateDiscountTable(t *testing.T) {
+	require.Equal(t, 0.95, IdentityRateDiscount("bonus_5"))
+	require.Equal(t, 0.9, IdentityRateDiscount("bonus_10"))
+	require.Equal(t, 1.0, IdentityRateDiscount("ahhilai"))
+	require.Equal(t, 1.0, IdentityRateDiscount(""))
+	codes, factor := IdentityRateDiscountSQL("m.identity_code")
+	require.Equal(t, "'bonus_10','bonus_5'", codes)
+	require.Equal(t, "CASE m.identity_code WHEN 'bonus_10' THEN 0.9 WHEN 'bonus_5' THEN 0.95 ELSE 1 END", factor)
+}

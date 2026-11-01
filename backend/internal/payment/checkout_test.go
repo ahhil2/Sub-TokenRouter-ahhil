@@ -2,7 +2,6 @@ package payment
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -25,21 +24,20 @@ func (store *checkoutIdentityStore) CreateCheckout(_ context.Context, draft Chec
 	return draft.Order.Clone(), nil
 }
 
+// TestCheckoutIdentitySnapshot creates a balance order after identity recharge gifts were
+// removed. The saved order carries a no-gift snapshot crediting the order amount, the
+// affiliate base equals that amount, and the returned order holds its own snapshot copy.
 func TestCheckoutIdentitySnapshot(t *testing.T) {
 	store := &checkoutIdentityStore{}
-	identityCode := "bonus_5"
-	checkout := &Checkout{store: store, runtime: CheckoutRuntime{RechargeIdentity: func(context.Context, int64) (string, error) { return identityCode, nil }}}
+	checkout := &Checkout{store: store}
 	order, err := checkout.CreateOrderInTx(context.Background(), CreateOrderRequest{UserID: 1, OrderType: OrderTypeBalance}, &Buyer{ID: 1}, nil, &PaymentConfig{}, 100, 100, FeeBreakdown{}, nil)
 	require.NoError(t, err)
-	require.Equal(t, 105.0, order.RechargeSnapshot.CreditedAmount)
+	require.Equal(t, 100.0, order.RechargeSnapshot.CreditedAmount)
+	require.Zero(t, order.RechargeSnapshot.BonusAmount)
+	require.Empty(t, order.RechargeSnapshot.IdentityCode)
 	require.Equal(t, 100.0, order.Amount)
 	require.Equal(t, 100.0, AffiliateRebateBasePoints(order))
-	identityCode = "bonus_10"
-	require.Equal(t, "bonus_5", store.draft.Order.RechargeSnapshot.IdentityCode)
 	require.NotSame(t, store.draft.Order.RechargeSnapshot, order.RechargeSnapshot)
-	checkout.runtime.RechargeIdentity = func(context.Context, int64) (string, error) { return "", errors.New("identity unavailable") }
-	_, err = checkout.CreateOrderInTx(context.Background(), CreateOrderRequest{UserID: 1, OrderType: OrderTypeBalance}, &Buyer{ID: 1}, nil, &PaymentConfig{}, 100, 100, FeeBreakdown{}, nil)
-	require.Error(t, err)
 	require.Equal(t, 1, store.calls)
 }
 

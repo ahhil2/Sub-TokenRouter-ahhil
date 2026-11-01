@@ -59,35 +59,6 @@ func (store *MemberGroupStore) Memberships(ctx context.Context, ids []int64) (ma
 	return result, rows.Err()
 }
 
-func (store *MemberGroupStore) RechargeIdentity(ctx context.Context, userID int64) (string, error) {
-	client := clientFromContext(ctx, store.client)
-	if dbent.TxFromContext(ctx) != nil {
-		rows, err := client.QueryContext(ctx, `SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, userID)
-		if err != nil {
-			return "", err
-		}
-		exists := rows.Next()
-		scanErr := rows.Err()
-		_ = rows.Close()
-		if scanErr != nil {
-			return "", scanErr
-		}
-		if !exists {
-			return "", identity.ErrUserNotFound
-		}
-	}
-	groups, err := store.Memberships(ctx, []int64{userID})
-	if err != nil {
-		return "", err
-	}
-	for _, code := range groups[userID] {
-		if code == "bonus_5" || code == "bonus_10" {
-			return code, nil
-		}
-	}
-	return "", nil
-}
-
 func (store *MemberGroupStore) ChangeMembers(ctx context.Context, actorID int64, code string, ids []int64, add bool) error {
 	category, err := identity.MemberGroupCategory(code)
 	if err != nil {

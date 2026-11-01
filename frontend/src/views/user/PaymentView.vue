@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <UserIdentityBenefits class="mb-4" @loaded="identityBonusRate = $event" />
+    <UserIdentityBenefits class="mb-4" />
     <!-- Tabs share the title row and hide while payment or subscription confirmation owns the page. -->
     <template
       v-if="!loading && tabs.length > 1 && paymentPhase === 'select' && !selectedPlan"
@@ -384,11 +384,6 @@
                   <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{
                     t('payment.orderSummary')
                   }}</h2>
-                  <RechargeBreakdown
-                    v-if="!isSubscriptionCheckout"
-                    :snapshot="identityPreview"
-                    class="mt-3"
-                  />
                   <dl class="mt-3 space-y-2 text-sm">
                     <div class="flex justify-between gap-4">
                       <dt class="text-gray-500 dark:text-dark-400">{{ checkoutBaseLabel }}</dt>
@@ -555,7 +550,6 @@ import MotionTransition from '@/components/common/MotionTransition.vue'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import UserIdentityBenefits from '@/components/common/UserIdentityBenefits.vue'
-import RechargeBreakdown from '@/components/payment/RechargeBreakdown.vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -737,16 +731,6 @@ const subscriptionUsdToCnyRate = computed(() => {
 const creditedAmount = computed(
   () => Math.round(validAmount.value * balanceRechargeMultiplier.value * 100) / 100,
 )
-const identityBonusRate = ref(0)
-const identityPreview = computed(() => ({
-  identity_code: '',
-  base_amount: creditedAmount.value,
-  bonus_rate: identityBonusRate.value,
-  bonus_amount: Number((creditedAmount.value * identityBonusRate.value).toFixed(8)),
-  credited_amount: Number(
-    (creditedAmount.value + creditedAmount.value * identityBonusRate.value).toFixed(8),
-  ),
-}))
 const hasHelpContent = computed(() =>
   Boolean(checkout.value.help_text || checkout.value.help_image_url),
 )

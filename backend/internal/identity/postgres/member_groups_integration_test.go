@@ -38,13 +38,13 @@ func TestMemberGroupTransactions(t *testing.T) {
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"ahhilai", "bonus_10"}, memberships[userID])
 	require.NoError(t, store.ChangeMembers(ctx, userID, "bonus_5", []int64{userID}, false))
-	code, err := store.RechargeIdentity(ctx, userID)
+	memberships, err = store.Memberships(ctx, []int64{userID})
 	require.NoError(t, err)
-	require.Equal(t, "bonus_10", code)
+	require.ElementsMatch(t, []string{"ahhilai", "bonus_10"}, memberships[userID])
 	require.Error(t, store.ChangeMembers(ctx, userID, "bonus_5", []int64{userID, userID + 99999}, true))
-	code, err = store.RechargeIdentity(ctx, userID)
+	memberships, err = store.Memberships(ctx, []int64{userID})
 	require.NoError(t, err)
-	require.Equal(t, "bonus_10", code)
+	require.ElementsMatch(t, []string{"ahhilai", "bonus_10"}, memberships[userID])
 	var workers sync.WaitGroup
 	failures := make(chan error, 2)
 	for _, identityCode := range []string{"bonus_5", "bonus_10"} {

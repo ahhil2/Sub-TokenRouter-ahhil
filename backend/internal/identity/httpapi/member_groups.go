@@ -139,6 +139,9 @@ func (handler *MemberGroupHandler) SetRates(ctx *gin.Context) {
 	httpx.Success(ctx, gin.H{"updated": true})
 }
 
+// Self returns the signed-in user's identity codes and the balance rate discount they
+// grant. rate_discount is the factor applied to group default multipliers, such as 0.9
+// for bonus_10, and 1 when the user holds no discount identity.
 func (handler *MemberGroupHandler) Self(ctx *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(ctx)
 	if !ok {
@@ -153,14 +156,9 @@ func (handler *MemberGroupHandler) Self(ctx *gin.Context) {
 	if codes == nil {
 		codes = []string{}
 	}
-	rate := 0.0
+	discount := 1.0
 	for _, code := range codes {
-		if code == "bonus_5" {
-			rate = 0.05
-		}
-		if code == "bonus_10" {
-			rate = 0.10
-		}
+		discount = min(discount, billing.IdentityRateDiscount(code))
 	}
-	httpx.Success(ctx, gin.H{"identity_groups": codes, "bonus_rate": rate})
+	httpx.Success(ctx, gin.H{"identity_groups": codes, "rate_discount": discount})
 }

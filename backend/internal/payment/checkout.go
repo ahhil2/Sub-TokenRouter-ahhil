@@ -213,14 +213,10 @@ func (s *Checkout) CreateOrderInTx(ctx context.Context, req CreateOrderRequest, 
 	draft := BuildCheckoutDraft(req, user, plan, cfg, orderAmount, limitAmount, fee, sel)
 	var err error
 	if req.OrderType == OrderTypeBalance {
-		identityCode := ""
-		if s.runtime.RechargeIdentity != nil {
-			identityCode, err = s.runtime.RechargeIdentity(ctx, req.UserID)
-			if err != nil {
-				return nil, err
-			}
-		}
-		draft.Order.RechargeSnapshot, err = billing.CalculateRecharge(orderAmount, identityCode)
+		// Identity groups grant no recharge bonus. Balance orders still store a no-gift
+		// snapshot so fulfillment and refunds read one shape for every order, including
+		// older orders whose saved snapshot records a gift.
+		draft.Order.RechargeSnapshot, err = billing.CalculateRecharge(orderAmount, "")
 		if err != nil {
 			return nil, err
 		}
