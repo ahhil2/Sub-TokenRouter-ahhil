@@ -313,9 +313,10 @@ async function refresh() {
   if (refreshing) return
   refreshing = true
   try {
-    const values = await pelicanApi.tasks()
-    if (!disposed) tasks.value = values
-    await loadHistory()
+    const loadTasks = pelicanApi.tasks().then((values) => {
+      if (!disposed) tasks.value = values
+    })
+    await Promise.all([loadTasks, loadHistory()])
   } catch (value) {
     if (!disposed) error.value = message(value)
   } finally {

@@ -422,41 +422,34 @@ const updateDateTime = (boundary: 'start' | 'end', value: string) => {
   hoverDate.value = null
 }
 
+// minutePreset builds a trailing-window preset for the given number of minutes. Its label
+// key and value are derived as dates.last<N>Minutes and last<N>Minutes, so every caller
+// needs a matching translation entry. The range is resolved at invocation, not at
+// creation, so each selection measures from the current instant.
+const minutePreset = (minutes: number): DatePreset => {
+  const durationMs = minutes * 60 * 1000
+  return {
+    labelKey: `dates.last${minutes}Minutes`,
+    value: `last${minutes}Minutes`,
+    // The duration in milliseconds is compared against the selected range to keep the
+    // preset highlighted while its endpoints remain fresh.
+    durationMs,
+    getRange: () => {
+      const end = new Date()
+      // Resolve both endpoints from one captured instant so the minute preset retains
+      // its intended elapsed duration through local timestamp formatting.
+      const start = new Date(end.getTime() - durationMs)
+      return {
+        start: formatDateTimeToString(start),
+        end: formatDateTimeToString(end),
+      }
+    },
+  }
+}
+
 const presets: DatePreset[] = [
-  {
-    labelKey: 'dates.last15Minutes',
-    value: 'last15Minutes',
-    // The minute preset duration is converted to milliseconds for elapsed-range
-    // matching.
-    durationMs: 15 * 60 * 1000,
-    getRange: () => {
-      const end = new Date()
-      // Resolve both endpoints from one captured instant so the minute preset retains
-      // its intended elapsed duration through local timestamp formatting.
-      const start = new Date(end.getTime() - 15 * 60 * 1000)
-      return {
-        start: formatDateTimeToString(start),
-        end: formatDateTimeToString(end),
-      }
-    },
-  },
-  {
-    labelKey: 'dates.last30Minutes',
-    value: 'last30Minutes',
-    // The minute preset duration is converted to milliseconds for elapsed-range
-    // matching.
-    durationMs: 30 * 60 * 1000,
-    getRange: () => {
-      const end = new Date()
-      // Resolve both endpoints from one captured instant so the minute preset retains
-      // its intended elapsed duration through local timestamp formatting.
-      const start = new Date(end.getTime() - 30 * 60 * 1000)
-      return {
-        start: formatDateTimeToString(start),
-        end: formatDateTimeToString(end),
-      }
-    },
-  },
+  minutePreset(15),
+  minutePreset(30),
   {
     labelKey: 'dates.today',
     value: 'today',
