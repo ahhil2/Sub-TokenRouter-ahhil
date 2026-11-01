@@ -11,6 +11,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// messages.go implements the PostgreSQL repository behind site messaging. It reads
+// conversation lists, contacts, threads and unread counts, records read positions,
+// and writes new messages for single and broadcast sends. Each user has one
+// conversation row that holds the latest message and the read positions of the user
+// and of the admin side.
+//
+// Send records every request as a dispatch keyed by sender and client ID together
+// with the payload hash, so a retry with the same payload returns the saved recipient
+// count and a retry with a different payload is rejected. The dispatch, the recipient
+// conversations and every message are written in one transaction, so a rejected
+// recipient leaves nothing behind. Recipient conversation rows are locked in
+// ascending user order before messages are inserted, which keeps overlapping
+// broadcasts from deadlocking.
+
 type messageRepository struct {
 	db *sql.DB
 }
@@ -155,6 +169,20 @@ func (repository *messageRepository) MarkRead(ctx context.Context, actor site.Me
 	return nil
 }
 
+// Send delivers request.Body to its recipients and returns how many received it.
+// Admins may address specific active users or all active users, while a user may
+// only address their own conversation; other combinations return ErrMessageForbidden.
+// A repeated client ID with the same payload hash returns the count saved by the
+// first attempt without writing again, and a different hash returns ErrMessageConflict.
+//
+// A requested recipient that is not an active user returns ErrMessageRecipient, and a
+// broadcast larger than the broadcast limit returns ErrMessageInvalid. Nothing is
+// committed in either case, because the dispatch, conversations and messages share
+// one transaction.
+//
+// Recipients are handled in ascending user order. The conversation locks and the
+// batched insert both follow that order, so concurrent broadcasts wait for each other
+// instead of deadlocking and each recipient's message ID increases with their user ID.
 func (repository *messageRepository) Send(ctx context.Context, actor site.MessageActor, request site.SendMessageRequest, payloadHash string) (int, error) {
 	if actor.ID <= 0 || !actor.Admin && (request.AllUsers || len(request.RecipientIDs) != 1 || request.RecipientIDs[0] != actor.ID) {
 		return 0, site.ErrMessageForbidden
@@ -219,31 +247,26 @@ func (repository *messageRepository) Send(ctx context.Context, actor site.Messag
 	if err != nil {
 		return 0, err
 	}
-	locked, err := transaction.QueryContext(ctx, `SELECT user_id FROM site_message_conversations WHERE user_id = ANY($1) ORDER BY user_id FOR UPDATE`, pq.Array(recipients))
+	// Lock every recipient conversation in ascending user order within one statement.
+	// Concurrent broadcasts with overlapping recipients then take row locks in the same
+	// order, so they wait for each other instead of deadlocking.
+	var lockedCount int
+	err = transaction.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT user_id FROM site_message_conversations WHERE user_id = ANY($1) ORDER BY user_id FOR UPDATE) locked`, pq.Array(recipients)).Scan(&lockedCount)
 	if err != nil {
 		return 0, err
 	}
-	for locked.Next() {
-		var userID int64
-		if err := locked.Scan(&userID); err != nil {
-			return 0, errors.Join(err, locked.Close())
-		}
-	}
-	err = errors.Join(locked.Err(), locked.Close())
+	// Insert one message per recipient in ascending user order and point each conversation
+	// at its new message in the same statement. This replaces two round trips per recipient,
+	// which dominated the transaction time of large broadcasts.
+	_, err = transaction.ExecContext(ctx, `WITH inserted AS (
+		INSERT INTO site_messages (user_id, sender_id, is_admin, dispatch_id, body)
+		SELECT recipient.user_id, $2::bigint, $3::boolean, $4::bigint, $5::text
+		FROM unnest($1::bigint[]) WITH ORDINALITY AS recipient(user_id, position)
+		ORDER BY recipient.position RETURNING id, user_id
+	) UPDATE site_message_conversations conversation SET last_message_id = inserted.id
+	FROM inserted WHERE conversation.user_id = inserted.user_id`, pq.Array(recipients), actor.ID, actor.Admin, dispatchID, request.Body)
 	if err != nil {
 		return 0, err
-	}
-	for _, userID := range recipients {
-		var messageID int64
-		err = transaction.QueryRowContext(ctx, `INSERT INTO site_messages (user_id, sender_id, is_admin, dispatch_id, body)
-			VALUES ($1, $2, $3, $4, $5) RETURNING id`, userID, actor.ID, actor.Admin, dispatchID, request.Body).Scan(&messageID)
-		if err != nil {
-			return 0, err
-		}
-		_, err = transaction.ExecContext(ctx, `UPDATE site_message_conversations SET last_message_id = $2 WHERE user_id = $1`, userID, messageID)
-		if err != nil {
-			return 0, err
-		}
 	}
 	_, err = transaction.ExecContext(ctx, `UPDATE site_message_dispatches SET recipient_count = $2 WHERE id = $1`, dispatchID, len(recipients))
 	if err != nil {

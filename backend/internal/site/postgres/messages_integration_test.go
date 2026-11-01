@@ -183,4 +183,22 @@ func TestMessageRepository(t *testing.T) {
 			assert.True(t, strings.HasSuffix(contact.Email, "@example.invalid"))
 		}
 	})
+	t.Run("broadcast points each conversation at its own new message in recipient order", func(t *testing.T) {
+		reset(t)
+		count, err := service.Send(ctx, admin, site.SendMessageRequest{Body: "Batch write check", ClientID: uuid.NewString(), AllUsers: true})
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, count, 2)
+		var messages, conversations, stale int
+		require.NoError(t, database.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_messages`).Scan(&messages))
+		assert.Equal(t, count, messages)
+		require.NoError(t, database.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_message_conversations`).Scan(&conversations))
+		assert.Equal(t, count, conversations)
+		require.NoError(t, database.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_message_conversations conversation
+			WHERE conversation.last_message_id <> COALESCE((SELECT MAX(id) FROM site_messages message WHERE message.user_id = conversation.user_id), -1)`).Scan(&stale))
+		assert.Zero(t, stale)
+		var outOfOrder int
+		require.NoError(t, database.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT id, LAG(id) OVER (ORDER BY user_id) AS previous FROM site_messages) ordered
+			WHERE previous IS NOT NULL AND id <= previous`).Scan(&outOfOrder))
+		assert.Zero(t, outOfOrder)
+	})
 }
