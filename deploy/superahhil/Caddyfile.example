@@ -29,11 +29,17 @@ example.com {
 	}
 
 	handle /styles.css {
+		# The stylesheet name carries no version, so keep the cache short enough for
+		# visitors to receive edits within an hour.
+		header Cache-Control "public, max-age=3600"
 		root * /var/www/superahhil
 		file_server
 	}
 
 	handle /landing-assets/* {
+		# Landing images change rarely and are about 1.2 MB in total; a week of
+		# caching avoids downloading them again on every return visit.
+		header Cache-Control "public, max-age=604800"
 		root * /var/www/superahhil
 		file_server
 	}
