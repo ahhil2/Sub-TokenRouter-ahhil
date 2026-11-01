@@ -131,12 +131,17 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 			provider.ID, *apiKey.GroupID, result.UpstreamModel, requestedModel, input.GroupMappedModel,
 			// Native input excludes both cache buckets, so statistics receive those buckets
 			// separately; OpenAI recording constructs the analogous disjoint ordinary input.
+			// TTL details are forwarded too: without them a card's hourly cache-write price
+			// is ignored and every cache write is costed at the five-minute rate, even though
+			// the customer charge above already used the hourly split.
 			UsageTokens{
-				InputTokens:         result.Usage.InputTokens,
-				OutputTokens:        result.Usage.OutputTokens,
-				CacheCreationTokens: result.Usage.CacheCreationInputTokens,
-				CacheReadTokens:     result.Usage.CacheReadInputTokens,
-				ImageOutputTokens:   result.Usage.ImageOutputTokens,
+				InputTokens:           result.Usage.InputTokens,
+				OutputTokens:          result.Usage.OutputTokens,
+				CacheCreationTokens:   result.Usage.CacheCreationInputTokens,
+				CacheReadTokens:       result.Usage.CacheReadInputTokens,
+				CacheCreation5mTokens: result.Usage.CacheCreation5mTokens,
+				CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
+				ImageOutputTokens:     result.Usage.ImageOutputTokens,
 			},
 		)
 	}

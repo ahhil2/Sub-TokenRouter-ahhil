@@ -1342,6 +1342,72 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedProviderStatsUsesOriginalAlia
 	require.InDelta(t, 2.0, *usageRepo.LastLog.ProviderStatsCost, 1e-12)
 }
 
+// TestGatewayServiceRecordUsage_ProviderStatsCostUsesHourlyCacheWritePrice records an
+// Anthropic usage whose cache writes are split between five-minute and one-hour TTLs.
+// The provider statistics card prices the two TTLs differently, so the recorded
+// provider cost must charge each detail at its own rate instead of costing the whole
+// aggregate at the five-minute rate.
+func TestGatewayServiceRecordUsage_ProviderStatsCostUsesHourlyCacheWritePrice(t *testing.T) {
+	groupID := int64(903)
+	// Cache-write prices are per token: 5 and 8 USD per million tokens.
+	cacheWrite5m := 5e-6
+	cacheWrite1h := 8e-6
+	cache := routingtestkit.NewModelConfigData()
+	cache.ByGroup[groupID] = &routingtestkit.Configuration{
+		ID:     groupID,
+		Status: billing.StatusActive,
+		ProviderStatsPricingRules: []routing.ProviderStatsPricingRule{
+			{
+				GroupIDs: []int64{groupID},
+				Pricing: []routing.ModelPricingEntry{
+					{
+						Models:            []string{"claude-opus-5-5"},
+						CacheWritePrice:   &cacheWrite5m,
+						CacheWrite1hPrice: &cacheWrite1h,
+					},
+				},
+			},
+		},
+	}
+	cache.Platforms[groupID] = capability.PlatformAnthropic
+	cache.LoadedAt = time.Now()
+
+	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
+	billingRepo := &completiontestkit.SettlementStore{}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &completiontestkit.UserStore{}, &completiontestkit.SubscriptionStore{})
+	svc.GroupPolicies = routingtestkit.ModelConfigFromData(cache)
+
+	usage := upstream.TokenUsage{
+		CacheCreationInputTokens: 1_000_000,
+		CacheCreation5mTokens:    400_000,
+		CacheCreation1hTokens:    600_000,
+	}
+	err := svc.RecordMessages(context.Background(), &gatewaycapture.MessagesCapture{
+		Result: &forwardcore.MessagesResult{
+			RequestID:     "provider_stats_hourly_cache_write",
+			Usage:         usage,
+			Model:         "claude-opus-5-5",
+			UpstreamModel: "claude-opus-5-5",
+			Duration:      time.Second,
+		},
+		APIKey: &apikey.APIKey{
+			ID:      503,
+			Quota:   100,
+			GroupID: &groupID,
+			Group:   &routing.Group{ID: groupID, RateMultiplier: 1},
+		},
+		User:     &identity.User{ID: 603},
+		Provider: &providercore.Record{ID: 703, Platform: capability.PlatformAnthropic},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.LastLog)
+	require.NotNil(t, usageRepo.LastLog.ProviderStatsCost)
+	// 400k tokens at 5 USD/M plus 600k tokens at 8 USD/M; the aggregate-only bug
+	// produced 5.0 by costing all one million tokens at the five-minute rate.
+	require.InDelta(t, 6.8, *usageRepo.LastLog.ProviderStatsCost, 1e-9)
+}
+
 // TestGatewayServiceRecordUsage_QoderBlankConfigPricingUsesZeroCost supplies a
 // selected Qoder identity with a token-mode card containing no price buckets.
 // It checks observed usage is retained with zero row and billable command
