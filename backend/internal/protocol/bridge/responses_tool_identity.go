@@ -111,8 +111,8 @@ func responsesToolIdentityMapping(tools []ResponsesTool, input json.RawMessage) 
 
 // registerToolIdentity records supported declaration names and canonical
 // owners in the supplied request-local maps. Namespace groups register their
-// function declarations; other child kinds follow the existing converter's
-// supported function-child selection rather than acquiring executable aliases.
+// function and custom declarations, keeping each kind in its canonical owner
+// so identical names cannot silently change execution or response representation.
 //
 // A default functions group shares bare names with direct functions. Other
 // groups use bounded derived names, and each derived name must retain exactly
@@ -130,7 +130,7 @@ func (m *ResponsesClientToolMapping) registerToolIdentity(tool ResponsesTool, ow
 			children = tool.Children
 		}
 		for _, child := range children {
-			if child.Type != "function" || child.Name == "" {
+			if (child.Type != "function" && child.Type != "custom") || child.Name == "" {
 				continue
 			}
 			identity := NamespacedToolName{Namespace: tool.Name, Name: child.Name}
@@ -141,7 +141,7 @@ func (m *ResponsesClientToolMapping) registerToolIdentity(tool ResponsesTool, ow
 				// allowing output restoration to omit the redundant default namespace.
 				canonical.Namespace = ""
 			}
-			owner := fmt.Sprintf("function:%q:%q", canonical.Namespace, canonical.Name)
+			owner := fmt.Sprintf("%s:%q:%q", child.Type, canonical.Namespace, canonical.Name)
 			if previous, exists := owners[upstream]; exists && previous != owner {
 				return fmt.Errorf("namespace tool %q/%q conflicts with upstream function name %q", tool.Name, child.Name, upstream)
 			}
@@ -150,7 +150,7 @@ func (m *ResponsesClientToolMapping) registerToolIdentity(tool ResponsesTool, ow
 			m.NamespaceTools[upstream] = canonical
 			if canonical.Namespace == "" {
 				m.CallNames[canonical] = upstream
-				m.FunctionTools[upstream] = true
+				m.FunctionTools[upstream] = child.Type == "function"
 			}
 		}
 		return nil
@@ -200,7 +200,7 @@ func (m *ResponsesClientToolMapping) resolveCallName(namespace, name string) (st
 	return "", fmt.Errorf("cannot convert tool call %q in namespace %q without its declaration or inherited mapping", name, namespace)
 }
 
-// rewriteResponsesFunctionCalls resolves direct historical function calls
+// rewriteResponsesFunctionCalls resolves direct historical function and custom calls
 // before a function-only request is sent. It mutates accepted input maps and
 // reports changes; nested schemas and tool-result data remain untouched.
 // A failure can follow earlier mutations, so callers discard failed candidates.
@@ -229,7 +229,7 @@ func rewriteResponsesFunctionCalls(input any, mapping *ResponsesClientToolMappin
 	// call correlation and arguments remain attached while the encoded namespace is removed.
 	for _, raw := range items {
 		item, ok := raw.(map[string]any)
-		if !ok || stringValue(item["type"]) != "function_call" {
+		if !ok || (stringValue(item["type"]) != "function_call" && stringValue(item["type"]) != "custom_tool_call") {
 			continue
 		}
 		name := stringValue(item["name"])

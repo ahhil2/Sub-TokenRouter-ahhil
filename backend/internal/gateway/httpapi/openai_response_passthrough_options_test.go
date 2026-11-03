@@ -24,6 +24,7 @@ import (
 	httptestkit "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi/testkit"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
@@ -916,4 +917,44 @@ func TestOpenAIGatewayService_OAuthPassthrough_NamespaceNonStreamingResponse(t *
 // synchronous scanner settings.
 func TestOpenAIStreamingPassthroughRepairsConcatenatedJSONDocumentsInSingleDataLine(t *testing.T) {
 	testOpenAIStreamingRepairsConcatenatedJSONDocuments(t, true, 0)
+}
+
+// TestResponsesReadersFinalizeUpstreamFailures receives an SSE failure after visible output.
+// Native and passthrough readers must retain upstream attribution and finish the exact diagnostic attempt even though HTTP 200 was already committed.
+func TestResponsesReadersFinalizeUpstreamFailures(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		t.Run(fmt.Sprintf("passthrough=%v", passthrough), func(t *testing.T) {
+			svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Response: OpenAIResponseOptions{MaxLineSize: OpenAIResponseDefaultMaxLineSize}}})
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			var saved telemetry.RequestRecord
+			ctx := telemetry.WithRequestCapture(context.Background(), telemetry.RequestRecord{RequestID: "failure-test", State: "running"}, func(record telemetry.RequestRecord) { saved = record })
+			ctx = telemetry.WithRequestProvider(ctx, 25, "X-Request-Id")
+			ctx = telemetry.BeginRequestAttempt(ctx, 1)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+			provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 25, Platform: capability.PlatformOpenAI}}
+			resp := &http.Response{StatusCode: http.StatusOK, Request: c.Request, Header: http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"upstream-failure"}}, Body: io.NopCloser(strings.NewReader(
+				"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_failure\"}}\n\n" +
+					"data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n" +
+					"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_failure\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"Our servers are currently overloaded. Please try again later.\"}}}\n\n"))}
+			var err error
+			if passthrough {
+				_, err = responseupstream.ReadPassthroughStreaming(ctx, resp, upstreamcore.NewOutputContext(ResponseSink{Writer: c.Writer}), svc.Output.PassthroughOptions(ctx, c, provider), time.Now(), "gpt-6.1-sol", "")
+			} else {
+				_, err = responseupstream.ReadStreamingResponse(ctx, resp, upstreamcore.NewOutputContext(ResponseSink{Writer: c.Writer}), svc.Output.StreamOptions(ctx, c, provider, "high"), time.Now(), "gpt-6.1-sol", "", "high")
+			}
+			require.Error(t, err)
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Contains(t, rec.Body.String(), "response.failed")
+			require.Len(t, saved.Attempts, 1)
+			require.Equal(t, "failed", saved.Attempts[0].Outcome)
+			phase, _, owner, source := classifyOpsErrorLog(c, "server_error", "overloaded", "", 503)
+			require.Equal(t, "upstream", phase)
+			require.Equal(t, "provider", owner)
+			require.Equal(t, "upstream_http", source)
+			events, ok := c.Get(OpsUpstreamErrorsKey)
+			require.True(t, ok)
+			require.Len(t, events, 1)
+		})
+	}
 }

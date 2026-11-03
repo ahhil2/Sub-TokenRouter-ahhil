@@ -45,12 +45,21 @@ func AdaptResponsesClientToolsJSON(body []byte, upstream string) ([]byte, Respon
 // error. UseNumber retains valid numeric literals during a successful rebuild.
 // The decoder reads only the first JSON value, so callers validate a single
 // complete object rather than relying on this helper to reject trailing input.
+// Failures carry ClientToolAdaptationError to retain their local input origin
+// when transport adapters wrap the returned error.
 func AdaptResponsesClientToolsJSONWithMapping(
 	body []byte,
 	upstream string,
 	inherited ResponsesClientToolMapping,
 	inheritedLoweredTools ...[]any,
-) ([]byte, ResponsesClientToolMapping, error) {
+) (adapted []byte, resultMapping ResponsesClientToolMapping, failure error) {
+	// Conversion precedes provider dispatch. Preserve that provenance for callers
+	// so rejected tool declarations cannot be classified as provider execution failures.
+	defer func() {
+		if failure != nil {
+			failure = &ClientToolAdaptationError{Cause: failure}
+		}
+	}()
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	// Tool adaptation rewrites a decoded object. Retain numeric literals here
 	// so unrelated large identifiers do not round through float64 before serialization.

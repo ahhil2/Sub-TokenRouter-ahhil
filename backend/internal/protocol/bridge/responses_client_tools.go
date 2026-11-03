@@ -40,7 +40,7 @@ type ResponsesClientToolMapping struct {
 	// lowering decision. A restorer copies the struct and shares its maps, so
 	// their contents remain stable while that stream reads identities. Custom
 	// membership wins over search classification; namespace restoration applies
-	// to calls that remain ordinary functions after client-kind restoration.
+	// to both ordinary and custom calls after client-kind restoration.
 	CustomTools    map[string]bool                   // custom client names enabled
 	ToolSearch     bool                              // client discovery proxy enabled
 	NamespaceTools map[string]ResponsesNamespaceName // flat-name namespace identity pairs
@@ -766,8 +766,9 @@ func RestoreResponsesClientToolPayload(payload []byte, mapping ResponsesClientTo
 // acyclic value and nonnil adapter; it mutates shared decoded objects, trims
 // lookup names, and prefers custom mapping over enabled search mapping.
 //
-// Custom arguments become freeform input with their argument/namespace fields
-// removed. Search arguments become client-executed JSON values and lose proxy
+// Custom arguments become freeform input with their argument field removed.
+// Namespace restoration subsequently recovers the recorded client identity.
+// Search arguments become client-executed JSON values and lose proxy
 // name/namespace. Known ID prefixes change independently of call_id; unknown
 // prefixes remain. Unrelated nested objects are still visited, so caller
 // validation determines whether these recognized shapes belong to actual
@@ -889,7 +890,7 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 				if input != "" {
 					emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: call.outputIdx, ItemID: call.clientItemID, Delta: input})
 				}
-				emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.done", OutputIndex: call.outputIdx, ItemID: call.clientItemID, CallID: call.callID, Name: call.name, Input: input})
+				emit(r.restoreNamespaceEvent(ResponsesStreamEvent{Type: "response.custom_tool_call_input.done", OutputIndex: call.outputIdx, ItemID: call.clientItemID, CallID: call.callID, Name: call.name, Input: input}))
 			}
 			return out
 		}
@@ -1205,22 +1206,25 @@ func (r *ResponsesClientToolStreamRestorer) callFor(event ResponsesStreamEvent) 
 	return nil
 }
 
-// restoreNamespaceEvent restores mapped exact function item names/namespaces
+// restoreNamespaceEvent restores mapped function and custom item identities
 // and mapped argument-event names. It returns a copied event whose nested Item
 // pointer can still change in place; an empty namespace map leaves the
-// supplied fields as they are.
+// supplied fields as they are. Item events carry both namespace and child name,
+// while argument and custom-input completion events carry the child name alone.
+// Restoration uses the same declaration mapping after custom-kind conversion,
+// so both lifecycle representations identify the client tool consistently.
 func (r *ResponsesClientToolStreamRestorer) restoreNamespaceEvent(event ResponsesStreamEvent) ResponsesStreamEvent {
 	if len(r.adapter.NamespaceTools) == 0 {
 		return event
 	}
 	// Items hold namespace and child name; argument frames expose only a name.
 	// Restore each modeled location from the same flat-name pair recorded at adaptation.
-	if event.Item != nil && event.Item.Type == "function_call" {
+	if event.Item != nil && (event.Item.Type == "function_call" || event.Item.Type == "custom_tool_call") {
 		if name, ok := r.adapter.NamespaceTools[event.Item.Name]; ok {
 			event.Item.Name, event.Item.Namespace = name.Name, name.Namespace
 		}
 	}
-	if event.Type == "response.function_call_arguments.delta" || event.Type == "response.function_call_arguments.done" {
+	if event.Type == "response.function_call_arguments.delta" || event.Type == "response.function_call_arguments.done" || event.Type == "response.custom_tool_call_input.done" {
 		if name, ok := r.adapter.NamespaceTools[event.Name]; ok {
 			event.Name = name.Name
 		}
@@ -1231,10 +1235,10 @@ func (r *ResponsesClientToolStreamRestorer) restoreNamespaceEvent(event Response
 // restoreResponsesOutputClientTools restores supported function outputs in the
 // supplied slice in place. Callers pass a nonnil adapter and retain ownership
 // of shared output storage; exact custom names take precedence over enabled
-// search, then ordinary function names can regain namespaces.
+// search, then ordinary function and custom names can regain namespaces.
 //
 // Known item prefixes change with client kind while call IDs remain. Custom
-// arguments become freeform input and lose argument/namespace fields; search
+// arguments become freeform input and regain recorded namespaces; search
 // keeps accumulated argument text for its specialized codec and removes proxy
 // name/namespace. Unsupported outputs remain, and this helper neither
 // reconstructs missing history nor validates that a name corresponds to an
@@ -1246,7 +1250,7 @@ func restoreResponsesOutputClientTools(outputs []ResponsesOutput, adapter *Respo
 			continue
 		}
 		// Change client kind before namespace lookup. Custom and search proxies use
-		// their own input/argument shapes, while ordinary functions retain the recorded namespace pair.
+		// their own input/argument shapes; function and custom calls then recover the recorded namespace pair.
 		if adapter.CustomTools[output.Name] {
 			output.Type = "custom_tool_call"
 			output.ID = retypedResponsesToolCallItemID(output.ID, output.Type)
@@ -1259,7 +1263,7 @@ func restoreResponsesOutputClientTools(outputs []ResponsesOutput, adapter *Respo
 			output.Name = ""
 			output.Namespace = ""
 		}
-		if name, ok := adapter.NamespaceTools[output.Name]; ok && output.Type == "function_call" {
+		if name, ok := adapter.NamespaceTools[output.Name]; ok && (output.Type == "function_call" || output.Type == "custom_tool_call") {
 			output.Name, output.Namespace = name.Name, name.Namespace
 		}
 	}

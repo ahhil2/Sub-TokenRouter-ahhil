@@ -28,6 +28,19 @@ import (
 // a false flag returns the supplied bytes. Callers handle errors and mapping
 // lifetime before forwarding the result.
 
+// ClientToolAdaptationError identifies rejected local client-tool input before dispatch.
+// The wrapped error explains the declaration or history conflict; HTTP callers
+// present it as a request error and exclude it from provider health feedback.
+type ClientToolAdaptationError struct {
+	Cause error // underlying local conversion failure
+}
+
+// Error returns the local conversion explanation for client diagnostics.
+func (e *ClientToolAdaptationError) Error() string { return e.Cause.Error() }
+
+// Unwrap exposes the original error for standard error-chain inspection.
+func (e *ClientToolAdaptationError) Unwrap() error { return e.Cause }
+
 // AdaptOpenAIResponsesClientTools adapts screened Codex client-tool shapes for
 // a function-only upstream. When screening finds no supported shape, it
 // returns the supplied bytes and an empty mapping without complete JSON
@@ -56,7 +69,14 @@ func AdaptOpenAIResponsesClientTools(body []byte) ([]byte, ResponsesClientToolMa
 func AdaptOpenAIResponsesClientToolsWithMapping(
 	body []byte,
 	inherited ResponsesClientToolMapping,
-) ([]byte, ResponsesClientToolMapping, error) {
+) (adapted []byte, resultMapping ResponsesClientToolMapping, failure error) {
+	// Conversion runs before dispatch. Preserve that provenance through wrapping
+	// so output and provider-health policy cannot mistake invalid input for upstream failure.
+	defer func() {
+		if failure != nil {
+			failure = &ClientToolAdaptationError{Cause: failure}
+		}
+	}()
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	// Tool schemas and discovery data can contain integers beyond float64
 	// precision. Retain json.Number values until wirejson encodes an adapted request.

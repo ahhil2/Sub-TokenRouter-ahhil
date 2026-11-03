@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"reflect"
 	"strings"
 )
 
@@ -36,10 +37,10 @@ func FlattenResponsesNamespaces(req map[string]any) (map[string]ResponsesNamespa
 	return FlattenResponsesNamespacesExcept(req, nil)
 }
 
-// FlattenResponsesNamespacesExcept replaces namespace function declarations
+// FlattenResponsesNamespacesExcept replaces namespace function and custom declarations
 // with flat names, except for groups enabled in preserved. It accepts decoded
 // map[string]any and []any shapes, mutates the request, and returns a newly
-// collected restoration map. Without any eligible named function mapping it
+// collected restoration map. Without any eligible named executable mapping it
 // returns unchanged; unsupported children can be dropped when flattening
 // occurs.
 //
@@ -47,7 +48,7 @@ func FlattenResponsesNamespaces(req map[string]any) (map[string]ResponsesNamespa
 // namespace identities before mutation, because one flat function name cannot
 // restore two different calls. flattenNamespaceToolName shortens oversized
 // joined names with a hash suffix, so restoration uses the returned identity
-// pairs. Emitted children are shallow copies, while nested input calls and
+// pairs. Emitted children are shallow copies, while direct input calls and
 // tool choice are rewritten in place. A removed namespace-group choice becomes
 // auto; callers validate malformed declarations before relying on complete
 // reverse mapping.
@@ -60,7 +61,7 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 		return nil, false, nil
 	}
 
-	topLevel := make(map[string]bool)
+	topLevel := make(map[string]map[string]any)
 	for _, raw := range tools {
 		tool, ok := raw.(map[string]any)
 		if !ok {
@@ -69,11 +70,12 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 		typ := strings.TrimSpace(stringValue(tool["type"]))
 		name := strings.TrimSpace(stringValue(tool["name"]))
 		if (typ == "function" || typ == "custom") && name != "" {
-			topLevel[name] = true
+			topLevel[name] = tool
 		}
 	}
 
 	names := make(map[string]ResponsesNamespaceName)
+	declarations := make(map[string]map[string]any)
 	for _, raw := range tools {
 		tool, ok := raw.(map[string]any)
 		if !ok || strings.TrimSpace(stringValue(tool["type"])) != "namespace" {
@@ -85,7 +87,7 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 		}
 		for _, rawChild := range namespaceChildren(tool) {
 			child, ok := rawChild.(map[string]any)
-			if !ok || strings.TrimSpace(stringValue(child["type"])) != "function" {
+			if !ok || (strings.TrimSpace(stringValue(child["type"])) != "function" && strings.TrimSpace(stringValue(child["type"])) != "custom") {
 				continue
 			}
 			name := strings.TrimSpace(stringValue(child["name"]))
@@ -98,14 +100,16 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 				entry.Namespace = ""
 			}
 			// Check conflicts before publishing new declarations or changing history.
-			// One upstream name must map to one client namespace/name pair for restoration.
-			if topLevel[flat] {
+			// Equivalent default-scoped declarations share the direct identity. Different
+			// kinds or definitions must fail before one name can select the wrong tool.
+			if direct, exists := topLevel[flat]; exists && (entry.Namespace != "" || !reflect.DeepEqual(direct, child)) {
 				return nil, false, fmt.Errorf("namespace tool %q/%q flattens to %q which conflicts with a top-level tool of the same name; this upstream cannot disambiguate them, rename one of the tools", namespace, name, flat)
 			}
-			if prev, exists := names[flat]; exists && prev != entry {
+			if prev, exists := names[flat]; exists && (prev != entry || !reflect.DeepEqual(declarations[flat], child)) {
 				return nil, false, fmt.Errorf("namespace tools %q/%q and %q/%q both flatten to %q; this upstream cannot disambiguate them, rename one of the tools", prev.Namespace, prev.Name, namespace, name, flat)
 			}
 			names[flat] = entry
+			declarations[flat] = child
 		}
 	}
 	if len(names) == 0 {
@@ -114,6 +118,9 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 
 	flattened := make([]any, 0, len(tools)+len(names))
 	seen := make(map[string]bool)
+	for name := range topLevel {
+		seen[name] = true
+	}
 	for _, raw := range tools {
 		tool, ok := raw.(map[string]any)
 		if !ok || strings.TrimSpace(stringValue(tool["type"])) != "namespace" {
@@ -127,7 +134,7 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 		}
 		for _, rawChild := range namespaceChildren(tool) {
 			child, ok := rawChild.(map[string]any)
-			if !ok || strings.TrimSpace(stringValue(child["type"])) != "function" {
+			if !ok || (strings.TrimSpace(stringValue(child["type"])) != "function" && strings.TrimSpace(stringValue(child["type"])) != "custom") {
 				continue
 			}
 			name := strings.TrimSpace(stringValue(child["name"]))
@@ -159,7 +166,7 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 	return names, true, nil
 }
 
-// RestoreResponsesNamespaceCalls restores mapped function-call names
+// RestoreResponsesNamespaceCalls restores mapped function and custom call names
 // throughout a JSON value and restores their namespace representation. Default
 // scope omits the namespace field. Empty payloads, empty mappings, and
 // documents with no matched calls return the supplied bytes
@@ -169,7 +176,7 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 // Changed payloads are reencoded with HTML escaping disabled. The generic
 // decoder uses float64 numbers, so conversion can round large integers or
 // reject numbers outside its range; raw numeric spelling is not retained. Only
-// function_call objects whose trimmed names match the map are renamed,
+// function_call and custom_tool_call objects with mapped trimmed names are renamed,
 // including nested lifecycle items. Other fields survive in their decoded
 // forms.
 func RestoreResponsesNamespaceCalls(payload []byte, names map[string]ResponsesNamespaceName) ([]byte, bool, error) {
@@ -206,22 +213,18 @@ func namespaceChildren(tool map[string]any) []any {
 	return children
 }
 
-// rewriteNamespaceQualifiedCalls recursively rewrites known function_call
-// objects in decoded maps and arrays. It changes shared input maps in place;
-// callers supply an acyclic JSON-shaped value and the mapping from the same
-// flattening operation.
+// rewriteNamespaceQualifiedCalls rewrites direct function and custom input calls.
+// It changes shared item maps using this request's declaration mapping; nested
+// tool-result data and arguments remain application data rather than executable history.
 func rewriteNamespaceQualifiedCalls(value any, names map[string]ResponsesNamespaceName) {
-	switch typed := value.(type) {
-	case []any:
-		for _, item := range typed {
-			rewriteNamespaceQualifiedCalls(item, names)
+	items, _ := value.([]any)
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
 		}
-	case map[string]any:
-		if strings.TrimSpace(stringValue(typed["type"])) == "function_call" {
-			rewriteNamespaceQualifiedCall(typed, names)
-		}
-		for _, child := range typed {
-			rewriteNamespaceQualifiedCalls(child, names)
+		if typ := strings.TrimSpace(stringValue(item["type"])); typ == "function_call" || typ == "custom_tool_call" {
+			rewriteNamespaceQualifiedCall(item, names)
 		}
 	}
 }
@@ -257,7 +260,7 @@ func rewriteNamespaceQualifiedCall(item map[string]any, names map[string]Respons
 }
 
 // restoreResponsesNamespaceValue walks decoded maps and arrays and restores
-// mapped function_call identities. It trims the current function name,
+// mapped function/custom call identities. It trims the current function name,
 // replaces a matching flat name with the recorded child name, and writes the
 // recorded namespace, omitting it for the default scope. Other object types
 // keep their identity fields while their children are still visited.
@@ -274,7 +277,7 @@ func restoreResponsesNamespaceValue(value any, names map[string]ResponsesNamespa
 			changed = restoreResponsesNamespaceValue(item, names) || changed
 		}
 	case map[string]any:
-		if strings.TrimSpace(stringValue(typed["type"])) == "function_call" {
+		if typ := strings.TrimSpace(stringValue(typed["type"])); typ == "function_call" || typ == "custom_tool_call" {
 			if entry, ok := names[strings.TrimSpace(stringValue(typed["name"]))]; ok {
 				if typed["name"] != entry.Name {
 					typed["name"] = entry.Name

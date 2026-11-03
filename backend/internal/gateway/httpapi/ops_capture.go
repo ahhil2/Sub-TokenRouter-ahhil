@@ -1087,9 +1087,9 @@ func (state *opsCaptureWriterState) shouldCapture() bool {
 
 // OpsErrorLoggerMiddleware observes bounded attempted output and records final,
 // in-band or recovered upstream failures. It wraps a valid request writer
-// through c.Next and restores the original writer when its own wrapper is still
-// installed before releasing capture state. A queue is required when monitoring
-// admits an entry.
+// through c.Next and restores the entry writer before releasing capture state.
+// Downstream model wrappers finish inside this middleware lifetime. A queue is
+// required when monitoring admits an entry.
 //
 // Terminal SSE evidence can replace an earlier attempt error and infer logical
 // failure status despite successful HTTP commitment. Telemetry failure marking
@@ -1105,11 +1105,9 @@ func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, a
 		w := acquireOpsCaptureWriter(originalWriter)
 		w.setContext(c, access.Rejected)
 		defer func() {
-			// Restore the original writer so outer middleware cannot access a wrapper
-			// whose pooled state lease has been released.
-			if c.Writer == w {
-				c.Writer = originalWriter
-			}
+			// Downstream wrappers can still embed this capture handle. Restore the entry
+			// writer unconditionally before releasing its lease so outer finalizers retain valid status.
+			c.Writer = originalWriter
 			releaseOpsCaptureWriter(w)
 		}()
 		c.Writer = w

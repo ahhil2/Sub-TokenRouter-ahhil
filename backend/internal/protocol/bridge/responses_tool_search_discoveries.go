@@ -11,7 +11,7 @@ import (
 // A tool-search result can advertise declarations that a function-only
 // upstream must receive on the next request. Promotion keeps static
 // declarations before history discoveries and admits only named
-// function/custom tools or named namespace function children. Completed or
+// function/custom tools or named namespace function/custom children. Completed or
 // status-free results can supply these declarations; discovery data remains in
 // history for a separate output-normalization pass.
 //
@@ -42,7 +42,7 @@ type responsesDiscoveredToolIdentity struct {
 // child declaration and its client identity.
 type responsesNamespaceToolCandidate struct {
 	// flat indexes identity's namespace/name pair, while child carries its
-	// copied unqualified function declaration. Promotion retains only admitted
+	// copied unqualified executable declaration. Promotion retains only admitted
 	// children, and child's nested schema values still share source storage.
 	flat     string                          // bounded flat admission key
 	child    map[string]any                  // copied child declaration map
@@ -334,7 +334,12 @@ func restoreInheritedResponsesClientToolDeclarations(lowered []any, mapping Resp
 		case mapping.CustomTools[name]:
 			copy := copyClientTool(tool)
 			copy["type"] = "custom"
-			restored = append(restored, copy)
+			if identity := mapping.NamespaceTools[name]; identity.Namespace != "" {
+				copy["name"] = identity.Name
+				restored = append(restored, map[string]any{"type": "namespace", "name": identity.Namespace, "tools": []any{copy}})
+			} else {
+				restored = append(restored, copy)
+			}
 		case mapping.NamespaceTools[name].Namespace != "" && !mapping.FunctionTools[name]:
 			identity := mapping.NamespaceTools[name]
 			child := copyClientTool(tool)
@@ -350,7 +355,7 @@ func restoreInheritedResponsesClientToolDeclarations(lowered []any, mapping Resp
 	return restored
 }
 
-// responsesNamespaceToolDiscovery collects named function children from a
+// responsesNamespaceToolDiscovery collects named function and custom children from a
 // decoded namespace declaration. A blank namespace or no eligible children
 // returns nil values with false. It prefers namespaceChildren's nonempty tools
 // array and otherwise its children alias, while unsupported or unencodable
@@ -373,19 +378,27 @@ func responsesNamespaceToolDiscovery(tool map[string]any) (map[string]any, []res
 	identities := make([]responsesNamespaceToolCandidate, 0, len(children))
 	for _, rawChild := range children {
 		child, ok := rawChild.(map[string]any)
-		if !ok || strings.TrimSpace(stringValue(child["type"])) != "function" {
+		if !ok {
 			continue
 		}
-		childCopy, direct, ok := responsesDirectToolDiscovery(child, "function")
+		kind := strings.TrimSpace(stringValue(child["type"]))
+		if kind != "function" && kind != "custom" {
+			continue
+		}
+		childCopy, direct, ok := responsesDirectToolDiscovery(child, kind)
 		if !ok {
 			continue
 		}
 		flat := flattenNamespaceToolName(namespace, direct.name)
+		canonicalNamespace := namespace
+		if canonicalNamespace == responsesDefaultToolNamespace {
+			canonicalNamespace = ""
+		}
 		identities = append(identities, responsesNamespaceToolCandidate{
 			flat:  flat,
 			child: childCopy,
 			identity: responsesDiscoveredToolIdentity{
-				typ: "namespace", name: direct.name, namespace: namespace, encoded: direct.encoded,
+				typ: kind, name: direct.name, namespace: canonicalNamespace, encoded: direct.encoded,
 			},
 		})
 	}

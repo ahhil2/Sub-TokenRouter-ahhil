@@ -28,6 +28,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
+	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
 // gemini_native.go prepares native Gemini model actions, resolves session
@@ -243,6 +244,9 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 	if err != nil {
 		if maxErr, ok := compatibleMaxBytesError(err); ok {
 			WriteGoogleError(c, http.StatusRequestEntityTooLarge, BodyTooLargeMessage(maxErr.Limit))
+			return
+		}
+		if httpx.AbortCanceledRequest(c, err) {
 			return
 		}
 		WriteGoogleError(c, http.StatusBadRequest, "Failed to read request body")

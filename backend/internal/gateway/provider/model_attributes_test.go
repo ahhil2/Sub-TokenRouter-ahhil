@@ -345,3 +345,19 @@ func TestImageToolRequiresDeclaredOutput(t *testing.T) {
 		})
 	}
 }
+
+// TestApplyModelAttributeParametersUnsupportedNone covers official and relay OpenAI routes.
+// Explicitly unsupported none is removed from both wire spellings while the
+// reasoning summary selection remains available to the upstream request.
+func TestApplyModelAttributeParametersUnsupportedNone(t *testing.T) {
+	for _, address := range []string{"https://api.openai.com/v1", "https://relay.example/v1"} {
+		t.Run(address, func(t *testing.T) {
+			resolved := testkit.OfflineView().Resolve(modelcatalog.Target{Platform: "openai", ProviderType: "apikey", Model: "gpt-6.1-sol", BaseURL: address}, modelcatalog.Attributes{})
+			require.NotNil(t, resolved.Attributes.EffortSupport("none"))
+			require.False(t, *resolved.Attributes.EffortSupport("none"))
+			body, err := ApplyModelAttributeParameters([]byte(`{"model":"gpt-6.1-sol","reasoning":{"effort":"none","summary":"auto"},"reasoning_effort":"none"}`), resolved)
+			require.NoError(t, err)
+			require.JSONEq(t, `{"model":"gpt-6.1-sol","reasoning":{"summary":"auto"}}`, string(body))
+		})
+	}
+}

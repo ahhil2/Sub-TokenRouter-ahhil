@@ -15,6 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
+	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
 // input_tokens.go validates Responses input-token requests and prepares mapped
@@ -88,6 +89,9 @@ func (h *OpenAITokensHandler) ResponsesInputTokens(c *gin.Context) {
 	if err != nil {
 		if maxErr, ok := openAITextMaxBytesError(err); ok {
 			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", BodyTooLargeMessage(maxErr.Limit))
+			return
+		}
+		if httpx.AbortCanceledRequest(c, err) {
 			return
 		}
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")

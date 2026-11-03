@@ -11,6 +11,7 @@ import (
 	billingcore "github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
+	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
@@ -216,6 +217,9 @@ func (h *PublicUsageHandler) buildAPIKeyUsageBilling(c *gin.Context, ctx context
 func (h *PublicUsageHandler) UsageUnrestricted(c *gin.Context, ctx context.Context, apiKey *keycore.APIKey, subject authctx.AuthSubject, usageData gin.H, dailyUsage any, modelStats any, balanceUnitName string) {
 	billing, subscription, balance, billingErr := h.buildAPIKeyUsageBilling(c, ctx, apiKey, subject, balanceUnitName)
 	if billingErr != nil {
+		if httpx.AbortCanceledRequest(c, billingErr) {
+			return
+		}
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get billing source")
 		return
 	}
@@ -301,6 +305,9 @@ func (h *PublicUsageHandler) usageQuotaLimited(c *gin.Context, ctx context.Conte
 	}
 	billing, subscription, balance, billingErr := h.buildAPIKeyUsageBilling(c, ctx, apiKey, subject, balanceUnitName)
 	if billingErr != nil {
+		if httpx.AbortCanceledRequest(c, billingErr) {
+			return
+		}
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get billing source")
 		return
 	}

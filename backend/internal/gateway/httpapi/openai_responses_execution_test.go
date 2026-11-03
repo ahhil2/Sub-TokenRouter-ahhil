@@ -2520,15 +2520,16 @@ func TestOpenAIGatewayService_Forward_AstraReasoningEffortUsesGroupMapping(t *te
 	}
 }
 
-// TestOpenAIGatewayService_Forward_PassthroughPreservesAstraInputWithoutGroupMapping
+// TestOpenAIGatewayService_Forward_PassthroughNormalizesUnsupportedAstraNone
 // passes Astra effort values through API-key passthrough without a group rule.
-// It checks none and minimal remain unchanged in the captured upstream body.
-func TestOpenAIGatewayService_Forward_PassthroughPreservesAstraInputWithoutGroupMapping(t *testing.T) {
+// Known unsupported none is omitted for the provider default; other supplied
+// effort spellings remain unchanged unless an explicit mapping handles them.
+func TestOpenAIGatewayService_Forward_PassthroughNormalizesUnsupportedAstraNone(t *testing.T) {
 	for _, tt := range []struct {
 		effort string // admitted reasoning effort
 		want   string // expected upstream effort
 	}{
-		{effort: "none", want: "none"},
+		{effort: "none", want: ""},
 		{effort: "minimal", want: "minimal"},
 	} {
 		t.Run(tt.effort, func(t *testing.T) {

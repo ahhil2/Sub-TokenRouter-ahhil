@@ -15,6 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
+	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
 // media_handler.go prepares image and Grok video requests, including admission
@@ -239,14 +240,18 @@ type MediaHandler struct {
 func NewMediaHandler(ports MediaHTTPPorts) *MediaHandler { return &MediaHandler{ports: ports} }
 
 // readBody reads a nonempty media request through the shared bounded body
-// reader. Oversized input receives status 413, other read failures and empty
-// input receive 400, and false tells the entry to return.
+// reader. Oversized input receives status 413; canceled reads end with 499 when
+// output is uncommitted. Other read failures and empty input receive 400, and
+// false tells the entry to return.
 func (h *MediaHandler) readBody(c *gin.Context) ([]byte, bool) {
 	body, err := ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
 		if exceeded, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			h.ports.Error(c, 413, "invalid_request_error", BodyTooLargeMessage(exceeded.Limit))
 		} else {
+			if httpx.AbortCanceledRequest(c, err) {
+				return nil, false
+			}
 			h.ports.Error(c, 400, "invalid_request_error", "Failed to read request body")
 		}
 		return nil, false

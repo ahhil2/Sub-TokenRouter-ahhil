@@ -185,7 +185,16 @@ func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *R
 // synthesized replay names out of selectors and response restoration.
 // Options are copied before attaching conversion state, leaving caller-owned
 // lookup settings unchanged across independent conversions and retries.
-func ResponsesToChatCompletionsRequestWithMapping(req *ResponsesRequest, opts *ResponsesToChatOptions) (*ChatCompletionsRequest, ResponsesClientToolMapping, error) {
+// Conversion failures carry ClientToolAdaptationError so callers can exclude
+// rejected local input from upstream health feedback.
+func ResponsesToChatCompletionsRequestWithMapping(req *ResponsesRequest, opts *ResponsesToChatOptions) (converted *ChatCompletionsRequest, resultMapping ResponsesClientToolMapping, failure error) {
+	// Conversion precedes provider dispatch. Preserve that provenance for callers
+	// even when they wrap the error after writing a client validation response.
+	defer func() {
+		if failure != nil {
+			failure = &ClientToolAdaptationError{Cause: failure}
+		}
+	}()
 	if req == nil {
 		return nil, ResponsesClientToolMapping{}, fmt.Errorf("responses request is nil")
 	}
@@ -350,8 +359,12 @@ func EffectiveResponsesTools(req *ResponsesRequest) ([]ResponsesTool, error) {
 
 // CustomToolNames collects exact custom kinds with nonempty names into true-
 // valued lookup entries. Names are not trimmed, and no matches return nil.
-// Response classification uses these client names directly and can infer
-// namespace aliases separately.
+// Namespace custom children use the same bounded executable names as declaration
+// lowering, allowing response classification before the client namespace is restored.
+// A nonempty Tools list takes precedence over Children. The collector records
+// membership without checking schema conflicts; the owning converter validates
+// those conflicts before forwarding and keeps this lookup with that request's
+// namespace mapping for response restoration.
 func CustomToolNames(tools []ResponsesTool) map[string]bool {
 	var out map[string]bool
 	for _, tool := range tools {
@@ -360,6 +373,20 @@ func CustomToolNames(tools []ResponsesTool) map[string]bool {
 				out = make(map[string]bool)
 			}
 			out[tool.Name] = true
+		}
+		if tool.Type == "namespace" && tool.Name != "" {
+			children := tool.Tools
+			if len(children) == 0 {
+				children = tool.Children
+			}
+			for _, child := range children {
+				if child.Type == "custom" && child.Name != "" {
+					if out == nil {
+						out = make(map[string]bool)
+					}
+					out[flattenNamespaceToolName(tool.Name, child.Name)] = true
+				}
+			}
 		}
 	}
 	return out
@@ -384,7 +411,7 @@ func FunctionToolNames(tools []ResponsesTool) map[string]bool {
 
 // NamespaceToolNames maps derived flat labels to original namespace/child
 // pairs. Exact namespace kinds and nonempty names qualify; nonempty Tools wins
-// over Children, and only named exact function children contribute. No matches
+// over Children, and named function or custom children contribute. No matches
 // return nil and names are not trimmed.
 //
 // Derived labels can be shortened with hashes or contain separators in either
@@ -406,7 +433,7 @@ func NamespaceToolNames(tools []ResponsesTool) map[string]NamespacedToolName {
 			children = tool.Children
 		}
 		for _, child := range children {
-			if child.Type != "function" || child.Name == "" {
+			if (child.Type != "function" && child.Type != "custom") || child.Name == "" {
 				continue
 			}
 			if out == nil {
@@ -426,7 +453,8 @@ func NamespaceToolNames(tools []ResponsesTool) map[string]NamespacedToolName {
 
 // customToolCallName selects direct or inferred custom identity while
 // respecting declared function and namespace names. True function membership
-// wins, then true exact custom membership, then a known namespace key keeps
+// wins, then true exact custom membership restores its mapped child name,
+// then a remaining known namespace key keeps
 // ordinary handling. Otherwise namespace/custom combinations are checked
 // against the derived flat label.
 //
@@ -444,6 +472,9 @@ func customToolCallName(name string, customTools, functionTools map[string]bool,
 		return "", false
 	}
 	if customTools[name] {
+		if identity, ok := namespaceTools[name]; ok {
+			return identity.Name, true
+		}
 		return name, true
 	}
 	if _, ok := namespaceTools[name]; ok {
@@ -705,11 +736,19 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			// The wrapper contains only a decoded string. Its supported map has no
 			// invalid raw members or cycles, so the discarded encoding error remains nil.
 			arguments, _ := json.Marshal(map[string]string{"input": rawString(item["input"])})
+			name := rawString(item["name"])
+			if opts != nil && opts.toolHistory != nil {
+				resolved, err := opts.toolHistory.resolve(rawString(item["namespace"]), name)
+				if err != nil {
+					return nil, nil, err
+				}
+				name = resolved
+			}
 			toolCall := ChatToolCall{
 				ID:   rawString(item["call_id"]),
 				Type: "function",
 				Function: ChatFunctionCall{
-					Name:      rawString(item["name"]),
+					Name:      name,
 					Arguments: string(arguments),
 				},
 			}
@@ -1377,13 +1416,37 @@ func chatContentFromSingleResponsesPart(partType string, part map[string]json.Ra
 // x_search retains its modeled filters/options.
 //
 // Namespace validation rejects joined-label owners that differ or conflict
-// with top-level names. Repeated identical namespace/name pairs keep the first
-// declaration even if other child fields differ. Search rejects its reserved
+// with top-level names. Equivalent default-scoped definitions share the direct
+// declaration; differing schemas or kinds fail before emission. Search rejects its reserved
 // top-level name and deduplicates repeated declarations. Unsupported kinds
 // disappear. Retained schemas, slices, and optional pointers can share source
 // storage, and these name checks do not establish complete tool-schema
 // validity.
 func responsesToolsToChatTools(tools []ResponsesTool) ([]ChatTool, error) {
+	// Use the same namespace identity and schema checks as function-only Responses.
+	// Keep numeric schema literals intact while moving typed declarations through the shared flattener.
+	encoded, err := json.Marshal(tools)
+	if err != nil {
+		return nil, err
+	}
+	var declarations []any
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err := decoder.Decode(&declarations); err != nil {
+		return nil, err
+	}
+	candidate := map[string]any{"tools": declarations}
+	if _, changed, err := FlattenResponsesNamespaces(candidate); err != nil {
+		return nil, err
+	} else if changed {
+		flattened, err := json.Marshal(candidate["tools"])
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(flattened, &tools); err != nil {
+			return nil, err
+		}
+	}
 	// Reject name collisions after flattening namespace children.
 	// Responses distinguishes namespace and name; Chat dispatches by name alone.
 	topLevel := make(map[string]bool)
@@ -1395,7 +1458,6 @@ func responsesToolsToChatTools(tools []ResponsesTool) ([]ChatTool, error) {
 			topLevel[tool.Name] = true
 		}
 	}
-	flatOwner := make(map[string]NamespacedToolName)
 	toolSearchDeclared := false
 	out := make([]ChatTool, 0, len(tools))
 	for _, tool := range tools {
@@ -1433,12 +1495,6 @@ func responsesToolsToChatTools(tools []ResponsesTool) ([]ChatTool, error) {
 			}
 			toolSearchDeclared = true
 			out = append(out, toolSearchProxyChatTool())
-		case "namespace":
-			flattened, err := namespaceChildrenToChatTools(tool, topLevel, flatOwner)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, flattened...)
 		case "x_search":
 			// Hosted X search retains its modeled filters and optional media flags.
 			// Keep this tool kind outside function lowering so its selector can remain
@@ -1470,61 +1526,6 @@ func toolSearchProxyChatTool() ChatTool {
 			Parameters:  json.RawMessage(toolSearchProxySchema),
 		},
 	}
-}
-
-// namespaceChildrenToChatTools lowers named exact function children of a
-// nonempty namespace. Nonempty Tools wins over Children; unsupported children
-// are skipped. Top-level conflicts or differing owners at one flat label
-// return an error, while repeated original pairs are omitted.
-//
-// Callers provide initialized flatOwner when accepted children are possible;
-// earlier owner entries remain if a later child fails. Equality checks
-// namespace/name only, so a repeated pair's later schema or description is not
-// compared. Emitted parameter bytes and strict pointers remain shared.
-// Namespace/name spelling is not trimmed, and the complete result requires the
-// caller's overall declaration validation.
-func namespaceChildrenToChatTools(tool ResponsesTool, topLevel map[string]bool, flatOwner map[string]NamespacedToolName) ([]ChatTool, error) {
-	if tool.Name == "" {
-		return nil, nil
-	}
-	// Empty primary children permits the alternate Children list. The same owner
-	// checks then apply to either representation before emitted names can be
-	// restored.
-	children := tool.Tools
-	if len(children) == 0 {
-		children = tool.Children
-	}
-	var out []ChatTool
-	for _, child := range children {
-		if child.Type != "function" || child.Name == "" {
-			continue
-		}
-		flat := flattenNamespaceToolName(tool.Name, child.Name)
-		entry := NamespacedToolName{Namespace: tool.Name, Name: child.Name}
-		if topLevel[flat] {
-			return nil, fmt.Errorf("namespace tool %q/%q flattens to %q which conflicts with a top-level tool of the same name; this upstream cannot disambiguate them, rename one of the tools", tool.Name, child.Name, flat)
-		}
-		// A repeated original pair uses its first emitted declaration, even if later
-		// schema/description differs. Different pairs at the same label would
-		// restore to different identities.
-		if prev, ok := flatOwner[flat]; ok {
-			if prev == entry {
-				continue
-			}
-			return nil, fmt.Errorf("namespace tools %q/%q and %q/%q both flatten to %q; this upstream cannot disambiguate them, rename one of the tools", prev.Namespace, prev.Name, tool.Name, child.Name, flat)
-		}
-		flatOwner[flat] = entry
-		out = append(out, ChatTool{
-			Type: "function",
-			Function: &ChatFunction{
-				Name:        flat,
-				Description: child.Description,
-				Parameters:  child.Parameters,
-				Strict:      child.Strict,
-			},
-		})
-	}
-	return out, nil
 }
 
 // flattenNamespaceToolName keeps default-scope names bare and joins other
@@ -1817,12 +1818,13 @@ func chatMessageToResponsesOutput(runtime Runtime, message ChatMessage, customTo
 		// would reject it.
 		if customName, ok := customToolCallName(toolCall.Function.Name, customTools, functionTools, namespaceTools); ok {
 			outputs = append(outputs, ResponsesOutput{
-				Type:   "custom_tool_call",
-				ID:     generateItemID(runtime),
-				CallID: toolCall.ID,
-				Name:   customName,
-				Input:  extractCustomToolCallInput(arguments),
-				Status: "completed",
+				Type:      "custom_tool_call",
+				ID:        generateItemID(runtime),
+				CallID:    toolCall.ID,
+				Name:      customName,
+				Namespace: namespaceTools[toolCall.Function.Name].Namespace,
+				Input:     extractCustomToolCallInput(arguments),
+				Status:    "completed",
 			})
 			continue
 		}
@@ -2456,13 +2458,13 @@ func announceChatToolItem(
 	if isToolSearch {
 		itemType = "tool_search_call"
 	}
-	// Namespace children use the function-call lifecycle but need their unqualified
-	// name and namespace on added/done items for Codex dispatch.
+	// Function and custom children need their original namespace and child name
+	// on added/done items so the client dispatches the same tool advertised in its declarations.
 	itemName, itemNamespace := stored.Function.Name, ""
 	if isCustom {
 		itemName = customName
 	}
-	if ns, ok := state.NamespaceTools[stored.Function.Name]; ok && !isCustom && !isToolSearch {
+	if ns, ok := state.NamespaceTools[stored.Function.Name]; ok && !isToolSearch {
 		state.toolNamespace[idx] = ns
 		itemName, itemNamespace = ns.Name, ns.Namespace
 	}
@@ -2554,12 +2556,13 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 				chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
 					OutputIndex: outputIndex,
 					Item: &ResponsesOutput{
-						Type:   "custom_tool_call",
-						ID:     itemID,
-						CallID: toolCall.ID,
-						Name:   customNameForStreamTool(state, toolCall.Function.Name),
-						Input:  input,
-						Status: "completed",
+						Type:      "custom_tool_call",
+						ID:        itemID,
+						CallID:    toolCall.ID,
+						Name:      customNameForStreamTool(state, toolCall.Function.Name),
+						Namespace: state.NamespaceTools[toolCall.Function.Name].Namespace,
+						Input:     input,
+						Status:    "completed",
 					},
 				}),
 			)
@@ -2672,12 +2675,13 @@ func (state *ChatCompletionsToResponsesStreamState) chatOutput(runtime Runtime) 
 		}
 		if state.toolIsCustom[i] {
 			outputs = append(outputs, ResponsesOutput{
-				Type:   "custom_tool_call",
-				ID:     generateItemID(runtime),
-				CallID: toolCall.ID,
-				Name:   customNameForStreamTool(state, toolCall.Function.Name),
-				Input:  extractCustomToolCallInput(arguments),
-				Status: "completed",
+				Type:      "custom_tool_call",
+				ID:        generateItemID(runtime),
+				CallID:    toolCall.ID,
+				Name:      customNameForStreamTool(state, toolCall.Function.Name),
+				Namespace: state.NamespaceTools[toolCall.Function.Name].Namespace,
+				Input:     extractCustomToolCallInput(arguments),
+				Status:    "completed",
 			})
 			continue
 		}

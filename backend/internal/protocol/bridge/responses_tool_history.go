@@ -31,7 +31,7 @@ import (
 // function names independently of the current callable declarations.
 type responsesToolHistoryNames map[NamespacedToolName]string
 
-// newResponsesToolHistoryNames prepares names for direct function_call input
+// newResponsesToolHistoryNames prepares names for direct function/custom call input
 // items using known declaration aliases before allocating missing identities.
 // Nonarray input contributes no calls; the request converter validates its
 // shape. Empty qualified names remain unresolved for validation at consumption.
@@ -68,7 +68,7 @@ func newResponsesToolHistoryNames(input json.RawMessage, mapping ResponsesClient
 		if item.Get("type").String() == "custom_tool_call" {
 			reserved[item.Get("name").String()] = true
 		}
-		if item.Get("type").String() != "function_call" {
+		if kind := item.Get("type").String(); kind != "function_call" && kind != "custom_tool_call" {
 			continue
 		}
 		identity := NamespacedToolName{
@@ -136,7 +136,7 @@ func newResponsesToolHistoryNames(input json.RawMessage, mapping ResponsesClient
 	return names, nil
 }
 
-// resolve returns the prepared name for a direct historical function call.
+// resolve returns the prepared name for a direct historical function or custom call.
 // Bare and default-scoped calls also accept already-lowered spellings. Unknown
 // qualified identities indicate an invalid name or an unprepared input item.
 func (names responsesToolHistoryNames) resolve(namespace, name string) (string, error) {

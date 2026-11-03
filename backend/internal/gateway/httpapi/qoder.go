@@ -132,6 +132,9 @@ func (h *QoderChatHandler) ChatCompletions(c *gin.Context) {
 			h.writeError(c, &HTTPFailure{Status: 413, Type: "invalid_request_error", Message: BodyTooLargeMessage(maxErr.Limit)}, false)
 			return
 		}
+		if httpx.AbortCanceledRequest(c, err) {
+			return
+		}
 		h.writeError(c, &HTTPFailure{Status: 400, Type: "invalid_request_error", Message: "Failed to read request body"}, false)
 		return
 	}

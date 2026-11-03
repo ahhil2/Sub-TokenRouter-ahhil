@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -258,6 +259,11 @@ type StreamingResult struct {
 // failure, but the unsupported-flusher return occurs before that defer is
 // installed. The executor retains final body ownership.
 func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options StreamOptions, startTime time.Time, originalModel, mappedModel, reasoningEffort string) (observed *StreamingResult, failure error) {
+	// Capture the immutable dispatch before body processing. Every return closes
+	// this exchange, including SSE failures after HTTP 200 and client cancellation.
+	ref := telemetry.RequestAttemptFromResponse(resp)
+	defer func() { telemetry.ObserveRequestResult(ctx, ref, failure) }()
+
 	firstOutputTimeout := options.FirstOutputTimeout
 	guardFirstOutput := firstOutputTimeout > 0
 	stageFirstOutput := options.StageFirstOutput
@@ -435,6 +441,15 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 	var streamEarlyErr error
 	terminalFailurePending := false
 	failureDelivered := false
+	// Accepted terminal failure payloads remain evidence even after HTTP output
+	// started. Early failover and rule branches record their own errors before
+	// adopting this payload; a recovered bare error clears the failed-event flag.
+	defer func() {
+		if failure != nil && sawFailedEvent && len(failedPayload) > 0 && options.RecordError != nil {
+			options.RecordError(upstreamRequestID, "stream_error", failedPayload, failedMessage)
+		}
+	}()
+
 	suppressCurrentEvent := false
 	var bareErrorPayload []byte
 	bareErrorProviderSideEffectsPending := false

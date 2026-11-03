@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -1027,4 +1028,143 @@ func responsesClientToolNames(t *testing.T, tools []any) []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// TestAdaptResponsesNamespaceCustomDeclarations checks executable availability across static,
+// additional, and discovered declarations. Every admitted custom tool needs a
+// function declaration upstream and a mapping for restoring its custom response.
+func TestAdaptResponsesNamespaceCustomDeclarations(t *testing.T) {
+	for _, tc := range []struct {
+		name      string // diagnostic scenario name
+		source    string // declaration source location
+		namespace string // optional client namespace
+		mixed     bool   // include ordinary wait function
+		childKey  string // namespace child array spelling
+	}{
+		{"direct_custom", "static", "", false, "tools"},
+		{"additional_direct_custom", "additional", "", false, "tools"},
+		{"discovered_direct_custom", "discovery", "", false, "tools"},
+		{"static_functions_mixed", "static", "functions", true, "tools"},
+		{"additional_functions_mixed", "additional", "functions", true, "tools"},
+		{"discovered_functions_mixed", "discovery", "functions", true, "tools"},
+		{"static_functions_custom_only", "static", "functions", false, "tools"},
+		{"additional_functions_custom_only", "additional", "functions", false, "tools"},
+		{"discovered_functions_custom_only", "discovery", "functions", false, "tools"},
+		{"static_desktop_mixed", "static", "desktop", true, "tools"},
+		{"additional_children_alias", "additional", "functions", true, "children"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			custom := map[string]any{"type": "custom", "name": "exec", "format": map[string]any{"type": "text"}}
+			tools := []any{custom}
+			if tc.mixed {
+				tools = append(tools, map[string]any{"type": "function", "name": "wait", "parameters": map[string]any{"type": "object"}})
+			}
+			if tc.namespace != "" {
+				tools = []any{map[string]any{"type": "namespace", "name": tc.namespace, tc.childKey: tools}}
+			}
+			request := map[string]any{"model": "diagnostic-fixture", "input": []any{}}
+			// Exercise each wire declaration source through the public adapter so
+			// promotion and namespace flattening participate in the same availability check.
+			switch tc.source {
+			case "static":
+				request["tools"] = tools
+			case "additional":
+				request["input"] = []any{map[string]any{"type": "additional_tools", "role": "developer", "tools": tools}}
+			case "discovery":
+				request["tools"] = []any{map[string]any{"type": "tool_search"}}
+				request["input"] = []any{
+					map[string]any{"type": "tool_search_call", "call_id": "search_1", "arguments": map[string]any{"query": "exec"}},
+					map[string]any{"type": "tool_search_output", "call_id": "search_1", "status": "completed", "tools": tools},
+				}
+			}
+			body, err := json.Marshal(request)
+			require.NoError(t, err)
+			converted, mapping, err := AdaptOpenAIResponsesClientTools(body)
+			require.NoError(t, err)
+			expectedName := "exec"
+			if tc.namespace != "" && tc.namespace != "functions" {
+				expectedName = tc.namespace + "__exec"
+			}
+			found := false
+			for _, tool := range gjson.GetBytes(converted, "tools").Array() {
+				if tool.Get("type").String() == "function" && tool.Get("name").String() == expectedName {
+					found = true
+					require.Equal(t, "string", tool.Get("parameters.properties.input.type").String())
+				}
+			}
+			t.Logf("upstream_tools=%s custom_mapping=%v", gjson.GetBytes(converted, "tools").Raw, mapping.CustomTools)
+			if !found {
+				t.Errorf("custom exec has no executable function declaration after adaptation")
+			}
+			if !mapping.CustomTools[expectedName] {
+				t.Errorf("custom exec has no response restoration mapping")
+			}
+		})
+	}
+}
+
+// TestAdaptResponsesDefaultNamespaceDuplicates admits equivalent default declarations once.
+// Different schemas and colliding explicit namespaces must still fail before conversion can select an ambiguous executable identity.
+func TestAdaptResponsesDefaultNamespaceDuplicates(t *testing.T) {
+	for _, namespace := range []string{"functions", "other"} {
+		for _, different := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/different=%v", namespace, different), func(t *testing.T) {
+				direct := map[string]any{"type": "function", "name": "wait", "parameters": map[string]any{"type": "object"}}
+				child := copyClientTool(direct)
+				if different {
+					child["parameters"] = map[string]any{"type": "object", "required": []any{"id"}}
+				}
+				if namespace == "other" {
+					direct["name"] = "other__wait"
+				}
+				request := map[string]any{"tools": []any{direct, map[string]any{"type": "namespace", "name": namespace, "tools": []any{child}}}}
+				_, _, err := AdaptResponsesClientTools(request)
+				if different || namespace != "functions" {
+					require.Error(t, err)
+					return
+				}
+				require.NoError(t, err)
+				require.Len(t, request["tools"], 1)
+			})
+		}
+	}
+}
+
+// TestAdaptResponsesCustomNamespaceRoundTrip exercises custom calls through a named namespace.
+// Declarations, choice, replay, buffered and streamed output, and omitted-tool continuation must retain the same client tool identity and freeform input.
+func TestAdaptResponsesCustomNamespaceRoundTrip(t *testing.T) {
+	body := []byte(`{"tools":[{"type":"namespace","name":"desktop","tools":[{"type":"custom","name":"exec","format":{"type":"text"}}]}],"tool_choice":{"type":"custom","namespace":"desktop","name":"exec"},"input":[{"type":"custom_tool_call","call_id":"old","name":"exec","namespace":"desktop","input":"pwd"},{"type":"custom_tool_call_output","call_id":"old","output":"/work"}]}`)
+	converted, mapping, err := AdaptOpenAIResponsesClientTools(body)
+	require.NoError(t, err)
+	require.True(t, mapping.CustomTools["desktop__exec"])
+	require.Equal(t, "desktop__exec", gjson.GetBytes(converted, "tool_choice.name").String())
+	require.Equal(t, "function", gjson.GetBytes(converted, "tool_choice.type").String())
+	require.Equal(t, "desktop__exec", gjson.GetBytes(converted, "input.0.name").String())
+	require.False(t, gjson.GetBytes(converted, "input.0.namespace").Exists())
+	require.Equal(t, "function_call_output", gjson.GetBytes(converted, "input.1.type").String())
+	reply := []byte(`{"output":[{"type":"function_call","id":"fc_new","call_id":"new","name":"desktop__exec","arguments":"{\"input\":\"ls\"}"}]}`)
+	restored, _, err := RestoreResponsesClientToolPayload(reply, mapping)
+	require.NoError(t, err)
+	require.Equal(t, "custom_tool_call", gjson.GetBytes(restored, "output.0.type").String())
+	require.Equal(t, "desktop", gjson.GetBytes(restored, "output.0.namespace").String())
+	require.Equal(t, "exec", gjson.GetBytes(restored, "output.0.name").String())
+	require.Equal(t, "ls", gjson.GetBytes(restored, "output.0.input").String())
+	stream := NewResponsesClientToolStreamRestorer(mapping)
+	events := stream.Restore(ResponsesStreamEvent{Type: "response.output_item.added", Item: &ResponsesOutput{Type: "function_call", ID: "fc_new", CallID: "new", Name: "desktop__exec"}})
+	require.Equal(t, "custom_tool_call", events[0].Item.Type)
+	require.Equal(t, "desktop", events[0].Item.Namespace)
+	require.Equal(t, "exec", events[0].Item.Name)
+	wire, err := json.Marshal(events[0])
+	require.NoError(t, err)
+	require.Equal(t, "desktop", gjson.GetBytes(wire, "item.namespace").String())
+	events = stream.Restore(ResponsesStreamEvent{Type: "response.function_call_arguments.done", ItemID: "fc_new", Arguments: `{"input":"ls"}`})
+	require.Equal(t, "exec", events[len(events)-1].Name)
+	var request map[string]any
+	require.NoError(t, json.Unmarshal(converted, &request))
+	inherited := restoreInheritedResponsesClientToolDeclarations(requireResponsesClientToolValue[[]any](t, request["tools"]), mapping)
+	next := map[string]any{"tools": inherited, "input": []any{}}
+	nextMapping, _, err := AdaptResponsesClientTools(next)
+	require.NoError(t, err)
+	require.True(t, nextMapping.CustomTools["desktop__exec"])
+	require.Equal(t, mapping.NamespaceTools["desktop__exec"], nextMapping.NamespaceTools["desktop__exec"])
 }

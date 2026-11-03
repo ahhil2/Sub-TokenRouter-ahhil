@@ -10,6 +10,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -92,7 +93,12 @@ func IsEventStreamResponse(header http.Header) bool {
 // RestoreNamespace, and RestoreToolNames run in that order before output.
 // Dispatch to ReadSSEAsJSON can observe the same complete SSE body again, so
 // observation callbacks tolerate repeated inspection.
-func ReadNonStreamingResponse(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options NonStreamOptions, originalModel, mappedModel string) (*NonStreamingResult, error) {
+func ReadNonStreamingResponse(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options NonStreamOptions, originalModel, mappedModel string) (observed *NonStreamingResult, failure error) {
+	// Capture the immutable dispatch before body processing. Every return closes
+	// this exchange, including SSE failures after HTTP 200 and client cancellation.
+	ref := telemetry.RequestAttemptFromResponse(resp)
+	defer func() { telemetry.ObserveRequestResult(ctx, ref, failure) }()
+
 	body, err := options.ReadBody(resp.Body)
 	if err != nil {
 		return nil, err

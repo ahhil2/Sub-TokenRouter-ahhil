@@ -20,6 +20,7 @@ import (
 	textflow "github.com/TokenFlux/TokenRouter/internal/gateway/text"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -483,10 +484,11 @@ func (b *responsesAttemptBridge) Switching(failure *textflow.AttemptFailure, swi
 	b.reqLog.Warn("openai.upstream_failover_switching", failoverSwitchFields...)
 }
 
-// OtherFailure presents local capability errors before recording any upstream
-// failure feedback. For other errors it records Cyber warnings and scheduling
-// failure, then supplies missing Responses error output. It prefers warning evidence carried by the
-// error chain; absent evidence sends the error text to the warning recorder.
+// OtherFailure presents local capability and client-tool errors before recording
+// any upstream failure feedback. For other errors it records Cyber warnings and
+// scheduling failure, then supplies missing Responses error output. It prefers
+// warning evidence carried by the error chain; absent evidence sends the error
+// text to the warning recorder.
 //
 // After warning handling, communicated-error evidence and adjusted output size
 // decide whether another terminal response is needed. A recorded warning
@@ -494,9 +496,10 @@ func (b *responsesAttemptBridge) Switching(failure *textflow.AttemptFailure, swi
 // communicated error suppresses fallback. The selected output state is retained
 // for Failed to choose log severity.
 func (b *responsesAttemptBridge) OtherFailure(err error) {
-	// Attribute admission can fail before transport. Present it once and stop
-	// here so a local configuration rejection cannot reduce provider health scores.
-	if routing.IsModelAttributeError(err) {
+	// Attribute admission and tool conversion can fail before transport. Present
+	// them once so rejected local input cannot reduce provider health scores.
+	_, toolInputError := errors.AsType[*bridge.ClientToolAdaptationError](err)
+	if routing.IsModelAttributeError(err) || toolInputError {
 		b.wroteFallback = b.binding().ensureOpenAIForwardErrorResponse(b.c, *b.streamStarted, err)
 		return
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
 // openai_text_messages.go admits Messages requests and prepares group mapping
@@ -96,6 +97,9 @@ func (h *OpenAITextHandler) Messages(c *gin.Context) {
 	if err != nil {
 		if maxErr, ok := openAITextMaxBytesError(err); ok {
 			h.anthropicErrorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", BodyTooLargeMessage(maxErr.Limit))
+			return
+		}
+		if httpx.AbortCanceledRequest(c, err) {
 			return
 		}
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")

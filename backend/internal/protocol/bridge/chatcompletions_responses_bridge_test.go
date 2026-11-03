@@ -977,9 +977,8 @@ func TestHasToolSearchTool(t *testing.T) {
 }
 
 // TestResponsesToChatCompletionsRequest_NamespaceToolFlattensChildren supplies
-// named function and custom children in one namespace. Only the function
-// survives, retaining its inspected flat name and description in one
-// declaration.
+// named function and custom children in one namespace. Both become executable
+// functions, with original function parameters and the custom freeform input wrapper.
 func TestResponsesToChatCompletionsRequest_NamespaceToolFlattensChildren(t *testing.T) {
 	req := &ResponsesRequest{
 		Model: "glm-5.2",
@@ -989,14 +988,16 @@ func TestResponsesToChatCompletionsRequest_NamespaceToolFlattensChildren(t *test
 			Name: "gmail",
 			Tools: []ResponsesTool{
 				{Type: "function", Name: "send", Description: "Send mail", Parameters: json.RawMessage(`{"type":"object","properties":{}}`)},
-				{Type: "custom", Name: "ignored_child"},
+				{Type: "custom", Name: "exec"},
 			},
 		}},
 	}
 
 	out, err := ResponsesToChatCompletionsRequestWithOptions(req, nil)
 	require.NoError(t, err)
-	require.Len(t, out.Tools, 1, "namespace 子工具中仅 function 类型被摊平")
+	require.Len(t, out.Tools, 2)
+	require.Equal(t, "gmail__exec", out.Tools[1].Function.Name)
+	require.JSONEq(t, customToolInputSchema, string(out.Tools[1].Function.Parameters))
 
 	assert.Equal(t, "gmail__send", out.Tools[0].Function.Name)
 	assert.Equal(t, "Send mail", out.Tools[0].Function.Description)
@@ -1247,14 +1248,14 @@ func TestChatCompletionsChunkToResponsesEvents_FunctionToolNameArrivesLate(t *te
 }
 
 // TestNamespaceToolNames_MapsFlattenedNames covers primary/alternate namespace
-// children, unsupported custom children, and a long hashed pair. It checks
+// children, custom children, and a long hashed pair. It checks
 // recorded original identities, long-name restoration, and nil result for nil
 // declarations.
 func TestNamespaceToolNames_MapsFlattenedNames(t *testing.T) {
 	tools := []ResponsesTool{
 		{Type: "namespace", Name: "gmail", Tools: []ResponsesTool{
 			{Type: "function", Name: "send"},
-			{Type: "custom", Name: "skip_me"},
+			{Type: "custom", Name: "exec"},
 		}},
 		{Type: "namespace", Name: "crm", Children: []ResponsesTool{
 			{Type: "function", Name: "query"},
@@ -1263,7 +1264,8 @@ func TestNamespaceToolNames_MapsFlattenedNames(t *testing.T) {
 	}
 
 	m := NamespaceToolNames(tools)
-	require.Len(t, m, 2)
+	require.Len(t, m, 3)
+	require.Equal(t, NamespacedToolName{Namespace: "gmail", Name: "exec"}, m["gmail__exec"])
 	assert.Equal(t, NamespacedToolName{Namespace: "gmail", Name: "send"}, m["gmail__send"])
 	assert.Equal(t, NamespacedToolName{Namespace: "crm", Name: "query"}, m["crm__query"])
 
@@ -2856,4 +2858,40 @@ func findEvent(events []ResponsesStreamEvent, eventType string) *ResponsesStream
 		}
 	}
 	return nil
+}
+
+// TestResponsesChatBridgeCustomNamespaceRoundTrip converts a scoped freeform tool through Chat.
+// Both buffered and streamed returns must restore the custom kind, original namespace, executable name, and input from the function wrapper.
+func TestResponsesChatBridgeCustomNamespaceRoundTrip(t *testing.T) {
+	var request ResponsesRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"model":"test","tools":[{"type":"namespace","name":"desktop","tools":[{"type":"custom","name":"exec"}]}],"input":[{"type":"custom_tool_call","namespace":"desktop","name":"exec","call_id":"old","input":"pwd"},{"type":"custom_tool_call_output","call_id":"old","output":"/work"}]}`), &request))
+	converted, mapping, err := ResponsesToChatCompletionsRequestWithMapping(&request, nil)
+	require.NoError(t, err)
+	require.Len(t, converted.Tools, 1)
+	require.Equal(t, "desktop__exec", converted.Tools[0].Function.Name)
+	require.Equal(t, "desktop__exec", converted.Messages[0].ToolCalls[0].Function.Name)
+	require.True(t, mapping.CustomTools["desktop__exec"])
+	call := ChatToolCall{ID: "new", Function: ChatFunctionCall{Name: "desktop__exec", Arguments: `{"input":"ls"}`}}
+	response := ChatCompletionsResponseToResponses(testRuntime(), &ChatCompletionsResponse{Choices: []ChatChoice{{Message: ChatMessage{Role: "assistant", ToolCalls: []ChatToolCall{call}}}}}, "test", mapping.CustomTools, mapping.FunctionTools, false, mapping.NamespaceTools)
+	require.Len(t, response.Output, 1)
+	require.Equal(t, "custom_tool_call", response.Output[0].Type)
+	require.Equal(t, "desktop", response.Output[0].Namespace)
+	require.Equal(t, "exec", response.Output[0].Name)
+	state := NewChatCompletionsToResponsesStreamState(testRuntime(), "test")
+	state.CustomTools = mapping.CustomTools
+	state.FunctionTools = mapping.FunctionTools
+	state.NamespaceTools = mapping.NamespaceTools
+	index := 0
+	call.Index = &index
+	events := ChatCompletionsChunkToResponsesEvents(testRuntime(), &ChatCompletionsChunk{ID: "chat", Choices: []ChatChunkChoice{{Delta: ChatDelta{ToolCalls: []ChatToolCall{call}}}}}, state)
+	events = append(events, FinalizeChatCompletionsResponsesStream(testRuntime(), state)...)
+	count := 0
+	for _, event := range events {
+		if event.Item != nil && event.Item.Type == "custom_tool_call" {
+			count++
+			require.Equal(t, "desktop", event.Item.Namespace)
+			require.Equal(t, "exec", event.Item.Name)
+		}
+	}
+	require.Equal(t, 2, count)
 }

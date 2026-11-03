@@ -14,6 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
 // openai_text_chat.go admits Chat Completions requests and prepares their
@@ -88,6 +89,9 @@ func (h *OpenAITextHandler) ChatCompletions(c *gin.Context) {
 			return
 		}
 		h.backend.ReadFailure(reqLog, c.Request, err)
+		if httpx.AbortCanceledRequest(c, err) {
+			return
+		}
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}

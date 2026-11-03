@@ -25,6 +25,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
+	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
 // messages.go prepares Messages requests for policy checks, user admission,
@@ -264,6 +265,9 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 	if err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", BodyTooLargeMessage(maxErr.Limit))
+			return
+		}
+		if httpx.AbortCanceledRequest(c, err) {
 			return
 		}
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")

@@ -17,6 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
+	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
 // qoder_compatible.go admits compatible Qoder requests and manages their
@@ -243,6 +244,9 @@ func (h *QoderCompatibleHandler) handle(c *gin.Context, endpoint QoderEndpoint) 
 	if err != nil {
 		if maxErr, ok := countMaxBytesError(err); ok {
 			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", BodyTooLargeMessage(maxErr.Limit), endpoint)
+			return
+		}
+		if httpx.AbortCanceledRequest(c, err) {
 			return
 		}
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body", endpoint)

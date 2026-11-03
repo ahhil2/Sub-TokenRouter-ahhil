@@ -554,8 +554,12 @@ func RewriteMultipartModel(request *http.Request, actualModel string) error {
 // AbortCompositeKeyError writes a structured composite key error in the endpoint's protocol.
 // SystemOne and OpenAI-family endpoints receive model-specific error fields;
 // other paths receive the Messages shape. Each branch aborts Gin processing after
-// writing the status and reason carried by err.
+// writing the status and reason carried by err. Canceled requests abort without
+// an error body and use 499 when their response is uncommitted.
 func AbortCompositeKeyError(c *gin.Context, err error) {
+	if httpx.AbortCanceledRequest(c, err) {
+		return
+	}
 	status := httpx.ErrorCode(err)
 	code := infraerrors.Reason(err)
 	message := infraerrors.Message(err)
@@ -592,6 +596,11 @@ func IsOpenAICompositeEndpoint(path string) bool {
 // AbortCompositeKeyGoogleError writes a composite key error in Google format.
 // It combines the structured reason and message for Google's status envelope,
 // then delegates to the API-key HTTP writer to abort further processing.
+// Cancellation ends the request without an error body, using 499 for an
+// uncommitted response and retaining any committed status.
 func AbortCompositeKeyGoogleError(c *gin.Context, err error) {
+	if httpx.AbortCanceledRequest(c, err) {
+		return
+	}
 	keyhttp.AbortGoogleError(c, httpx.ErrorCode(err), infraerrors.Reason(err)+": "+infraerrors.Message(err))
 }

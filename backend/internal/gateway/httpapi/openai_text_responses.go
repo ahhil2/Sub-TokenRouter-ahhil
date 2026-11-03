@@ -18,6 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
+	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
@@ -103,6 +104,9 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 			return
 		}
 		h.backend.ReadFailure(reqLog, c.Request, err)
+		if httpx.AbortCanceledRequest(c, err) {
+			return
+		}
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}

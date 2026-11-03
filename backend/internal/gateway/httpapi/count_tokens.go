@@ -19,6 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
+	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
 // count_tokens.go prepares Messages token-count requests and starts the
@@ -132,6 +133,9 @@ func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 	if err != nil {
 		if maxErr, ok := countMaxBytesError(err); ok {
 			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", BodyTooLargeMessage(maxErr.Limit))
+			return
+		}
+		if httpx.AbortCanceledRequest(c, err) {
 			return
 		}
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")

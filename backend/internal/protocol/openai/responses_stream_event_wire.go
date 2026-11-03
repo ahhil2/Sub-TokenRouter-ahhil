@@ -179,8 +179,8 @@ func summaryTextPartWire(part *ResponsesContentPart) map[string]any {
 //
 // Reasoning uses an array summary, and function/custom calls include the
 // identity and input fields their client dispatch requires. Namespace is
-// retained on function calls; discovery calls include client execution and
-// argument-value conversion. Fields outside the selected item shape are
+// retained on function and custom calls; discovery calls include client
+// execution and argument-value conversion. Fields outside the selected item shape are
 // dropped, so callers needing arbitrary vendor items retain their raw JSON
 // before this typed encoding.
 func responsesItemWire(item *ResponsesOutput) map[string]any {
@@ -224,6 +224,9 @@ func responsesItemWire(item *ResponsesOutput) map[string]any {
 		m["call_id"] = item.CallID
 		m["name"] = item.Name
 		m["input"] = item.Input
+		if item.Namespace != "" {
+			m["namespace"] = item.Namespace
+		}
 	case "tool_search_call":
 		// Discovery is dispatched on the client and accepts argument JSON values.
 		// Convert the bridge's accumulated argument text before emitting this call.

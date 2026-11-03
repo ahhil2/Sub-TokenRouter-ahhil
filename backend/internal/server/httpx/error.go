@@ -1,8 +1,12 @@
 package httpx
 
 import (
+	"context"
+	"errors"
 	"maps"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
@@ -12,7 +16,9 @@ import (
 // Wrapped application errors carry the numeric response code, reason, and
 // message selected by their owner. Mapping extracts that same entity through
 // wrappers and copies its string metadata for the response, while unrecognized
-// errors become the generic internal-error body supplied by apperror.
+// errors become the generic internal-error body supplied by apperror. Requests
+// canceled during admission or body reading terminate with client-closed status
+// before those failures can be presented as internal errors.
 
 // ToHTTP returns the numeric code and serializable application-error status.
 // Nil input or a nil ApplicationError found through wrappers returns HTTP 200.
@@ -72,4 +78,21 @@ func HTTPStatusToGoogleStatus(status int) string {
 		}
 		return "UNKNOWN"
 	}
+}
+
+// AbortCanceledRequest ends an already canceled HTTP request without an error body.
+// A canceled context or wrapped context.Canceled error selects 499 while output
+// is uncommitted. Existing response status survives; unrelated errors on live
+// requests remain available to their caller's normal error handling.
+func AbortCanceledRequest(c *gin.Context, err error) bool {
+	if c == nil || c.Request == nil || (c.Request.Context().Err() == nil && !errors.Is(err, context.Canceled)) {
+		return false
+	}
+	// Cancellation removes the response consumer. Retain committed framing and
+	// record client closure instead of manufacturing a server or input-validation failure.
+	if !c.Writer.Written() {
+		c.Status(499)
+	}
+	c.Abort()
+	return true
 }

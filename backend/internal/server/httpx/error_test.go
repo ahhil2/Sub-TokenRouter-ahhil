@@ -1,12 +1,15 @@
 package httpx
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
@@ -105,4 +108,34 @@ func TestToHTTP_MetadataDeepCopy_Legacy(t *testing.T) {
 
 	appErr.Metadata["k"] = "changed-again"
 	require.Equal(t, "v", body.Metadata["k"])
+}
+
+// TestAbortCanceledRequestPreservesCommittedOutput covers cancellation and live request controls.
+// Canceled requests abort without an error body, committed streams retain their status, and unrelated errors continue through normal error handling.
+func TestAbortCanceledRequestPreservesCommittedOutput(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("committed=%v", committed), func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			c.Request = httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
+			if committed {
+				c.String(http.StatusOK, "partial")
+			}
+			require.True(t, AbortCanceledRequest(c, context.Canceled))
+			require.True(t, c.IsAborted())
+			if committed {
+				require.Equal(t, http.StatusOK, c.Writer.Status())
+				require.Equal(t, "partial", recorder.Body.String())
+			} else {
+				require.Equal(t, 499, c.Writer.Status())
+				require.Empty(t, recorder.Body.String())
+			}
+		})
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	require.False(t, AbortCanceledRequest(c, errors.New("storage failure")))
+	require.False(t, c.IsAborted())
 }

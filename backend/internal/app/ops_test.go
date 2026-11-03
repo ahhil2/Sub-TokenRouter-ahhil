@@ -13,6 +13,7 @@ import (
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	opscore "github.com/TokenFlux/TokenRouter/internal/ops"
 	opsprovider "github.com/TokenFlux/TokenRouter/internal/ops/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -133,4 +134,37 @@ func TestOpsObservationAccessUsesTypedIngressMarker(t *testing.T) {
 	require.False(t, access.Rejected(c))
 	middleware2.MarkIngressRejected(c, middleware2.IngressRejectInvalidAPIKey)
 	require.True(t, access.Rejected(c))
+}
+
+// TestOpsErrorLoggerMiddlewareRetainsNestedWriterStatus reproduces request finalization after model restoration.
+// Outer request records must retain the delivered failure after the inner Ops capture lease has been released.
+func TestOpsErrorLoggerMiddlewareRetainsNestedWriterStatus(t *testing.T) {
+	for _, composite := range []bool{false, true} {
+		name := "plain_writer"
+		if composite {
+			name = "composite_writer"
+		}
+		t.Run(name, func(t *testing.T) {
+			var final telemetry.RequestRecord
+			router := gin.New()
+			router.Use(middleware2.RequestLogger(func(record telemetry.RequestRecord) {
+				final = record
+			}))
+			router.Use(gatewayhttp.TextRequestTiming())
+			router.Use(gatewayhttp.OpsErrorLoggerMiddleware(nil, nil, provideOpsObservationAccess()))
+			router.POST("/v1/responses", func(c *gin.Context) {
+				if composite {
+					gatewayhttp.SetCompositeModelContext(c, "group/test-model", "test-model")
+				}
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "api_error", "message": "Service temporarily unavailable"}})
+			})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+			require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+
+			require.Equal(t, http.StatusServiceUnavailable, final.Status)
+			require.Equal(t, "failed", final.State)
+			t.Logf("delivered=%d recorded=%d state=%s", recorder.Code, final.Status, final.State)
+		})
+	}
 }

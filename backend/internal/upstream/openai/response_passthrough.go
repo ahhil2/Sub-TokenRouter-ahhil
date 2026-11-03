@@ -15,6 +15,7 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -86,7 +87,12 @@ type PassthroughOptions struct {
 // other StreamingResult flags zero. Synthetic EOF writes and the final deferred
 // flush occur before deferred heartbeat cleanup; callers use the request
 // writer's own observations for commitment and output state.
-func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options PassthroughOptions, startTime time.Time, originalModel, mappedModel string) (*StreamingResult, error) {
+func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options PassthroughOptions, startTime time.Time, originalModel, mappedModel string) (observed *StreamingResult, failure error) {
+	// Capture the immutable dispatch before body processing. Every return closes
+	// this exchange, including SSE failures after HTTP 200 and client cancellation.
+	ref := telemetry.RequestAttemptFromResponse(resp)
+	defer func() { telemetry.ObserveRequestResult(ctx, ref, failure) }()
+
 	options.Headers(c.Writer.Header(), resp.Header)
 
 	c.Header("Content-Type", "text/event-stream")
@@ -117,17 +123,27 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 	semanticOutputSeen := false
 	capacityFailoverSuppressedLogged := false
 	failedMessage := ""
-	// Failed-return warning classification receives a nil body in this reader;
-	// live failure processing observes its actual payload and retains the message separately.
+	// Keep accepted terminal evidence for final warning and Ops attribution,
+	// including failures that arrive after the downstream HTTP status is committed.
 	var failedPayload []byte
 	clientOutputStarted := false
 	codexFailureTerminal := options.NativeOpenAI
+	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	failureDelivered := false
+	// Accepted terminal failure payloads remain evidence even after HTTP output
+	// started. Early failover and rule branches record their own errors before
+	// adopting this payload; a recovered bare error clears the failed-event flag.
+	defer func() {
+		if failure != nil && sawFailedEvent && len(failedPayload) > 0 && options.RecordError != nil {
+			options.RecordError(upstreamRequestID, "stream_error", failedPayload, failedMessage)
+		}
+	}()
+
 	suppressCurrentEvent := false
 	responseFailedPending := false
 	var bareErrorPayload []byte
 	bareErrorProviderSideEffectsPending := false
-	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+
 	// Hold preamble lines before content, so caller output policy can classify
 	// empty terminal failure while semantic delivery remains eligible for request recovery.
 	pendingLines := make([]string, 0, 8)
@@ -358,6 +374,7 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 				}
 				forceFlushFailedEvent = true
 				sawFailedEvent = true
+				failedPayload = append(failedPayload[:0], dataBytes...)
 			}
 			if trimmedData == "[DONE]" {
 				sawDone = true
@@ -533,9 +550,14 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 // callbacks. A Compact bridge can consume delivery; otherwise OutputContext.Data
 // writes with upstream content type or the JSON default. The result returns
 // usage, response ID, and image observations while shared Served and SearchCount
-// fields remain zero. The ctx parameter is retained by the interface but unused
-// here.
-func ReadPassthroughNonStreaming(ctx context.Context, resp *http.Response, sink upstream.OutputSink, options PassthroughOptions, originalModel, mappedModel string) (*NonStreamingResult, error) {
+// fields remain zero. The request context records completion or failure of
+// the immutable upstream attempt after body processing returns.
+func ReadPassthroughNonStreaming(ctx context.Context, resp *http.Response, sink upstream.OutputSink, options PassthroughOptions, originalModel, mappedModel string) (observed *NonStreamingResult, failure error) {
+	// Capture the immutable dispatch before body processing. Every return closes
+	// this exchange, including SSE failures after HTTP 200 and client cancellation.
+	ref := telemetry.RequestAttemptFromResponse(resp)
+	defer func() { telemetry.ObserveRequestResult(ctx, ref, failure) }()
+
 	body, err := options.NonStream.ReadBody(resp.Body)
 	if err != nil {
 		return nil, err

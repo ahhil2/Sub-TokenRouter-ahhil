@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -8,6 +9,7 @@ import (
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
 // openai_error_fallback.go decides whether forwarding failures still need
@@ -34,8 +36,9 @@ import (
 // and Compact content from keepalive-only commitment. Existing meaningful
 // committed output suppresses this fallback; padding can still receive JSON
 // and Compact keepalives can receive a terminal event. Cyber-warning evidence
-// supplies a request error and valid upstream status. Model-attribute failures
-// retain their structured status and reason; remaining errors receive the
+// supplies a request error and valid upstream status. Client-tool failures use
+// request-error output, and model-attribute failures retain their structured
+// status and reason; remaining errors receive the
 // generic 502 message. True reports attempted presentation,
 // not successful network delivery.
 func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, err error) bool {
@@ -63,6 +66,10 @@ func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, er
 	if (IsResponseCommitted(c) && (!compactKeepaliveCommitted || compactKeepaliveHasMeaningfulOutput)) ||
 		(!compactKeepaliveCommitted && imageKeepaliveResponseWritten) {
 		return false
+	}
+	if toolError, ok := errors.AsType[*bridge.ClientToolAdaptationError](err); ok {
+		h.StreamError(c, http.StatusBadRequest, "invalid_request_error", toolError.Error(), streamStarted)
+		return true
 	}
 	if WriteOpenAIModelAttributeError(c, err, streamStarted) {
 		return true

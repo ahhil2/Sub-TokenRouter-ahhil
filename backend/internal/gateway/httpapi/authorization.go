@@ -14,6 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/admission"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
+	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
 // authorization.go authenticates gateway requests, resolves their group and
@@ -168,6 +169,9 @@ func NewAPIKeyAuthorization(apiKeyService *apikey.APIKeyService, subscriptionSer
 
 		billingContext, billingErr := admission.ResolveFundingFromKey(c.Request.Context(), apiKey, subscriptionService, !skipBilling)
 		if billingErr != nil {
+			if httpx.AbortCanceledRequest(c, billingErr) {
+				return
+			}
 			switch {
 			case errors.Is(billingErr, billing.ErrPreferredSubscriptionGroup):
 				keyhttp.AbortWithError(c, 403, "PREFERRED_SUBSCRIPTION_GROUP_NOT_ALLOWED", billingErr.Error())

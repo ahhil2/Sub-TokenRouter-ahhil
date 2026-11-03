@@ -111,8 +111,9 @@ func GeminiThinking(result modelcatalog.Resolution, body []byte) (*bridge.Gemini
 // clamping and effort aliases, and adapts platform-specific thinking and
 // reasoning controls.
 //
-// Known unsupported OpenAI none effort is removed when the route has no toggle
-// option; GLM conversion uses the resolved allowed effort set, distinguishing
+// Known unsupported OpenAI none effort is removed for official and unidentified
+// compatible services when the route has no toggle option. GLM conversion uses
+// the resolved allowed effort set, distinguishing
 // unknown options from an explicitly empty set. Adaptive Anthropic modes
 // remove explicit budgets after encoding adaptive. Grok conversion runs last
 // with these same resolved attributes. Field-edit errors can return nil, while
@@ -154,7 +155,8 @@ func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) 
 	}
 	// A route with known unsupported none and no toggle cannot express disabled
 	// reasoning through these effort fields; remove that spelling before OpenAI forwarding.
-	if result.Target.Platform == "openai" && result.Target.ServiceID() == "" && !result.Attributes.HasReasoningOption("toggle") {
+	service := result.Target.ServiceID()
+	if result.Target.Platform == "openai" && (service == "" || service == "openai") && !result.Attributes.HasReasoningOption("toggle") {
 		if supported := result.Attributes.EffortSupport("none"); supported != nil && !*supported {
 			for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
 				if gjson.GetBytes(body, path).String() == "none" {

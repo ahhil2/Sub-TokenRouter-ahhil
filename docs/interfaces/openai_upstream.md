@@ -265,6 +265,10 @@ OpenAI OAuth 和 API Key 的普通 Responses 请求保留 `function_call`、`too
 
 转换到 Chat 或 function-only Responses 时，协议桥接层先解析有效声明，再生成已知历史调用、`tool_choice` 和响应恢复使用的名称映射。默认 `functions` 命名空间使用工具裸名；其他显式 namespace 子工具使用稳定的平铺名称。工具搜索加载的普通 function 根据实际加载声明保留自己的调用身份。转换后的非流式结果、SSE 生命周期和终态使用声明映射恢复名称、namespace 和调用 ID；声明之间的名称碰撞或无法解析的限定工具选择返回错误。
 
+namespace 中的 function 和 custom 子工具都参与转换，包括 `additional_tools`、工具搜索发现和 `children` 别名。custom 使用单个字符串 `input` 的 function 参数包装；返回的 custom 调用在 JSON、SSE added/done 和终态中恢复原始 namespace 与工具名。默认 `functions` 内的工具与顶层工具定义完全相同时合并；类型、schema 或其他声明字段不同，以及不同 namespace 平铺后的名称碰撞，仍然拒绝。Chat 和 function-only Responses 共用这套命名空间检查。
+
+HTTP Responses 客户端工具转换失败发生在上游派发之前，返回带具体解释的 `400 invalid_request_error`，不计作提供商健康失败。输入回放只改写直接调用项，工具输出内的嵌套 JSON 保留为业务数据。
+
 压缩或工具列表变化后，历史 `function_call` 仍可能带有 namespace，但对应声明已被省略。桥接层为这些调用单独分配本次请求的回放名称，保留调用 ID、参数和结果。名称分配预留已知工具、响应恢复认可的 custom 工具别名及历史裸名，按 namespace/name 排序；平铺名称碰撞时，用完整二元组的摘要区分，并检查长度和名称占用。补出的身份只用于输入回放，工具声明、选择器、响应恢复和后续 WS 可用工具不包含这些身份。身份扫描仅检查直接输入项，工具结果和参数中的嵌套数据不参与名称分配。
 
 WS HTTP bridge 在后续轮次省略 `tools` 时复用已有的声明和映射；显式空值清空后续可用工具，历史身份仍可用于解释已经执行的调用。原生 Responses 保留动态声明项的原位置，工具平铺只在需要协议转换的路径执行。提供商切换清空当前尝试的映射，下一次尝试从原始请求重新准备。
@@ -298,6 +302,8 @@ Responses 图片工具的型号在候选提供商阶段逐条校验，使用该�
 客户端的模型名依次经过 Key、分组和提供商手动配置的映射。调度、模型列表、健康冷却、管理测试和请求转发使用同一个完整的模型身份；原生能力和传输资格继续限制提供商选择，相似的模型名绕不过这些限制。
 
 Messages、Chat、Responses 和 WebSocket 按最终的完整型号查询[统一模型属性](model_catalog_and_marketplace.md#model_attributes)。推理档位来自目录与管理员覆盖，未知型号保留客户端的明确参数。GPT-5.6 Sol/Terra/Luna 的普通请求支持 max，OAuth Compact 使用平台的 max 到 xhigh 转换。GPT-5.2/5.4 的采样能力带 effort=none 条件，GPT-6 的 Chat 工具能力按具体型号与 effort 区分。Codex OAuth 禁用 temperature、top_p 和输出参数字段，目录中的输出容量仍保留。
+
+OpenAI 官方路线和未识别服务身份的兼容路线，在属性明确不支持 `none` 且没有 thinking toggle 时，移除 `reasoning.effort=none` 或 `reasoning_effort=none`，交由上游采用默认档位。支持 `none`、属性未知或声明 toggle 的路线保留相应参数；其他兼容服务使用各自的规则。
 
 供应商限定名按完整服务条目查询，例如 `openai/gpt-5.6-sol`。查询结果不改写出站模型，目录缺项时也不会从任意尾段、日期或版本号生成能力。
 
