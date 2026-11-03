@@ -15,7 +15,8 @@ import (
 // converts declarations, history, and choice together and records the client
 // identities needed when a response returns. Custom calls wrap one input
 // string, while discovery becomes a proxy function with object-valued
-// arguments restored on the client.
+// arguments restored on the client. Executed custom calls and results keep
+// matching kinds when a later request replaces their declarations.
 //
 // Stream restoration keeps upstream item/call identities for matching
 // fragments and emits another known prefix when client item kind changes. A
@@ -108,9 +109,9 @@ type responsesClientToolStreamCall struct {
 // Promotion registers effective discoveries before flattening. Custom input
 // uses a fixed string wrapper, search uses a named function proxy, and
 // returned maps identify response restoration. Unsupported entries can remain,
-// custom outputs lower independently of custom-name membership, and no full
-// history/schema validation is performed. Callers discard failed mutable
-// request candidates and keep the mapping with the successful request.
+// custom calls and outputs lower together even after their declarations expire,
+// and no full history/schema validation is performed. Callers discard failed
+// mutable request candidates and keep the mapping with the successful request.
 func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, bool, error) {
 	return adaptResponsesClientTools(req, ResponsesClientToolMapping{})
 }
@@ -437,83 +438,67 @@ func copyClientTool(tool map[string]any) map[string]any {
 	return copy
 }
 
-// rewriteClientToolHistory recursively lowers recognized calls/results in
-// every decoded map and array under value. Callers supply an acyclic value and
-// nonnil adapter, and mutations are visible through shared maps. Search-output
-// lowering requires a nonblank string call ID and can fail after earlier items
-// changed.
+// rewriteClientToolHistory lowers direct Responses input calls and results.
+// Nonarray input contributes no items; callers validate the request shape and
+// supply a nonnil adapter. Mutations are visible through shared maps, and a
+// failed candidate can contain earlier changes that the caller must discard.
 //
-// Mapped custom calls wrap input, while custom outputs lower regardless of
-// custom-name mapping. Search calls/results require enabled search mapping;
-// item IDs are normalized separately from call_id pairing. Result
-// normalization retains recognized content arrays, stringifies other values,
-// and conditionally drops discovery metadata. On error the returned change
-// flag is false even when prior mutations remain, so the caller rejects that
-// candidate.
+// Both custom kinds lower independently of current declarations: an expired
+// declaration still has executed history whose call and output must agree.
+// This does not register a callable tool or alter the response mapping. Search
+// calls/results require enabled search mapping and a result needs a nonblank
+// call ID. Item IDs are normalized separately from call_id pairing. Nested
+// result data, arguments, and discovery declarations are not input items.
 func rewriteClientToolHistory(value any, adapter *ResponsesClientToolMapping) (bool, error) {
 	changed := false
-	var visit func(any) error
-	visit = func(value any) error {
-		switch typed := value.(type) {
-		case []any:
-			for _, item := range typed {
-				if err := visit(item); err != nil {
-					return err
-				}
+	items, _ := value.([]any)
+	// Tool results can contain arbitrary JSON with type/name keys. Visit direct
+	// input items so compatibility conversion cannot reinterpret that data as executed history.
+	for _, item := range items {
+		typed, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		typ := strings.TrimSpace(stringValue(typed["type"]))
+		switch typ {
+		case "custom_tool_call":
+			// The paired output lowers even when the current tools omit this name.
+			// Wrap historical input too, keeping both sides in the same function representation.
+			typed["type"] = "function_call"
+			typed["arguments"] = customToolCallArguments(stringValue(typed["input"]))
+			delete(typed, "input")
+			normalizeLoweredFunctionItemID(typed)
+			changed = true
+		case "custom_tool_call_output":
+			// Outputs lack a tool name for custom-map lookup. Lower this known
+			// result kind independently and keep call_id as its pairing identity.
+			typed["type"] = "function_call_output"
+			normalizeLoweredFunctionItemID(typed)
+			normalizeClientToolOutput(typed)
+			changed = true
+		case "tool_search_call":
+			// Search executes through the reserved function proxy on this upstream.
+			// Keep argument text and call correlation while removing client execution metadata.
+			if adapter.ToolSearch {
+				typed["type"] = "function_call"
+				typed["name"] = toolSearchProxyName
+				typed["arguments"] = rawObjectString(typed["arguments"])
+				delete(typed, "execution")
+				normalizeLoweredFunctionItemID(typed)
+				changed = true
 			}
-		case map[string]any:
-			typ := strings.TrimSpace(stringValue(typed["type"]))
-			switch typ {
-			case "custom_tool_call":
-				// The function declaration expects a string wrapper, so replayed custom
-				// input needs the same encoding before its client kind is removed.
-				if adapter.CustomTools[strings.TrimSpace(stringValue(typed["name"]))] {
-					typed["type"] = "function_call"
-					typed["arguments"] = customToolCallArguments(stringValue(typed["input"]))
-					delete(typed, "input")
-					normalizeLoweredFunctionItemID(typed)
-					changed = true
+		case "tool_search_output":
+			if adapter.ToolSearch {
+				callID := strings.TrimSpace(stringValue(typed["call_id"]))
+				if callID == "" {
+					return false, fmt.Errorf("tool_search_output requires a non-empty string call_id before it can be lowered to function_call_output")
 				}
-			case "custom_tool_call_output":
-				// Outputs lack a tool name for custom-map lookup. Lower this known
-				// result kind independently and keep call_id as its pairing identity.
 				typed["type"] = "function_call_output"
 				normalizeLoweredFunctionItemID(typed)
-				normalizeClientToolOutput(typed)
+				normalizeToolSearchOutput(typed)
 				changed = true
-			case "tool_search_call":
-				// Search executes through the reserved function proxy on this upstream.
-				// Keep argument text and call correlation while removing client execution metadata.
-				if adapter.ToolSearch {
-					typed["type"] = "function_call"
-					typed["name"] = toolSearchProxyName
-					typed["arguments"] = rawObjectString(typed["arguments"])
-					delete(typed, "execution")
-					normalizeLoweredFunctionItemID(typed)
-					changed = true
-				}
-			case "tool_search_output":
-				if adapter.ToolSearch {
-					callID := strings.TrimSpace(stringValue(typed["call_id"]))
-					if callID == "" {
-						return fmt.Errorf("tool_search_output requires a non-empty string call_id before it can be lowered to function_call_output")
-					}
-					typed["type"] = "function_call_output"
-					normalizeLoweredFunctionItemID(typed)
-					normalizeToolSearchOutput(typed)
-					changed = true
-				}
-			}
-			for _, child := range typed {
-				if err := visit(child); err != nil {
-					return err
-				}
 			}
 		}
-		return nil
-	}
-	if err := visit(value); err != nil {
-		return false, err
 	}
 	return changed, nil
 }

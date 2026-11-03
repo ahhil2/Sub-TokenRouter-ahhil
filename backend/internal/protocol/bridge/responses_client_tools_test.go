@@ -858,6 +858,103 @@ func TestResponsesClientToolStreamRestorerRetypesCustomItemID(t *testing.T) {
 	require.Equal(t, "dir", closed[0].Item.Input)
 }
 
+// TestAdaptResponsesClientToolsReplaysStreamedCustomCallAfterDiscovery completes
+// a streamed custom call before the next turn replaces tools with discovery.
+// Its replay and result must pair while a discovered plugin keeps its namespace.
+func TestAdaptResponsesClientToolsReplaysStreamedCustomCallAfterDiscovery(t *testing.T) {
+	restorer := NewResponsesClientToolStreamRestorer(ResponsesClientToolMapping{
+		CustomTools: map[string]bool{"exec": true},
+	})
+	restorer.Restore(ResponsesStreamEvent{
+		Type: "response.output_item.added", OutputIndex: 0,
+		Item: &ResponsesOutput{Type: "function_call", ID: "fc_replay", CallID: "call_replay", Name: "exec"},
+	})
+	restorer.Restore(ResponsesStreamEvent{
+		Type: "response.function_call_arguments.delta", ItemID: "fc_replay", Delta: `{"input":"pwd"}`,
+	})
+	events := restorer.Restore(ResponsesStreamEvent{
+		Type: "response.output_item.done", OutputIndex: 0,
+		Item: &ResponsesOutput{Type: "function_call", ID: "fc_replay", CallID: "call_replay", Name: "exec", Arguments: `{"input":"pwd"}`, Status: "completed"},
+	})
+	require.Len(t, events, 1)
+	require.Equal(t, "custom_tool_call", events[0].Item.Type)
+	encoded, err := json.Marshal(events[0].Item)
+	require.NoError(t, err)
+	var replay map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &replay))
+	req := map[string]any{
+		"tools": []any{map[string]any{"type": "tool_search"}},
+		"input": []any{
+			replay,
+			map[string]any{"type": "custom_tool_call_output", "call_id": "call_replay", "output": "/work"},
+			map[string]any{"type": "tool_search_call", "id": "tsc_search", "call_id": "call_search", "arguments": map[string]any{"query": "github"}},
+			map[string]any{"type": "tool_search_output", "call_id": "call_search", "tools": []any{
+				map[string]any{"type": "namespace", "name": "github", "tools": []any{map[string]any{"type": "function", "name": "lookup"}}},
+			}},
+			map[string]any{"type": "function_call", "call_id": "call_plugin", "namespace": "github", "name": "lookup", "arguments": "{}"},
+			map[string]any{"type": "function_call_output", "call_id": "call_plugin", "output": "plugin-result"},
+		},
+	}
+	mapping, changed, err := AdaptResponsesClientTools(req)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Empty(t, mapping.CustomTools)
+	require.True(t, mapping.ToolSearch)
+	require.Equal(t, ResponsesNamespaceName{Namespace: "github", Name: "lookup"}, mapping.NamespaceTools["github__lookup"])
+	require.Equal(t, "function_call", replay["type"])
+	require.Equal(t, "fc_replay", replay["id"])
+	require.Equal(t, "call_replay", replay["call_id"])
+	arguments, ok := replay["arguments"].(string)
+	require.True(t, ok)
+	require.JSONEq(t, `{"input":"pwd"}`, arguments)
+	input, ok := req["input"].([]any)
+	require.True(t, ok)
+	for i := 0; i < len(input); i += 2 {
+		call, ok := input[i].(map[string]any)
+		require.True(t, ok)
+		output, ok := input[i+1].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "function_call", call["type"])
+		require.Equal(t, "function_call_output", output["type"])
+		require.Equal(t, call["call_id"], output["call_id"])
+	}
+	pluginCall, ok := input[4].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "github__lookup", pluginCall["name"])
+}
+
+// TestAdaptResponsesClientToolsWithInheritedMappingPairsRetiredCustomHistory
+// omits declarations while retaining another active custom tool's mapping.
+// Full history and result-only continuations lower consistently without adding retired tools.
+func TestAdaptResponsesClientToolsWithInheritedMappingPairsRetiredCustomHistory(t *testing.T) {
+	for _, resultOnly := range []bool{false, true} {
+		input := []any{
+			map[string]any{"type": "custom_tool_call", "id": "ctc_retired", "call_id": "call_retired", "name": "exec", "input": "pwd"},
+			map[string]any{"type": "custom_tool_call_output", "call_id": "call_retired", "output": "/work"},
+		}
+		if resultOnly {
+			input = input[1:]
+		}
+		inherited := ResponsesClientToolMapping{CustomTools: map[string]bool{"other": true}}
+		req := map[string]any{"input": input}
+		mapping, changed, err := AdaptResponsesClientToolsWithInheritedMapping(req, inherited)
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.Equal(t, inherited, mapping)
+		require.NotContains(t, req, "tools")
+		if !resultOnly {
+			call, ok := input[0].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "function_call", call["type"])
+		}
+		output, ok := input[len(input)-1].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "function_call_output", output["type"])
+		require.Equal(t, "call_retired", output["call_id"])
+		require.Equal(t, "/work", output["output"])
+	}
+}
+
 // TestResponsesClientToolStreamRestorerRetypesToolSearchItemID opens a mapped
 // discovery proxy with a function-prefixed ID. The single emitted added event
 // must have discovery kind and the corresponding discovery-prefixed ID.

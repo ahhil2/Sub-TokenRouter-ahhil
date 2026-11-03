@@ -269,6 +269,8 @@ OpenAI OAuth 和 API Key 的普通 Responses 请求保留 `function_call`、`too
 
 WS HTTP bridge 在后续轮次省略 `tools` 时复用已有的声明和映射；显式空值清空后续可用工具，历史身份仍可用于解释已经执行的调用。原生 Responses 保留动态声明项的原位置，工具平铺只在需要协议转换的路径执行。提供商切换清空当前尝试的映射，下一次尝试从原始请求重新准备。
 
+执行客户端工具降级时，历史 `custom_tool_call` 和 `custom_tool_call_output` 都转换为 function 类型，并保留配对的 `call_id`。即使本轮工具列表移除了旧工具，调用与结果仍采用一致的类型；旧工具不会因此重新加入可用声明或响应恢复映射。转换检查直接 `input` 项，工具结果和参数中的嵌套 JSON 作为业务数据保留。
+
 上游明确以 HTTP 400 拒绝 `input[i].namespace` 时，现有字段恢复只删除该索引处的字段，同类型其他调用的 namespace 保留。`Missing namespace` 表示上游需要调用身份，不触发删除。恢复继续受现有六次预算和重复报文检查约束，超过预算返回实际错误。
 
 API Key 的 Responses 回放还会校验输入项 ID 的前缀：message 使用 `msg`，工具调用使用 `fc`，reasoning 使用 `rs`；类型对不上的 ID 直接删除，不会被改写成别的，这样伪造的标识就指不到另一个上游对象。兼容层把只支持 function 的上游返回的 `fc_` 工具调用，还原成客户端的 `custom_tool_call` 或 `tool_search_call` 时，把 ID 类型分别改成 `ctc_` 或 `tsc_`，后缀保留；再次降级到 function 时恢复原来的 `fc_`，输出项没有对应 function ID 的继续删除。
