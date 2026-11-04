@@ -37,6 +37,8 @@ function mountField(props: {
 }
 
 describe('UpstreamRequestIdHeaderField', () => {
+  // An OpenAI API-key provider opens the deferred help panel. The visible examples
+  // include relay headers, the platform header, and the relay-specific explanation.
   it('lists relay and official header examples for API key providers', async () => {
     const wrapper = mountField({ platform: 'openai', type: 'apikey' })
     await wrapper.get('[data-icon-trigger]').trigger('mouseenter')
@@ -51,6 +53,8 @@ describe('UpstreamRequestIdHeaderField', () => {
     expect(text).toContain('x-request-id')
   })
 
+  // An Anthropic OAuth provider opens the deferred help panel. Its examples show the
+  // platform header while excluding relay suggestions intended for API-key credentials.
   it('lists only the official header for providers that connect to the platform directly', async () => {
     const wrapper = mountField({ platform: 'anthropic', type: 'oauth' })
     await wrapper.get('[data-icon-trigger]').trigger('mouseenter')
@@ -62,6 +66,8 @@ describe('UpstreamRequestIdHeaderField', () => {
     expect(text).not.toContain('X-Oneapi-Request-Id')
   })
 
+  // The provider has no configured header example or API-key relay suggestions. Opening
+  // help still displays the introduction, and the empty examples section stays absent.
   it('omits the examples section when no header is known for the platform', async () => {
     const wrapper = mountField({ platform: 'kimi', type: 'oauth' })
     await wrapper.get('[data-icon-trigger]').trigger('mouseenter')
