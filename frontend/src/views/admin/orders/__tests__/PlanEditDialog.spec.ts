@@ -31,7 +31,7 @@ vi.mock('@/api/admin/payment', () => ({
 
 vi.mock('@/api/admin/groups', () => ({
   groupsAPI: {
-    getAllIncludingInactive: (...args: unknown[]) => mockGetAllIncludingInactive(...args),
+    getOptions: (...args: unknown[]) => mockGetAllIncludingInactive(...args),
   },
 }))
 

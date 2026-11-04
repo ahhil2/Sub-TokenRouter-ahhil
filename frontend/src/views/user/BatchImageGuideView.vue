@@ -1124,6 +1124,7 @@
 </template>
 
 <script setup lang="ts">
+import { useLatestRequest } from '@/composables/useLatestRequest'
 import { useLocaleRefresh } from '@/composables/useLocaleRefresh'
 import { getLocale } from '@/i18n'
 import TableSkeletonBody from '@/components/common/TableSkeletonBody.vue'
@@ -1366,7 +1367,7 @@ const pagination = reactive({
 // drive loading indicators, row action availability, and request suppression.
 const apiKeys = ref<ApiKey[]>([])
 const loadingKeys = ref(false)
-const loadingJobs = ref(false)
+const { loading: loadingJobs, run: runJobsRequest, cancel: cancelJobsRequest } = useLatestRequest()
 const submitting = ref(false)
 const refreshing = ref(false)
 const cancelling = ref(false)
@@ -2311,28 +2312,48 @@ function copyPromptPopover() {
 //
 // Each key receives the same offset cursor and filter options, and any
 // response indicating more rows enables the next page. A failed request leaves
-// the previously displayed jobs intact and reports an error. Calls share page
-// state and publish on completion without a request generation guard.
+// the previously displayed jobs intact and reports an error. Four workers share
+// the selected keys and a cancellation signal. Replacement or disposal cancels the
+// previous batch, whose late results and errors cannot update the current page.
 async function loadBatchJobs() {
   const keys = filteredApiKeys.value
   if (!keys.length) {
+    cancelJobsRequest()
     batchJobs.value = []
+    selectedJobIds.value = new Set()
     pagination.has_more = false
     return
   }
-  loadingJobs.value = true
   closeMoreMenu()
   try {
     const options = listOptions()
-    const results = await Promise.all(
-      keys.map(async (key) => {
-        const result = await listBatchImageJobs(key.key, options)
-        return {
-          hasMore: Boolean(result.has_more),
-          rows: (result.data || []).map((job) => toJobRow(job, key)),
+    const results = await runJobsRequest(async (signal) => {
+      const results: Array<{
+        hasMore: boolean // Further rows for this key.
+        rows: ReturnType<typeof toJobRow>[] // Jobs carrying their source key.
+      }> = []
+      let next = 0
+      // worker claims successive keys from this request's cursor and appends their rows.
+      // At most four workers share the signal, stopping admission after cancellation.
+      // A failed worker rejects the request, whose owner cancels remaining HTTP work;
+      // a superseded result is discarded before the combined rows reach page state.
+      //
+      // Completion order may differ from key order. The caller sorts all collected rows
+      // by creation time before applying pagination and selection reconciliation.
+      const worker = async () => {
+        while (next < keys.length && !signal.aborted) {
+          const key = keys[next++]
+          const result = await listBatchImageJobs(key.key, options, signal)
+          results.push({
+            hasMore: Boolean(result.has_more),
+            rows: (result.data || []).map((job) => toJobRow(job, key)),
+          })
         }
-      }),
-    )
+      }
+      await Promise.all(Array.from({ length: Math.min(4, keys.length) }, worker))
+      return results
+    })
+    if (!results) return
     // Combine independently fetched key pages before sorting and truncating,
     // then derive child counts from the rows that remain visible in this page.
     batchJobs.value = applyChildCounts(
@@ -2349,8 +2370,6 @@ async function loadBatchJobs() {
     )
   } catch (error: any) {
     appStore.showError(batchImageErrorMessage(error, batchImageText('loadJobsFailed')))
-  } finally {
-    loadingJobs.value = false
   }
 }
 

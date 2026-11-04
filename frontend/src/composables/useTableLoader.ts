@@ -108,13 +108,14 @@ export function useTableLoader<T, P extends Record<string, any>>(
         signal: currentController.signal,
       })
 
+      if (currentController.signal.aborted) return
       items.value = response.items || []
       pagination.total = response.total || 0
       pagination.pages = response.pages || 0
     } catch (error) {
-      // Cancellation is an expected outcome of replacement loads and unmount; unrelated
-      // errors remain observable through logging and promise rejection.
-      if (!isAbortError(error)) {
+      // Superseded loaders may ignore AbortSignal and still reject. Suppress those
+      // obsolete errors while keeping failures from the current request observable.
+      if (!currentController.signal.aborted && !isAbortError(error)) {
         console.error('Table load error:', error)
         throw error
       }

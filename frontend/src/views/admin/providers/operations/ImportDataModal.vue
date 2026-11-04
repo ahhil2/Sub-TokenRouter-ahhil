@@ -198,22 +198,6 @@ const fileListTitle = computed(() => files.value.map((item) => item.name).join('
 
 const errorItems = computed(() => result.value?.errors || [])
 
-watch(
-  () => props.show,
-  (open) => {
-    if (open) {
-      files.value = []
-      dragDepth.value = 0
-      pastedDataText.value = ''
-      hasCreatedData.value = false
-      result.value = null
-      if (fileInput.value) {
-        fileInput.value.value = ''
-      }
-    }
-  },
-)
-
 /**
  * openFilePicker opens the hidden native file selector when its element is available.
  */
@@ -464,4 +448,23 @@ const handleImport = async () => {
     importing.value = false
   }
 }
+
+// Reset imported files and result state on first visible mount and each reopening.
+// Retained hidden instances therefore start their next import with an empty selection.
+watch(
+  () => props.show,
+  (open) => {
+    if (open) {
+      files.value = []
+      dragDepth.value = 0
+      pastedDataText.value = ''
+      hasCreatedData.value = false
+      result.value = null
+      if (fileInput.value) {
+        fileInput.value.value = ''
+      }
+    }
+  },
+  { immediate: true },
+)
 </script>

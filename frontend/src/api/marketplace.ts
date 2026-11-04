@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import { createCachedRequest } from './readCache'
 import type { MarketplaceGroup, MarketplaceStats } from '@/api/marketplace.types'
 
 /**
@@ -24,6 +25,30 @@ export async function getMarketplaceModels(): Promise<MarketplaceGroup[]> {
 }
 
 /**
+ * MarketplaceModelOptions contains group labels and model identifiers for administrative
+ * selectors.
+ */
+export interface MarketplaceModelOptions {
+  id: number // Group numeric identifier.
+  name: string // Localized group name.
+  models: Array<{ id: string /* Requestable model identifier. */ }> // Available model choices.
+}
+
+/**
+ * getMarketplaceModelOptions returns cached selector data with capacity observation
+ * disabled. The shared reader separates credentials and languages, deduplicates pending
+ * requests, and returns an independently editable copy to each caller.
+ */
+export const getMarketplaceModelOptions = createCachedRequest(
+  async (): Promise<MarketplaceModelOptions[]> => {
+    const { data } = await apiClient.get<MarketplaceModelOptions[]>('/marketplace/models', {
+      params: { view: 'options', include_capacity: false },
+    })
+    return data
+  },
+)
+
+/**
  * getMarketplaceStats retrieves marketplace stats and returns the server
  * response data.
  */
@@ -38,6 +63,7 @@ export async function getMarketplaceStats(): Promise<MarketplaceStats> {
  */
 export const marketplaceAPI = {
   getMarketplaceModels,
+  getMarketplaceModelOptions,
   getMarketplaceStats,
 }
 

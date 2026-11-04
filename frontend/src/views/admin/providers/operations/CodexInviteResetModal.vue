@@ -771,6 +771,7 @@ const handleClose = () => {
   emit('close')
 }
 
+watch(availableCredits, selectDefaultCredit)
 watch(
   () => [props.show, props.provider?.id],
   ([visible]) => {
@@ -780,7 +781,6 @@ watch(
     }
     resetLocalState()
   },
+  { immediate: true },
 )
-
-watch(availableCredits, selectDefaultCredit)
 </script>

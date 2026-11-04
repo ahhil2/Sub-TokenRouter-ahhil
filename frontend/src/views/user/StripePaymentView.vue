@@ -510,6 +510,9 @@ function stopPolling() {
  * including when the request throws to its interval caller.
  */
 async function pollOrderStatus() {
+  // Hidden pages defer status reads until visibility returns, while an already
+  // dispatched request can still settle and apply its existing terminal-state handling.
+  if (document.visibilityState === 'hidden') return
   const orderId = Number(route.query.order_id)
   if (!orderId || pollInFlight) return
   pollInFlight = true
@@ -576,4 +579,13 @@ onUnmounted(() => {
   if (redirectTimer) clearTimeout(redirectTimer)
   stopPolling()
 })
+
+// refreshVisiblePayment requests current status when a polling page becomes visible.
+// A stopped poll stays stopped, and the existing in-flight guard prevents this
+// visibility event from overlapping a status request already dispatched by the timer.
+function refreshVisiblePayment() {
+  if (document.visibilityState === 'visible' && pollTimer) void pollOrderStatus()
+}
+onMounted(() => document.addEventListener('visibilitychange', refreshVisiblePayment))
+onUnmounted(() => document.removeEventListener('visibilitychange', refreshVisiblePayment))
 </script>

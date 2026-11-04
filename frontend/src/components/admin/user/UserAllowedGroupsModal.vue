@@ -262,7 +262,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import type { AdminUser } from '@/api/admin/users.types'
-import type { Group } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 
@@ -308,7 +308,7 @@ const appStore = useAppStore()
 
 // groups and groupConfigs hold the active catalog and editable user settings;
 // originalGroupRates records loaded overrides so clearing a draft can request deletion.
-const groups = ref<Group[]>([])
+const groups = ref<AdminGroupSummary[]>([])
 const groupConfigs = ref<GroupRateConfig[]>([])
 const originalGroupRates = ref<Record<number, number>>({})
 // loading and submitting drive separate catalog-load and save feedback, leaving the
@@ -348,7 +348,7 @@ watch(
 const load = async () => {
   loading.value = true
   try {
-    const res = await adminAPI.groups.list(1, 1000)
+    const res = await adminAPI.groups.listSummaries(1, 1000)
     groups.value = res.items.filter((g) => g.status === 'active')
 
     const userAllowedGroups = props.user?.allowed_groups || []

@@ -1,5 +1,6 @@
 <template>
   <SettingsCard
+    v-if="visitedGatewaySections.has('general')"
     v-show="activeGatewaySection === 'general'"
     v-content-reveal="activeGatewaySection === 'general'"
     data-testid="gateway-card-overload-cooldown"
@@ -39,6 +40,7 @@
 
   <!-- OpenAI OAuth permission failures and repeated-failure thresholds. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('openai')"
     v-show="activeGatewaySection === 'openai'"
     v-content-reveal="activeGatewaySection === 'openai'"
     data-testid="gateway-card-openai-403-cooldown"
@@ -118,6 +120,7 @@
 
   <!-- Rate-limit cooldown shared across providers. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('general')"
     v-show="activeGatewaySection === 'general'"
     v-content-reveal="activeGatewaySection === 'general'"
     data-testid="gateway-card-rate-limit-cooldown"
@@ -157,6 +160,7 @@
 
   <!-- Stream timeout actions and escalation thresholds. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('general')"
     v-show="activeGatewaySection === 'general'"
     v-content-reveal="activeGatewaySection === 'general'"
     data-testid="gateway-card-stream-timeout"
@@ -242,6 +246,7 @@
 
   <!-- Request rectification rules shared across platforms. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('general')"
     v-show="activeGatewaySection === 'general'"
     v-content-reveal="activeGatewaySection === 'general'"
     data-testid="gateway-card-request-rectifier"
@@ -304,6 +309,7 @@
 
   <!-- Anthropic beta token policy rules. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('anthropic')"
     v-show="activeGatewaySection === 'anthropic'"
     v-content-reveal="activeGatewaySection === 'anthropic'"
     data-testid="gateway-card-beta-policy"
@@ -455,6 +461,7 @@
 
   <!-- Fast and Flex rules are included in the bulk settings save after their initial load. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('openai')"
     v-show="activeGatewaySection === 'openai'"
     v-content-reveal="activeGatewaySection === 'openai'"
     data-testid="gateway-card-openai-fast-policy"
@@ -662,7 +669,7 @@ import type { GatewaySection } from './useNavigationSettings'
 /**
  * GatewayPolicySettings.vue renders provider cooldown, request rectification, and
  * tier policy cards from the page-owned gateway controller. Cards select their
- * category with v-show so navigation retains the rule editors and their draft rows;
+ * category after first visit; v-show then retains editors and their draft rows;
  * endpoint loading flags determine when each dedicated form replaces its skeleton.
  */
 // controller holds the page-owned refs and actions used by these cards.
@@ -671,6 +678,9 @@ import type { GatewaySection } from './useNavigationSettings'
 const props = defineProps<{
   controller: ReturnType<typeof useGatewaySettings> // Page-owned gateway actions and state.
   activeGatewaySection: GatewaySection // Current visible gateway category.
+  // Membership persists across navigation so a visited editor retains its unsaved
+  // state and save registration while another gateway section is visible.
+  visitedGatewaySections: ReadonlySet<GatewaySection> // Previously opened gateway sections.
 }>()
 // Template bindings retain the controller refs, so edits participate in the page save snapshots.
 const {

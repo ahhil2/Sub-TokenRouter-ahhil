@@ -69,6 +69,8 @@ vi.mock('@/api/admin', () => ({
       unbanUser: vi.fn(),
     },
     groups: {
+      getOptions: getGroups,
+
       getAll: getGroups,
     },
     proxies: {

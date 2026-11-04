@@ -1,7 +1,7 @@
 import { nextMotionFrame } from '@/__tests__/helpers/motion'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { defineComponent, h, nextTick, onMounted, onUnmounted } from 'vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 
 // HelpTooltip.spec.ts tests tooltip activation, dismissal, and placement through
@@ -20,12 +20,49 @@ function getTooltipElement(): HTMLDivElement {
   return tooltip
 }
 
+enableAutoUnmount(afterEach)
+
 describe('HelpTooltip', () => {
   // Release the resources retained by this case before the next one, keeping browser
   // state and component lifecycle observations isolated across assertions.
   afterEach(() => {
     vi.restoreAllMocks()
     document.body.innerHTML = ''
+  })
+
+  it('首次打开时挂载提示内容，再次打开时保留子组件状态', async () => {
+    const mounted = vi.fn()
+    const unmounted = vi.fn()
+    const Details = defineComponent({
+      setup() {
+        onMounted(mounted)
+        onUnmounted(unmounted)
+        return () => h('input', { value: 'initial' })
+      },
+    })
+    const wrapper = mount(HelpTooltip, {
+      attachTo: document.body,
+      slots: { default: Details },
+    })
+    const trigger = wrapper.get('.group')
+    expect(mounted).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="tooltip"]')).toBeNull()
+
+    await trigger.trigger('mouseenter')
+    await nextTick()
+    expect(mounted).toHaveBeenCalledTimes(1)
+    const input = getTooltipElement().querySelector('input')!
+    input.value = 'edited'
+
+    await trigger.trigger('mouseleave')
+    await nextMotionFrame()
+    await trigger.trigger('mouseenter')
+    expect(getTooltipElement().querySelector('input')).toBe(input)
+    expect(input.value).toBe('edited')
+    expect(mounted).toHaveBeenCalledTimes(1)
+    expect(unmounted).not.toHaveBeenCalled()
+    wrapper.unmount()
+    expect(unmounted).toHaveBeenCalledTimes(1)
   })
 
   // A manual tooltip receives controlled open updates and each supported outside
@@ -43,7 +80,7 @@ describe('HelpTooltip', () => {
       await trigger.trigger('mouseenter')
       await trigger.trigger('click')
       await nextMotionFrame()
-      expect(getTooltipElement().style.display).toBe('none')
+      expect(document.body.querySelector('[role="tooltip"]')).toBeNull()
       await wrapper.setProps({ open: true })
       await nextTick()
       expect(getTooltipElement().style.display).not.toBe('none')
@@ -82,11 +119,14 @@ describe('HelpTooltip', () => {
           bottom: 216,
         }) as DOMRect,
     )
-    const tooltip = getTooltipElement()
-    tooltip.getBoundingClientRect = vi.fn(() => ({ width: 288, height: 60 }) as DOMRect)
+    vi.spyOn(HTMLDivElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 288,
+      height: 60,
+    } as DOMRect)
     await wrapper.setProps({ open: true })
     await nextTick()
     await nextTick()
+    const tooltip = getTooltipElement()
     const center = Number.parseFloat(tooltip.style.left)
     const arrow = tooltip.lastElementChild as HTMLElement
     expect(center - 144 + Number.parseFloat(arrow.style.left)).toBe(38)
@@ -105,14 +145,12 @@ describe('HelpTooltip', () => {
     })
 
     const trigger = wrapper.get('.group')
-    const tooltip = getTooltipElement()
-
     await nextMotionFrame()
-
-    expect(tooltip.style.display).toBe('none')
+    expect(document.body.querySelector('[role="tooltip"]')).toBeNull()
 
     await trigger.trigger('mouseenter')
     await nextTick()
+    const tooltip = getTooltipElement()
     expect(tooltip.style.display).not.toBe('none')
 
     await trigger.trigger('mouseleave')
@@ -135,10 +173,9 @@ describe('HelpTooltip', () => {
     })
 
     const trigger = wrapper.get('.group')
-    const tooltip = getTooltipElement()
-
     await trigger.trigger('mouseenter')
     await nextTick()
+    const tooltip = getTooltipElement()
     expect(tooltip.style.display).not.toBe('none')
 
     await trigger.trigger('mouseleave', { relatedTarget: tooltip })
@@ -170,14 +207,12 @@ describe('HelpTooltip', () => {
     })
 
     const trigger = wrapper.get('.group')
-    const tooltip = getTooltipElement()
-
     await nextMotionFrame()
-
-    expect(tooltip.style.display).toBe('none')
+    expect(document.body.querySelector('[role="tooltip"]')).toBeNull()
 
     await trigger.trigger('click')
     await nextTick()
+    const tooltip = getTooltipElement()
     expect(tooltip.style.display).not.toBe('none')
     expect(tooltip.textContent).toContain('click details')
 
@@ -216,10 +251,9 @@ describe('HelpTooltip', () => {
     })
 
     const trigger = wrapper.get('.group')
-    const tooltip = getTooltipElement()
-
     await trigger.trigger('mouseenter')
     await nextTick()
+    const tooltip = getTooltipElement()
     expect(tooltip.style.display).not.toBe('none')
 
     await trigger.trigger('mouseleave')
@@ -269,8 +303,7 @@ describe('HelpTooltip', () => {
       y: 620,
       toJSON: () => ({}),
     }))
-    const tooltip = getTooltipElement()
-    tooltip.getBoundingClientRect = vi.fn(() => ({
+    vi.spyOn(HTMLDivElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
       top: 0,
       left: 0,
       width: 320,
@@ -285,6 +318,7 @@ describe('HelpTooltip', () => {
     await trigger.trigger('mouseenter')
     await nextTick()
 
+    const tooltip = getTooltipElement()
     expect(tooltip.style.top).toBe('calc(612px)')
     expect(tooltip.classList).toContain('-translate-y-full')
 
@@ -367,13 +401,15 @@ it('repositions interactive content and supports keyboard return to its trigger'
     },
     slots: { trigger: '<button>Details</button>', default: '<button>All protocols</button>' },
   })
-  const panel = document.body.querySelector<HTMLElement>('[role="dialog"]')!
   wrapper.get('.group').element.getBoundingClientRect = vi.fn(
     () => ({ left: 200, right: 220, top: 300, bottom: 320, width: 20, height: 20 }) as DOMRect,
   )
+  await wrapper.get('.group').trigger('keydown', { key: 'ArrowDown' })
+  await nextTick()
+  const panel = document.body.querySelector<HTMLElement>('[role="dialog"]')!
   let height = 40
   panel.getBoundingClientRect = vi.fn(() => ({ width: 288, height }) as DOMRect)
-  await wrapper.get('.group').trigger('keydown', { key: 'ArrowDown' })
+  notify!([], {} as ResizeObserver)
   await nextTick()
   expect(document.activeElement).toBe(panel.querySelector('button'))
   expect(panel.style.top).toBe('calc(292px)')

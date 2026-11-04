@@ -2589,7 +2589,7 @@ import type {
   ModerationMode,
   KeywordBlockingMode,
 } from '@/api/admin/riskControl'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import type { Proxy } from '@/api/admin/proxies.types'
 import type { SelectOption } from '@/types/ui'
 import { useAppStore } from '@/stores/app'
@@ -2688,7 +2688,7 @@ const groupSearch = ref('')
 const flaggedHashInput = ref('')
 // Loaded catalog choices, audit rows, summaries, and runtime status populate the
 // current page instance.
-const groups = ref<AdminGroup[]>([])
+const groups = ref<AdminGroupSummary[]>([])
 const proxies = ref<Proxy[]>([])
 const logs = ref<ContentModerationLog[]>([])
 const cyberWarnings = ref<ContentModerationCyberWarning[]>([])
@@ -3366,11 +3366,12 @@ function applyConfig(config: ContentModerationConfig) {
  * continue; failed required requests show the page's load error.
  */
 async function loadAll() {
+  void loadRecords()
   loading.value = true
   try {
     const [config, groupItems, runtimeStatus, proxyItems] = await Promise.all([
       adminAPI.riskControl.getConfig(),
-      adminAPI.groups.getAll(),
+      adminAPI.groups.getOptions(),
       adminAPI.riskControl.getStatus(),
       // Proxy choices are optional during initialization; keep loading moderation
       // settings and records when this catalog request fails independently.
@@ -3384,7 +3385,6 @@ async function loadAll() {
       configForm.api_key_statuses = [...runtimeStatus.api_key_statuses]
       prunePendingDeleteAPIKeyHashes()
     }
-    await loadRecords()
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('admin.riskControl.loadFailed')))
   } finally {
@@ -3398,6 +3398,7 @@ async function loadAll() {
  * failures; existing status remains visible until a successful response replaces it.
  */
 async function loadStatus(silent = true) {
+  if (statusLoading.value) return
   statusLoading.value = true
   try {
     const runtimeStatus = await adminAPI.riskControl.getStatus()
@@ -4327,7 +4328,7 @@ function formatNumber(value: number): string {
 onMounted(() => {
   void loadAll()
   statusTimer = window.setInterval(() => {
-    void loadStatus(true)
+    if (document.visibilityState === 'visible') void loadStatus(true)
   }, 15000)
 })
 

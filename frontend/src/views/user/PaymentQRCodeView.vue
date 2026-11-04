@@ -198,6 +198,9 @@ let pollInFlight = false
  * order or throws.
  */
 async function pollStatus() {
+  // Hidden pages defer status reads until visibility returns, while an already
+  // dispatched request can still settle and apply its existing terminal-state handling.
+  if (document.visibilityState === 'hidden') return
   if (!orderId.value) return
   // A status request can exceed the three-second interval, so reject overlapping ticks that
   // could produce duplicate terminal navigation.
@@ -308,4 +311,13 @@ onMounted(() => {
 })
 
 onUnmounted(() => cleanup())
+
+// refreshVisiblePayment requests current status when a polling page becomes visible.
+// A stopped poll stays stopped, and the existing in-flight guard prevents this
+// visibility event from overlapping a status request already dispatched by the timer.
+function refreshVisiblePayment() {
+  if (document.visibilityState === 'visible' && pollTimer) void pollStatus()
+}
+onMounted(() => document.addEventListener('visibilitychange', refreshVisiblePayment))
+onUnmounted(() => document.removeEventListener('visibilitychange', refreshVisiblePayment))
 </script>

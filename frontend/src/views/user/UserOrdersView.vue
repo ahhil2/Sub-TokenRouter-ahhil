@@ -139,6 +139,7 @@
 </template>
 
 <script setup lang="ts">
+import { useLatestRequest } from '@/composables/useLatestRequest'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -176,9 +177,9 @@ const router = useRouter()
 const appStore = useAppStore()
 const { formatBalanceAmount } = useBalanceDisplay()
 
-// Loading flags independently indicate list requests and order actions, allowing
-// the toolbar and confirmation controls to use their existing disabled states.
-const loading = ref(false)
+// The latest read owns loading and publication; replacement or page disposal cancels
+// earlier requests so late responses and errors cannot replace the current display.
+const { loading, run: runLatest } = useLatestRequest()
 const actionLoading = ref(false)
 // List results, provider eligibility, and the selected status determine the
 // visible rows and the refund actions offered for those rows.
@@ -206,22 +207,25 @@ const statusFilters = computed(() => [
 ])
 
 // fetchOrders loads the selected page and status into the visible table.
-// Failures keep existing rows and report an error. Concurrent requests can each
-// publish their result and clear loading when they finish.
+// Current failures keep existing rows and report an error. Replacement requests
+// cancel earlier reads; only the active request publishes rows and clears loading.
 async function fetchOrders() {
-  loading.value = true
   try {
-    const res = await paymentAPI.getMyOrders({
-      page: pagination.page,
-      page_size: pagination.page_size,
-      status: currentFilter.value || undefined,
-    })
+    const res = await runLatest((signal) =>
+      paymentAPI.getMyOrders(
+        {
+          page: pagination.page,
+          page_size: pagination.page_size,
+          status: currentFilter.value || undefined,
+        },
+        signal,
+      ),
+    )
+    if (!res) return
     orders.value = res.data.items || []
     pagination.total = res.data.total || 0
   } catch (err: unknown) {
     appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
-  } finally {
-    loading.value = false
   }
 }
 

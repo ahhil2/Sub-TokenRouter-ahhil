@@ -1,10 +1,114 @@
 package bridge
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+// TestFlattenResponsesNamespacesDescriptionDuplicates repeats function help in
+// default and explicit namespaces. Empty or missing help must keep the first
+// declaration, its schema, and the namespace used to restore calls.
+func TestFlattenResponsesNamespacesDescriptionDuplicates(t *testing.T) {
+	for _, namespace := range []string{"functions", "workspace"} {
+		for _, description := range []string{"", "Updated help"} {
+			t.Run(namespace+"/"+description, func(t *testing.T) {
+				first := map[string]any{
+					"type": "function", "name": "exec", "description": "Current help",
+					"parameters": map[string]any{"type": "object", "description": "Schema help"},
+				}
+				second := copyClientTool(first)
+				second["description"] = description
+				third := copyClientTool(first)
+				delete(third, "description")
+				request := map[string]any{"tools": []any{
+					map[string]any{"type": "namespace", "name": namespace, "tools": []any{first, second, third}},
+				}}
+				names, changed, err := FlattenResponsesNamespaces(request)
+				require.NoError(t, err)
+				require.True(t, changed)
+				tools, ok := request["tools"].([]any)
+				require.True(t, ok)
+				require.Len(t, tools, 1)
+				tool, ok := tools[0].(map[string]any)
+				require.True(t, ok)
+				require.Equal(t, "Current help", tool["description"])
+				require.Equal(t, first["parameters"], tool["parameters"])
+				require.Equal(t, "exec", first["name"])
+				require.Equal(t, description, second["description"])
+				require.NotContains(t, third, "description")
+				identity := ResponsesNamespaceName{Namespace: namespace, Name: "exec"}
+				if namespace == "functions" {
+					identity.Namespace = ""
+				}
+				toolName, ok := tool["name"].(string)
+				require.True(t, ok)
+				require.Equal(t, identity, names[toolName])
+			})
+		}
+	}
+}
+
+// TestFlattenResponsesNamespacesDescriptionConflictValidation supplies matching
+// help text beside incompatible execution fields. Both duplicate namespace and
+// top-level collisions must fail before declarations, history, or choice change.
+func TestFlattenResponsesNamespacesDescriptionConflictValidation(t *testing.T) {
+	for _, topLevel := range []bool{false, true} {
+		for _, field := range []string{"type", "parameters", "schema_description", "strict", "format", "extension"} {
+			name := "namespace/" + field
+			if topLevel {
+				name = "top_level/" + field
+			}
+			t.Run(name, func(t *testing.T) {
+				first := map[string]any{
+					"type": "function", "name": "exec", "description": "Run a command",
+					"parameters": map[string]any{"type": "object"},
+				}
+				second := copyClientTool(first)
+				switch field {
+				case "type":
+					second["type"] = "custom"
+				case "parameters":
+					second["parameters"] = map[string]any{"type": "object", "required": []any{"command"}}
+				case "schema_description":
+					second["parameters"] = map[string]any{"type": "object", "description": "Parameter guidance"}
+				case "strict":
+					second["strict"] = true
+				case "format":
+					first["type"] = "custom"
+					second["type"] = "custom"
+					first["format"] = map[string]any{"type": "text"}
+					second["format"] = map[string]any{"type": "grammar", "syntax": "lark", "definition": "start: /.+/"}
+				case "extension":
+					second["defer_loading"] = true
+				}
+				declaration := first
+				if !topLevel {
+					declaration = map[string]any{"type": "namespace", "name": "functions", "tools": []any{first}}
+				}
+				request := map[string]any{
+					"tools":       []any{declaration, map[string]any{"type": "namespace", "name": "functions", "tools": []any{second}}},
+					"input":       []any{map[string]any{"type": "function_call", "namespace": "functions", "name": "exec", "arguments": "{}"}},
+					"tool_choice": map[string]any{"type": "function", "namespace": "functions", "name": "exec"},
+				}
+				before, err := json.Marshal(request)
+				require.NoError(t, err)
+				names, changed, err := FlattenResponsesNamespaces(request)
+				if topLevel {
+					require.ErrorContains(t, err, "conflicts with a top-level tool")
+				} else {
+					require.ErrorContains(t, err, "both flatten")
+				}
+				require.False(t, changed)
+				require.Empty(t, names)
+				after, err := json.Marshal(request)
+				require.NoError(t, err)
+				require.JSONEq(t, string(before), string(after))
+			})
+		}
+	}
+}
 
 // TestFlattenResponsesNamespacesDefaultScopeRoundTrip lowers a default function
 // declaration and its qualified history. The upstream uses one bare name and

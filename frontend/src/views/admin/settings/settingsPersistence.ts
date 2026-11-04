@@ -19,8 +19,8 @@ import { extractApiErrorMessage } from '@/utils/apiError'
  * are recorded. A failed search write leaves its own draft dirty while the
  * successful bulk draft becomes clean, allowing the next save to retry search.
  *
- * Loading keeps the page skeleton visible until bulk hydration, search loading,
- * and creative model discovery complete. Silent reloads retain mounted controls
+ * Loading keeps the page skeleton visible until bulk hydration completes.
+ * Auxiliary catalogs and search drafts load when their owning tabs are first visited. Silent reloads retain mounted controls
  * during discard. Domain modules own field normalization and request validation;
  * this coordinator owns their ordering, visible loading state, and error handling.
  */
@@ -46,12 +46,12 @@ export interface SettingsPersistenceActions {
   applyLoadedSettings: (settings: SystemSettings) => void
   /** applyUpdatedSettings applies successful bulk responses and clears the submitted secret input fields. */
   applyUpdatedSettings: (settings: SystemSettings) => void
-  /** loadWebSearchConfig loads the separately stored search draft before the bulk baseline is captured. */
-  loadWebSearchConfig: () => Promise<void>
   /** saveWebSearchConfig returns false on search failure, retaining that draft for the administrator's next save. */
   saveWebSearchConfig: () => Promise<boolean>
-  /** loadCreativeModelCandidates refreshes selectable model capabilities before the loaded form becomes clean. */
-  loadCreativeModelCandidates: () => Promise<void>
+  /** isWebSearchDirty reports whether a loaded search draft needs its independent write. */
+  isWebSearchDirty: () => boolean
+  /** preparePayload loads prerequisites needed to validate configured fields before constructing the bulk update. */
+  preparePayload: () => Promise<void>
   /** markSettingsClean captures selected draft baselines after mounted controls have normalized their values. */
   markSettingsClean: (...keys: SettingsSnapshotKey[]) => void
   /** afterLoad positions the active tabs once the root has scheduled its loading state update. */
@@ -78,24 +78,18 @@ export function useSettingsPersistence(actions: SettingsPersistenceActions) {
   const loadFailed = ref(false)
 
   /**
-   * loadSettings loads bulk fields, search configuration, and creative model choices
-   * before recording the editable baselines. Silent reloads keep already mounted
+   * loadSettings loads bulk fields before recording their editable baseline. Silent reloads keep already mounted
    * panels visible during discard, while ordinary loads show the root skeleton.
    * Failures report the bulk loading error and suppress the save bar. After a
    * successful read, the next Vue tick lets child controls normalize their values
-   * before both bulk and search snapshots become clean.
+   * before the bulk snapshot becomes clean. Search owns its separate baseline.
    */
   async function loadSettings({ silent = false } = {}) {
     if (!silent) loading.value = true
     loadFailed.value = false
     try {
-      const settings = await adminAPI.settings.getSettings()
+      const settings = await adminAPI.settings.getSettings(silent)
       actions.applyLoadedSettings(settings)
-
-      // Search has a separate endpoint; load it before model discovery so both
-      // auxiliary drafts are available when the root records clean snapshots.
-      await actions.loadWebSearchConfig()
-      await actions.loadCreativeModelCandidates()
     } catch (error: unknown) {
       loadFailed.value = true
       appStore.showError(extractApiErrorMessage(error, t('admin.settings.failedToLoad')))
@@ -109,13 +103,13 @@ export function useSettingsPersistence(actions: SettingsPersistenceActions) {
       // Mounted controls may normalize loaded values. Snapshot after their
       // update tick so untouched fields do not appear dirty on first display.
       await nextTick()
-      actions.markSettingsClean('settings', 'webSearch')
+      actions.markSettingsClean('settings')
     }
   }
 
   /**
    * saveSettings validates and writes bulk fields through step-up, then saves the
-   * separate search configuration and refreshes public and administrator stores.
+   * separate search configuration when dirty and refreshes both settings stores.
    * Validation failure or an API error returns false to the registry, which may
    * continue with later targets. A successful bulk write followed by failed search
    * marks only the bulk snapshot clean after the refreshes complete. Step-up
@@ -124,6 +118,7 @@ export function useSettingsPersistence(actions: SettingsPersistenceActions) {
    */
   async function saveSettings(): Promise<boolean> {
     try {
+      await actions.preparePayload()
       const payload = actions.buildPayload()
       if (!payload) return false
 
@@ -132,7 +127,8 @@ export function useSettingsPersistence(actions: SettingsPersistenceActions) {
 
       // Bulk persistence has succeeded. Search reports failure as a boolean so
       // cached bulk settings can still refresh and receive a clean snapshot.
-      const wsOk = await actions.saveWebSearchConfig()
+      const searchDirty = actions.isWebSearchDirty()
+      const wsOk = !searchDirty || (await actions.saveWebSearchConfig())
 
       // Refresh public consumers before administrator consumers so sidebar and
       // header state observe the completed bulk write before the snapshot is accepted.
@@ -144,11 +140,8 @@ export function useSettingsPersistence(actions: SettingsPersistenceActions) {
 
       // Search failure leaves its baseline untouched, while the successfully
       // persisted bulk draft becomes clean and remains clean on the next retry.
-      if (wsOk) {
-        actions.markSettingsClean('settings', 'webSearch')
-      } else {
-        actions.markSettingsClean('settings')
-      }
+      if (wsOk && searchDirty) actions.markSettingsClean('webSearch')
+      actions.markSettingsClean('settings')
 
       return wsOk
     } catch (error: unknown) {

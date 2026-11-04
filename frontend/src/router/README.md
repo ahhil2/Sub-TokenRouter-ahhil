@@ -2,16 +2,16 @@
 
 `index.ts` assembles route records, creates browser history, and installs navigation handlers. Record order is public, user, administrator, then the catch-all record. Route modules keep lazy component imports and metadata next to each destination.
 
-| File | Responsibility |
-| --- | --- |
-| `routes/public.ts` | Setup, sign-in, callbacks, public destinations, and the separately appended catch-all record |
-| `routes/user.ts` | User destinations, payment flows, and custom pages |
-| `routes/admin.ts` | Administrator destinations and payment management |
-| `guards.ts` | Access checks, successful-navigation prefetching, and chunk-load recovery |
-| `navigationLoading.ts` | Progress identifiers and navigation completion |
-| `title.ts` | Translated route titles, site names, and custom-menu labels |
-| `setupRedirect.ts` | Destinations after installation is complete |
-| `meta.d.ts` | Access and layout metadata declarations |
+| File                   | Responsibility                                                                               |
+| ---------------------- | -------------------------------------------------------------------------------------------- |
+| `routes/public.ts`     | Setup, sign-in, callbacks, public destinations, and the separately appended catch-all record |
+| `routes/user.ts`       | User destinations, payment flows, and custom pages                                           |
+| `routes/admin.ts`      | Administrator destinations and payment management                                            |
+| `guards.ts`            | Access checks, successful-navigation prefetching, and chunk-load recovery                    |
+| `navigationLoading.ts` | Progress identifiers and navigation completion                                               |
+| `title.ts`             | Translated route titles, site names, and custom-menu labels                                  |
+| `setupRedirect.ts`     | Destinations after installation is complete                                                  |
+| `meta.d.ts`            | Access and layout metadata declarations                                                      |
 
 The module names organize route records. Each record's metadata determines access: payment result and SDK pages in the user module can still be public. Missing `requiresAuth` means authentication is required, including the catch-all route.
 

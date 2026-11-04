@@ -219,6 +219,8 @@ Ollama Cloud 的设置、状态、会话、自动刷新和主动刷新路由绑�
 
 ## API Key 结算策略接口
 
+`GET /api/v1/keys/capabilities` 使用用户 JWT，返回 `{ "batch_images": boolean }`。服务端通过存在性查询判断当前用户是否有活动、未删除、非系统托管的 Key，其关联分组未删除且允许 `image_batches`。面板用此结果控制批量图片入口；执行批任务时仍由网关验证 Key 和分组的使用权限。
+
 普通 Key 需要绑定一个可用的分组。历史上没有绑定分组的 Key，字符串仍然保留，调用前需要先绑定；系统没有不经过分组的调度入口。`fallback_when_group_unavailable` 只能回退到管理员配置的回退分组，目标分组要重新检查权限、模型、协议、团队和订阅范围。
 
 `POST /api/v1/keys` 和 `PUT /api/v1/keys/{id}` 接受 `billing_mode`（`auto`、`subscription`、`balance`）和可空的 `preferred_subscription_id`。省略模式或使用 `auto` 时，先用订阅，不足的部分由余额补足；`balance` 会清除指定的订阅；`subscription` 需要指定当前付款主体的一份有效订阅。个人 Key 的付款主体是本人，团队 Key 的付款主体是 Team Owner。
@@ -243,6 +245,8 @@ Key 自身的配额和滚动限额字段不受这些展示规则影响。
 前端从更多菜单进入确认框，提交期间禁止重复点击和关闭，成功后更新列表里的凭据，并提供复制入口。配置和用量的保留、缓存失效和并发处理见 [API Key 凭据轮换](../domains/identity_and_tenancy.md#api_key_rotation)。
 
 ## 分组客户端协议
+
+管理员分组分页接口 `/api/v1/admin/groups` 和候选接口 `/api/v1/admin/groups/all` 支持 `view=summary`，返回展示字段、状态、允许协议、提供商计数和排序等摘要。分页、搜索和 `include_inactive` 按对应接口处理。编辑表单通过 `/api/v1/admin/groups/:id` 读取完整配置；省略 `view` 时列表仍返回完整结构。摘要在 HTTP 层转换，服务端内部仍读取完整分组。
 
 分组接口不返回 `platform` 和 `is_default`，协议配置通过 `allowed_protocols`、`protocol_fallbacks`、`responses_image_policy` 返回。`protocol_fallbacks` 是入口到有序目标数组的映射：缺少某个入口表示自动，空数组表示只走原生，非空数组限定目标。提供商仍然有平台，使用 `credentials.upstream_protocols`。管理员只读接口 `GET /api/v1/admin/protocol-capabilities` 提供全部协议、各提供商的原生 profile、单元素的通用分组 profile、可用的入口和转换目标。字段的完整含义见[统一协议能力](protocol_capabilities.md)。
 

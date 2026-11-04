@@ -239,6 +239,8 @@ Ent schema 不是生产环境的迁移器。数据库的变更需要新建 `back
 
 ### 测试分层
 
+前端 Vitest 的默认测试超时在 `vitest.config.ts` 中配置为 10 秒。CPU 受限的环境可以用 `--testTimeout` 调整等待时间；单任务验证使用 `--maxWorkers=1 --no-file-parallelism`。`pnpm build` 先运行类型检查再打包资源，Vite checker 在开发服务器中检查类型。单独执行 `build:assets` 前需要先完成 `typecheck`。
+
 后端测试按构建标签分三层：
 
 - 单元测试可在关闭 `integration` 的构建组合中运行，也可按平台添加约束。`make test-go` 执行 `go test ./...`。外部依赖用 SQLite、miniredis、sqlmock 或本地 HTTP 夹具代替。

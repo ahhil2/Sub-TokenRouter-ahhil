@@ -241,9 +241,15 @@
             <div class="flex items-center gap-1">
               <button
                 @click="handleEdit(row)"
+                :disabled="loadingGroupID === row.id"
+                :aria-busy="loadingGroupID === row.id"
                 class="flex flex-col items-center gap-0.5 rounded-control p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
               >
-                <Icon name="edit" size="sm" />
+                <Icon
+                  :name="loadingGroupID === row.id ? 'loader' : 'edit'"
+                  size="sm"
+                  :class="{ 'animate-spin': loadingGroupID === row.id }"
+                />
                 <span class="text-xs">{{ t('common.edit') }}</span>
               </button>
               <button
@@ -565,6 +571,7 @@ import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { SEARCH_DEBOUNCE_MS } from '@/constants/ui'
 import type {
   AdminGroup,
+  AdminGroupSummary,
   GroupAvailabilityProbeConfig,
   GroupSchedulerType,
   GroupAdvancedSchedulerOverrides,
@@ -1019,10 +1026,10 @@ const copyProvidersGroupOptionsForEdit = computed(() => {
 
 // groups holds the current server page, while complete group options are loaded separately for
 // cross-page replacement and provider-copy choices.
-const groups = ref<AdminGroup[]>([])
-// This complete group source is loaded outside table pagination; individual replacement
-// selectors filter its entries by their own eligibility rules.
-const unavailableFallbackGroups = ref<AdminGroup[]>([])
+const groups = ref<AdminGroupSummary[]>([])
+// Unavailable-group fallback choices span all pages, so keep the active-group
+// summary catalog separately from the currently displayed paginated group rows.
+const unavailableFallbackGroups = ref<AdminGroupSummary[]>([])
 // loading tracks the current list request so the table can present pending data to
 // administrators.
 const loading = ref(false)
@@ -1081,6 +1088,10 @@ let abortController: AbortController | null = null
 // and ordering workflows independently of their draft values.
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
+// loadingGroupID marks the pending editor, while editRequest rejects old detail or
+// provider-label results after another action opens a draft or leaves this page.
+const loadingGroupID = ref<number | null>(null)
+let editRequest = 0
 // showDeleteDialog controls deletion confirmation, while the selected record identifies the
 // target used after confirmation.
 const showDeleteDialog = ref(false)
@@ -1158,7 +1169,7 @@ const advancedSchedulerOverridesTarget = ref<'create' | 'edit' | null>(null)
 const advancedSchedulerOverridesDraft = ref<GroupAdvancedSchedulerOverrides>({})
 // sortableGroups contains the complete ordering draft loaded for the sorting dialog,
 // independently of the paginated group table.
-const sortableGroups = ref<AdminGroup[]>([])
+const sortableGroups = ref<AdminGroupSummary[]>([])
 // Create and edit model-list states retain separate saved selections, current candidates,
 // loading flags, and settings-form references for each editor.
 const createModelsListState = reactive(createInitialModelsListState())
@@ -1778,7 +1789,7 @@ const loadGroups = async () => {
   const { signal } = currentController
   loading.value = true
   try {
-    const response = await adminAPI.groups.list(
+    const response = await adminAPI.groups.listSummaries(
       pagination.page,
       pagination.page_size,
       {
@@ -1819,7 +1830,7 @@ const loadGroups = async () => {
 // its own eligibility filter afterward.
 const loadUnavailableFallbackGroups = async () => {
   try {
-    unavailableFallbackGroups.value = await adminAPI.groups.getAll()
+    unavailableFallbackGroups.value = await adminAPI.groups.getOptions()
   } catch (error) {
     console.error('Error loading unavailable fallback groups:', error)
   }
@@ -1950,6 +1961,8 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 
 // openCreateModal shows the create editor and requests its model candidates.
 const openCreateModal = () => {
+  editRequest++
+  loadingGroupID.value = null
   showCreateModal.value = true
   loadModelsListCandidates('create', 0)
 }
@@ -2095,15 +2108,35 @@ const handleCreateGroup = async () => {
   }
 }
 
-// handleEdit fills the edit draft from a stored group and then opens it. It clones nested
-// editable values, translates compatibility fields, resets provider-copy selection, and
-// hydrates model and reasoning drafts. Provider names are resolved before the modal becomes
-// visible.
+// handleEdit retrieves complete group settings before opening an editable draft.
+// Summary rows omit routing and model configuration, so hydration starts after both
+// the detail response and provider labels are available. Repeated clicks on the
+// pending row reuse its visible loading state; another edit or creation supersedes it.
 //
-// Saved protocol choices are retained while the model candidate query refreshes available
-// selections. Provider lookup failures keep numeric IDs through the conversion helper, allowing
-// the routing rule to remain represented even when its provider details cannot be loaded.
-const handleEdit = async (group: AdminGroup) => {
+// A request generation rejects results after replacement or page disposal. Winning
+// results clone nested drafts, retain stored protocol choices, and refresh model
+// candidates. Provider lookup failures retain numeric identifiers through the routing
+// conversion helper, keeping saved rule membership visible in the editor.
+const handleEdit = async (summary: AdminGroupSummary) => {
+  if (loadingGroupID.value === summary.id) return
+  const request = ++editRequest
+  loadingGroupID.value = summary.id
+  let group: AdminGroup
+  let modelRoutingRules: Awaited<ReturnType<typeof convertApiFormatToRoutingRules>>
+  try {
+    group = await adminAPI.groups.getById(summary.id)
+    if (request !== editRequest) return
+    // Provider lookup can outlive another editor selection. Resolve into local data
+    // and recheck ownership before assigning any shared fields or opening the dialog.
+    modelRoutingRules = await convertApiFormatToRoutingRules(group.model_routing)
+    if (request !== editRequest) return
+  } catch (error) {
+    if (request === editRequest) appStore.showError(t('admin.groups.failedToLoad'))
+    console.error('Error loading group details:', error)
+    return
+  } finally {
+    if (request === editRequest) loadingGroupID.value = null
+  }
   editingGroup.value = group
   editForm.localization = group.localization
     ? JSON.parse(JSON.stringify(group.localization))
@@ -2155,9 +2188,7 @@ const handleEdit = async (group: AdminGroup) => {
   )
   resetAvailabilityProbeFormState(editForm, group.availability_probe_config)
   resetModelsListState(editModelsListState, group.models_list_config)
-  // Resolve provider labels before opening the editor so stored rule membership is visible when
-  // the dialog appears.
-  editModelRoutingRules.value = await convertApiFormatToRoutingRules(group.model_routing)
+  editModelRoutingRules.value = modelRoutingRules
   loadModelsListCandidates('edit', group.id)
   showEditModal.value = true
 }
@@ -2355,9 +2386,9 @@ const handleClickOutside = (event: MouseEvent) => {
 // dialog after success, while failures report an error and leave the dialog unopened.
 const openSortModal = async () => {
   try {
-    // Sorting requires the complete group list because table pagination contains only part of
-    // the ordering being edited.
-    const allGroups = await adminAPI.groups.getAll()
+    // Ordering needs the complete active-group sequence, so reuse the summary catalog
+    // instead of limiting the sortable draft to the currently displayed page.
+    const allGroups = await adminAPI.groups.getOptions()
     // The sortable draft follows the persisted order before administrators drag rows into a
     // replacement sequence.
     sortableGroups.value = [...allGroups].sort((a, b) => a.sort_order - b.sort_order)
@@ -2398,24 +2429,20 @@ const saveSortOrder = async () => {
   }
 }
 
-// Load the protocol catalog before the initial form defaults and list queries, then install
-// the document listener used by provider and column menus.
-onMounted(async () => {
-  try {
-    await loadProtocolCatalog()
-  } catch {
-    appStore.showError(t('admin.protocols.loadError'))
-  }
+// Start the protocol catalog and list queries independently. Catalog watchers fill
+// untouched protocol defaults when available, while the table can display summary rows.
+onMounted(() => {
+  void loadProtocolCatalog().catch(() => appStore.showError(t('admin.protocols.loadError')))
   loadGroups()
   loadUnavailableFallbackGroups()
   void loadLiveCapability()
-  loadModelsListCandidates('create', 0)
   document.addEventListener('click', handleClickOutside)
 })
 
 // Remove document handling and cancel all keyed provider searches when leaving the page so
 // those searches cannot repopulate detached rule suggestions.
 onUnmounted(() => {
+  editRequest++
   document.removeEventListener('click', handleClickOutside)
   providerSearchRunner.clearAll()
   clearAllProviderSearchState()

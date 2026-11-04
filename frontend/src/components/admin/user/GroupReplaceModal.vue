@@ -91,7 +91,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import type { AdminUser } from '@/api/admin/users.types'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 
@@ -110,7 +110,7 @@ interface Props {
     id: number // Group numeric identifier.
     name: string // Group display name.
   } | null // Source exclusive group.
-  allGroups: AdminGroup[] // Available group catalog.
+  allGroups: AdminGroupSummary[] // Available group catalog.
 }
 
 // props and emit connect the parent-owned replacement target with the success and close

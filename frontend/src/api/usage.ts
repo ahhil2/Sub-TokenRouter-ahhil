@@ -243,9 +243,14 @@ export async function getStats(
  * getRanking retrieves usage rankings for the supplied time range. Omitting the
  * range lets the server select today. Ordering follows the server-configured
  * ranking metric, which can be total tokens, requests, or actual cost.
+ * An optional caller-owned signal cancels this HTTP request; rejection remains with
+ * the caller, which decides whether the requested data is still current.
  */
-export async function getRanking(params: UsageRankingParams = {}): Promise<UsageRankingResponse> {
-  const { data } = await apiClient.get<UsageRankingResponse>('/usage/ranking', { params })
+export async function getRanking(
+  params: UsageRankingParams = {},
+  signal?: AbortSignal,
+): Promise<UsageRankingResponse> {
+  const { data } = await apiClient.get<UsageRankingResponse>('/usage/ranking', { params, signal })
   return data
 }
 

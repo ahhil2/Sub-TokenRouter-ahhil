@@ -1807,7 +1807,7 @@ import { useQoderCreateAuthorization } from './useQoderCreateAuthorization'
 import type { QoderSite } from '@/api/admin/qoder'
 import { useGrokOAuth } from '@/composables/useGrokOAuth'
 import type { Proxy } from '@/api/admin/proxies.types'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import type {
   ProviderPlatform,
   ProviderType,
@@ -2039,7 +2039,7 @@ interface Props {
   // through the same platform watcher used for explicit administrator selection.
   initialPlatform?: ProviderPlatform
   proxies: Proxy[] // available outbound proxies
-  groups: AdminGroup[] // available routing groups
+  groups: AdminGroupSummary[] // Available routing group summaries.
 }
 
 // Parent props control visibility and routing choices; completion events request
@@ -2895,57 +2895,6 @@ const canExchangeCode = computed(() => {
   }
   return authCode.trim() && oauth.sessionId.value && !oauth.loading.value
 })
-
-// Opening initializes platform-specific choices; closing restores all form
-// drafts through resetForm while asynchronous capability reads keep their own results.
-watch(
-  () => props.show,
-  (newVal) => {
-    if (newVal) {
-      form.platform = props.initialPlatform || 'anthropic'
-      // Load TLS fingerprint profiles
-      adminAPI.tlsFingerprintProfiles
-        .list()
-        .then((profiles) => {
-          tlsFingerprintProfiles.value = profiles.map((p) => ({ id: p.id, name: p.name }))
-        })
-        .catch(() => {
-          // Failed discovery hides unavailable profiles while preserving manual
-          // provider editing; a later dialog opening retries the profile request.
-          tlsFingerprintProfiles.value = []
-        })
-      adminAPI.tlsFingerprintRouters
-        .list()
-        .then((routers) => {
-          tlsFingerprintRouters.value = routers.map((router) => ({
-            id: router.id,
-            name: router.name,
-          }))
-        })
-        .catch(() => {
-          // Failed discovery hides unavailable routers while retaining the form
-          // draft; another dialog opening can refresh the available router list.
-          tlsFingerprintRouters.value = []
-        })
-      // Modal opened - fill related models
-      allowedModels.value = []
-      // Antigravity starts in mapping mode and asynchronously fills the platform default mappings while leaving its whitelist unrestricted.
-      if (form.platform === 'antigravity') {
-        antigravityModelRestrictionMode.value = 'mapping'
-        fetchAntigravityDefaultMappings().then((mappings) => {
-          antigravityModelMappings.value = [...mappings]
-        })
-        antigravityWhitelistModels.value = []
-      } else {
-        antigravityWhitelistModels.value = []
-        antigravityModelMappings.value = []
-        antigravityModelRestrictionMode.value = 'mapping'
-      }
-    } else {
-      resetForm()
-    }
-  },
-)
 
 // The resolved provider type follows platform and authorization category; Qoder, Antigravity, and Jev override the generic category mapping.
 watch(
@@ -4891,6 +4840,59 @@ const handleCookieAuth = async (sessionKey: string) => {
     oauth.loading.value = false
   }
 }
+
+// Initialize platform choices even when first mounted open. Closing resets draft
+// fields; initialization stays after the helpers referenced by this immediate watcher.
+watch(
+  () => props.show,
+  (newVal) => {
+    if (newVal) {
+      form.platform = props.initialPlatform || 'anthropic'
+      // Load TLS fingerprint profiles
+      adminAPI.tlsFingerprintProfiles
+        .list()
+        .then((profiles) => {
+          tlsFingerprintProfiles.value = profiles.map((p) => ({ id: p.id, name: p.name }))
+        })
+        .catch(() => {
+          // Failed discovery hides unavailable profiles while keeping the provider draft
+          // editable; another dialog opening retries this optional profile catalog.
+          tlsFingerprintProfiles.value = []
+        })
+      adminAPI.tlsFingerprintRouters
+        .list()
+        .then((routers) => {
+          tlsFingerprintRouters.value = routers.map((router) => ({
+            id: router.id,
+            name: router.name,
+          }))
+        })
+        .catch(() => {
+          // Failed discovery hides unavailable routers while keeping the provider draft
+          // editable; another dialog opening retries this optional router catalog.
+          tlsFingerprintRouters.value = []
+        })
+      // Modal opened - fill related models
+      allowedModels.value = []
+      // Opening an Antigravity form starts with its default mappings; resetting the
+      // other platform choices prevents a previous provider draft from supplying stale restrictions.
+      if (form.platform === 'antigravity') {
+        antigravityModelRestrictionMode.value = 'mapping'
+        fetchAntigravityDefaultMappings().then((mappings) => {
+          antigravityModelMappings.value = [...mappings]
+        })
+        antigravityWhitelistModels.value = []
+      } else {
+        antigravityWhitelistModels.value = []
+        antigravityModelMappings.value = []
+        antigravityModelRestrictionMode.value = 'mapping'
+      }
+    } else {
+      resetForm()
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <style scoped>

@@ -1,5 +1,11 @@
 import { apiClient } from '../client'
-import type { AdminGroup, CreateGroupRequest, UpdateGroupRequest } from '@/api/groups.types'
+import { createCachedRequest } from '../readCache'
+import type {
+  AdminGroup,
+  AdminGroupSummary,
+  CreateGroupRequest,
+  UpdateGroupRequest,
+} from '@/api/groups.types'
 import type { PaginatedResponse } from '@/api/common.types'
 
 /**
@@ -54,6 +60,73 @@ export async function list(
     },
     signal: options?.signal,
   })
+  return data
+}
+
+/**
+ * listSummaries retrieves paginated group fields used by administrative lists. Filters and
+ * pagination follow the complete list endpoint, and the optional caller-owned signal
+ * cancels the request.
+ */
+export async function listSummaries(
+  page: number = 1,
+  pageSize: number = 20,
+  filters?: {
+    status?: 'active' | 'inactive' // Group lifecycle filter.
+    is_exclusive?: boolean // Exclusive access filter.
+    search?: string // Free-text group search.
+    sort_by?: string // Requested sorting field.
+    sort_order?: 'asc' | 'desc' // Requested sort direction.
+  },
+  options?: {
+    signal?: AbortSignal // Caller-owned cancellation signal.
+  },
+): Promise<PaginatedResponse<AdminGroupSummary>> {
+  const { data } = await apiClient.get<PaginatedResponse<AdminGroupSummary>>('/admin/groups', {
+    params: {
+      view: 'summary',
+      page,
+      page_size: pageSize,
+      ...filters,
+    },
+    signal: options?.signal,
+  })
+  return data
+}
+
+/**
+ * activeGroupOptions and allGroupOptions cache separate active-only and inclusive selector
+ * catalogs. Their readers share pending requests and return independent copies to each
+ * caller.
+ */
+const activeGroupOptions = createCachedRequest(() => loadGroupOptions(false))
+const allGroupOptions = createCachedRequest(() => loadGroupOptions(true))
+
+/**
+ * getOptions returns cached group summaries for selectors, excluding inactive groups by
+ * default. Passing true includes inactive groups; callers receive independent records
+ * suitable for local sorting and display.
+ */
+export function getOptions(includeInactive = false): Promise<AdminGroupSummary[]> {
+  return includeInactive ? allGroupOptions() : activeGroupOptions()
+}
+
+/**
+ * loadGroupOptions fetches the summary catalog with the requested inactive-group
+ * visibility.
+ */
+async function loadGroupOptions(includeInactive: boolean): Promise<AdminGroupSummary[]> {
+  const { data } = await apiClient.get<AdminGroupSummary[]>('/admin/groups/all', {
+    params: { view: 'summary', include_inactive: includeInactive },
+  })
+  return data
+}
+
+/**
+ * getById retrieves the complete editable configuration for one administrative group.
+ */
+export async function getById(id: number): Promise<AdminGroup> {
+  const { data } = await apiClient.get<AdminGroup>(`/admin/groups/${id}`)
   return data
 }
 
@@ -454,6 +527,9 @@ export async function getCapacitySummary(): Promise<
  */
 export const groupsAPI = {
   list,
+  listSummaries,
+  getOptions,
+  getById,
   getAll,
   getAllIncludingInactive,
   getLiveCapability,

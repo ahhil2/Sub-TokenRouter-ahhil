@@ -21,8 +21,9 @@ import type { AdminGroup } from '@/api/groups.types'
 // showError records the validation notifications asserted below.
 const { groups, providers, showError } = vi.hoisted(() => ({
   groups: {
-    list: vi.fn(),
-    getAll: vi.fn(),
+    listSummaries: vi.fn(),
+    getById: vi.fn(),
+    getOptions: vi.fn(),
     getModelsListCandidates: vi.fn(),
     getUsageSummary: vi.fn(),
     getCapacitySummary: vi.fn(),
@@ -86,7 +87,12 @@ async function open(
   _providerType: string,
   overrides: Partial<AdminGroup> = {},
 ) {
-  groups.list.mockResolvedValue({ items: [{ ...group(), ...overrides }], total: 1, pages: 1 })
+  groups.listSummaries.mockResolvedValue({
+    items: [{ id: 42, name: 'Existing', status: 'active', rate_multiplier: 1 }],
+    total: 1,
+    pages: 1,
+  })
+  groups.getById.mockResolvedValue({ ...group(), ...overrides })
   const wrapper = mount(GroupsView, {
     attachTo: document.body,
     global: {
@@ -125,6 +131,32 @@ async function open(
   return wrapper
 }
 
+// Opening another draft while provider labels are pending supersedes the group edit.
+// A late provider response must leave the creation form visible without opening a stale editor.
+it('keeps creation active when an earlier edit finishes provider lookup', async () => {
+  const wrapper = await open('create', 'mixed')
+  let resolveProvider!: (value: { id: number; name: string }) => void
+  providers.getById.mockReturnValueOnce(
+    new Promise((resolve) => {
+      resolveProvider = resolve
+    }),
+  )
+  groups.getById.mockResolvedValueOnce({ ...group(), model_routing: { 'gpt-*': [19] } })
+  await wrapper
+    .findAll('button')
+    .find((button) => button.text() === 'common.edit')!
+    .trigger('click')
+  await flushPromises()
+  expect(providers.getById).toHaveBeenCalledWith(19)
+  await wrapper.get('[data-tour="groups-create-btn"]').trigger('click')
+  resolveProvider({ id: 19, name: 'Late provider' })
+  await flushPromises()
+  expect(wrapper.findAllComponents(GroupSettingsForm)).toHaveLength(1)
+  expect((wrapper.get('[data-group-field="name"] input').element as HTMLInputElement).value).toBe(
+    'New group',
+  )
+})
+
 // tab selects the named group settings tab and waits for pending view updates.
 async function tab(wrapper: VueWrapper, name: string) {
   await wrapper.get(`[data-settings-tab-button="${name}"]`).trigger('click')
@@ -135,7 +167,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   providers.list.mockResolvedValue({ items: [] })
-  groups.getAll.mockResolvedValue([])
+  groups.getOptions.mockResolvedValue([])
   groups.getModelsListCandidates.mockResolvedValue(['gpt-test'])
   groups.getUsageSummary.mockResolvedValue([])
   groups.getCapacitySummary.mockResolvedValue([])

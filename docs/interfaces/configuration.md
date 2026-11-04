@@ -151,6 +151,8 @@ usage、audit 和 ops 的静态参数，由 app 整理成各模块的 Options；
 
 ### 用户可见文案
 
+`site_logo` 的内嵌图片在数据库中保存为 data URL。公开设置、管理员设置和 HTML 注入通过 `/api/v1/settings/logo/<sha256>` 引用图片，公开图片接口按内容版本提供长期缓存和 ETag。外部图片 URL 按原值返回。设置表单提交合法的版本引用时，服务器保持当前已存图片；提交新的 data URL 或空字符串时更新或清空图片。图片更新后生成新地址，旧版本请求返回 404。
+
 站点文案使用 `site_texts`，其他独立运营文案通过 `localized_settings` 提交，完整字段和存储规则见[用户侧国际化](user_localization.md#content_owners)。`default_locale` 初始为 `en`。管理接口拒绝站点名称、标题和副标题的 `_zh`、`_en` 写入，返回 `REMOVED_SETTING_FIELD`。译文版本、核对和删除操作由统一内容模型处理。
 
 ### 部分更新与敏感字段

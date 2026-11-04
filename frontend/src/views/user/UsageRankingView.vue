@@ -123,6 +123,7 @@
 </template>
 
 <script setup lang="ts">
+import { useLatestRequest } from '@/composables/useLatestRequest'
 import Skeleton from '@/components/common/Skeleton.vue'
 import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
 import { computed, defineComponent, h, onMounted, ref, type PropType } from 'vue'
@@ -155,9 +156,9 @@ import { formatNumber } from '@/utils/format'
 const { t } = useI18n()
 const { balanceUnitName, formatBalanceAmount } = useBalanceDisplay()
 
-// Ranking request state separates retrieval progress, the most recent successful response,
-// and current failure text for the selected dates.
-const loading = ref(false)
+// The latest read owns loading and publication; replacement or page disposal cancels
+// earlier requests so late responses and errors cannot replace the current display.
+const { loading, run: runLatest } = useLatestRequest()
 const response = ref<UsageRankingResponse | null>(null)
 const errorMessage = ref('')
 
@@ -348,19 +349,23 @@ function onDateRangeChange(range: {
 // failure stores its message while retaining the earlier response, and settlement releases
 // the loading flag.
 async function loadRanking() {
-  loading.value = true
   errorMessage.value = ''
   try {
-    response.value = await usageAPI.getRanking({
-      start_date: startDate.value,
-      end_date: endDate.value,
-    })
+    const result = await runLatest((signal) =>
+      usageAPI.getRanking(
+        {
+          start_date: startDate.value,
+          end_date: endDate.value,
+        },
+        signal,
+      ),
+    )
+    if (!result) return
+    response.value = result
   } catch (error: any) {
     // Keep the previous successful ranking response after retrieval fails, while exposing
     // the current failure message beside the selected date controls.
     errorMessage.value = error?.message || t('usageRanking.loadError')
-  } finally {
-    loading.value = false
   }
 }
 

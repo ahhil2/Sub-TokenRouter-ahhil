@@ -182,7 +182,7 @@ import { adminAPI } from '@/api/admin'
 import { formatDateTime } from '@/utils/format'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import type { AdminUser } from '@/api/admin/users.types'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import type { ApiKey } from '@/api/keys.types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -211,7 +211,7 @@ const appStore = useAppStore()
 // apiKeys and allGroups hold separately loaded key rows and group choices used by the
 // selected user's regular-key group selector.
 const apiKeys = ref<ApiKey[]>([])
-const allGroups = ref<AdminGroup[]>([])
+const allGroups = ref<AdminGroupSummary[]>([])
 // loading drives key-list feedback, while updatingKeyIds tracks individual group
 // updates so unrelated keys can retain their own pending states.
 const loading = ref(false)
@@ -287,7 +287,7 @@ const load = async () => {
 // independently of the catalog.
 const loadGroups = async () => {
   try {
-    const groups = await adminAPI.groups.getAll()
+    const groups = await adminAPI.groups.getOptions()
     allGroups.value = groups
   } catch (error) {
     // Catalog loading is independent of the key list, so failure retains available

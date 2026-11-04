@@ -287,3 +287,28 @@ export interface UpdateGroupRequest {
   require_privacy_set?: boolean // Provider privacy admission requirement.
   copy_providers_from_group_ids?: number[] // Provider source group identifiers.
 }
+
+// AdminGroupSummary contains fields used by administrative lists and group selectors.
+// Editors fetch the complete group before changing routing or model configuration.
+export type AdminGroupSummary = Pick<
+  AdminGroup,
+  | 'claude_code_only'
+  | 'fallback_group_id_on_invalid_request'
+  | 'id'
+  | 'name'
+  | 'display_name'
+  | 'description'
+  | 'display_brand'
+  | 'rate_multiplier'
+  | 'is_exclusive'
+  | 'status'
+  | 'session_isolation_enabled'
+  | 'allowed_protocols'
+  | 'scheduler_type'
+  | 'provider_count'
+  | 'active_provider_count'
+  | 'rate_limited_provider_count'
+  | 'sort_order'
+  | 'created_at'
+  | 'updated_at'
+>

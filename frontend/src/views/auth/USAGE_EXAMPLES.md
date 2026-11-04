@@ -93,19 +93,19 @@ const routes = [
     path: '/login',
     name: 'Login',
     component: () => import('@/views/auth/LoginView.vue'),
-    meta: { requiresAuth: false }
+    meta: { requiresAuth: false },
   },
   {
     path: '/register',
     name: 'Register',
     component: () => import('@/views/auth/RegisterView.vue'),
-    meta: { requiresAuth: false }
-  }
+    meta: { requiresAuth: false },
+  },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
 })
 
 export default router
@@ -152,7 +152,7 @@ async function login() {
   try {
     await authStore.login({
       username: 'john_doe',
-      password: 'MySecurePass123'
+      password: 'MySecurePass123',
     })
 
     appStore.showSuccess('Login successful!')
@@ -168,7 +168,7 @@ async function register() {
     await authStore.register({
       username: 'jane_smith',
       email: 'jane@example.com',
-      password: 'SecurePass123'
+      password: 'SecurePass123',
     })
 
     appStore.showSuccess('Account created successfully!')
@@ -259,7 +259,7 @@ errors = {
   username: 'Username must be at least 3 characters',
   email: 'Please enter a valid email address',
   password: 'Password must be at least 8 characters with letters and numbers',
-  confirmPassword: 'Passwords do not match'
+  confirmPassword: 'Passwords do not match',
 }
 
 // Each error appears below its respective input field with red styling
@@ -279,8 +279,8 @@ describe('LoginView', () => {
   it('validates required fields', async () => {
     const wrapper = mount(LoginView, {
       global: {
-        plugins: [createPinia()]
-      }
+        plugins: [createPinia()],
+      },
     })
 
     // Submit empty form
@@ -294,8 +294,8 @@ describe('LoginView', () => {
   it('calls authStore.login on valid submission', async () => {
     const wrapper = mount(LoginView, {
       global: {
-        plugins: [createPinia()]
-      }
+        plugins: [createPinia()],
+      },
     })
 
     // Fill in form
@@ -372,7 +372,7 @@ router.beforeEach((to, from, next) => {
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     next({
       path: '/login',
-      query: { redirect: to.fullPath }
+      query: { redirect: to.fullPath },
     })
     return
   }
@@ -391,7 +391,7 @@ async function handleLogin(): Promise<void> {
   try {
     await authStore.login({
       username: formData.username,
-      password: formData.password
+      password: formData.password,
     })
 
     appStore.showSuccess('Login successful!')
@@ -438,7 +438,7 @@ async function handleRegister(): Promise<void> {
     await authStore.register({
       username: formData.username,
       email: formData.email,
-      password: formData.password
+      password: formData.password,
     })
 
     appStore.showSuccess('Account created successfully!')

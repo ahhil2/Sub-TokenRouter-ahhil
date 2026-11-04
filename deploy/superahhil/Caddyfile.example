@@ -8,23 +8,12 @@ example.com {
 		max_size 100MiB
 	}
 
+	@auth_pages path /login /register
+	header @auth_pages Cache-Control "no-store, max-age=0"
+
 	handle / {
 		root * /var/www/superahhil
 		rewrite * /index.html
-		file_server
-	}
-
-	handle /login {
-		header Cache-Control "no-store, max-age=0"
-		root * /var/www/superahhil
-		rewrite * /login.html
-		file_server
-	}
-
-	handle /register {
-		header Cache-Control "no-store, max-age=0"
-		root * /var/www/superahhil
-		rewrite * /register.html
 		file_server
 	}
 

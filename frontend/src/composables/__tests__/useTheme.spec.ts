@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { defineComponent } from 'vue'
 
-import { initTheme, setTheme } from '../useTheme'
+import { initTheme, setTheme, useLightTheme, useTheme } from '../useTheme'
 
 // useTheme.spec.ts checks document theme application and temporary transition suppression
 // using controlled frame callbacks. System-following behavior reloads the module against a
@@ -45,6 +47,29 @@ describe('useTheme', () => {
     expect(document.documentElement.classList.contains('theme-switching')).toBe(false)
   })
 
+  it('uses light authentication layouts and restores the saved dark preference on exit', () => {
+    setTheme(true)
+    const layout = defineComponent({
+      setup() {
+        useLightTheme()
+        return () => null
+      },
+    })
+    const first = mount(layout)
+    const second = mount(layout)
+
+    expect(useTheme().isDark.value).toBe(false)
+    expect(localStorage.getItem('theme')).toBe('dark')
+    initTheme()
+    expect(useTheme().isDark.value).toBe(false)
+
+    first.unmount()
+    expect(useTheme().isDark.value).toBe(false)
+    second.unmount()
+    expect(useTheme().isDark.value).toBe(true)
+    expect(localStorage.getItem('theme')).toBe('dark')
+  })
+
   // A fresh theme module observes a mutable system preference after selecting system mode.
   // It must clear stored explicit choice and follow subsequent media-query changes in the
   // document.
@@ -78,5 +103,21 @@ describe('useTheme', () => {
     systemDark = false
     listeners.forEach((listener) => listener({ matches: false } as MediaQueryListEvent))
     expect(document.documentElement.classList.contains('dark')).toBe(false) // check-ui-allow: theme primitive tests assert the document class
+
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          theme.useLightTheme()
+          return () => null
+        },
+      }),
+    )
+    systemDark = true
+    listeners.forEach((listener) => listener({ matches: true } as MediaQueryListEvent))
+    expect(theme.useTheme().isDark.value).toBe(false)
+    expect(localStorage.getItem('theme')).toBeNull()
+
+    wrapper.unmount()
+    expect(theme.useTheme().isDark.value).toBe(true)
   })
 })

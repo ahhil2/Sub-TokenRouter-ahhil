@@ -105,6 +105,7 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
  * module's named or default API object.
  */
 export const keysAPI = {
+  getCapabilities,
   list,
   getBillingOptions,
   createWithPayload,
@@ -115,3 +116,13 @@ export const keysAPI = {
 }
 
 export default keysAPI
+
+/**
+ * getCapabilities retrieves menu eligibility for the authenticated user through one
+ * request. The server derives ownership from the session; generation requests still
+ * require independent key and group authorization.
+ */
+export async function getCapabilities(): Promise<{ batch_images: boolean }> {
+  const { data } = await apiClient.get<{ batch_images: boolean }>('/keys/capabilities')
+  return data
+}

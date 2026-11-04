@@ -121,6 +121,9 @@ export default defineConfig(({ mode }) => {
       vue(),
       checker({
         vueTsc: true,
+        // The build script completes type checking before bundling; disabling the checker
+        // here keeps those verification and packaging phases sequential during production builds.
+        enableBuild: false,
       }),
       injectPublicSettings(backendUrl),
     ],
@@ -162,8 +165,8 @@ export default defineConfig(({ mode }) => {
                       return 'vendor-vue'
                     }
 
-                    // Reused browser utilities and spreadsheet exports share the UI vendor group.
-                    if (id.includes('/@vueuse/') || id.includes('/xlsx/')) {
+                    // VueUse utilities share one vendor group across the components using their composables.
+                    if (id.includes('/@vueuse/')) {
                       return 'vendor-ui'
                     }
 
@@ -188,6 +191,19 @@ export default defineConfig(({ mode }) => {
                       return 'vendor-airwallex'
                     }
 
+                    const features: Array<[string, string[]]> = [
+                      ['excel', ['/xlsx/', '/file-saver/']],
+                      ['canvas', ['/fabric/']],
+                      ['animation', ['/lottie-web/']],
+                      ['cropper', ['/cropperjs/', '/@cropper/']],
+                      ['markdown', ['/marked/', '/dompurify/']],
+                      ['qrcode', ['/qrcode/']],
+                      ['onboarding', ['/driver.js/']],
+                      ['drag', ['/vue-draggable-plus/', '/sortablejs/']],
+                    ]
+                    for (const [name, packages] of features) {
+                      if (packages.some((part) => id.includes(part))) return `vendor-${name}`
+                    }
                     // Remaining vendor modules use the shared miscellaneous dependency group.
                     return 'vendor-misc'
                   }

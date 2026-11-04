@@ -53,6 +53,8 @@ vi.mock('@/api/admin', () => ({
     },
     proxies: { getAll: getAllProxies },
     groups: {
+      getOptions: getAllGroups,
+
       getAll: getAllGroups,
       getAllIncludingInactive: getAllGroups,
     },

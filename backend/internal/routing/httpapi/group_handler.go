@@ -368,7 +368,8 @@ func NewGroupHandler(admin GroupAdministration, resources ...GroupResources) *Gr
 // List returns administrator group rows with standard pagination and
 // requested filters. It rejects a supplied platform parameter, caps trimmed
 // search by bytes, defaults sorting to ascending sort_order, and interprets
-// nonempty is_exclusive as true only when spelled true.
+// nonempty is_exclusive as true only when spelled true. view=summary selects
+// list fields; callers needing editable routing configuration use complete rows.
 func (h *GroupHandler) List(c *gin.Context) {
 	page, pageSize := httpx.ParsePagination(c)
 	if _, supplied := c.GetQuery("platform"); supplied {
@@ -400,6 +401,15 @@ func (h *GroupHandler) List(c *gin.Context) {
 		return
 	}
 
+	if c.Query("view") == "summary" {
+		out := make([]groupdto.AdminGroupSummary, 0, len(groups))
+		for i := range groups {
+			out = append(out, groupdto.AdminGroupSummaryFromRouting(&groups[i]))
+		}
+		httpx.Paginated(c, out, total, page, pageSize)
+		return
+	}
+
 	outGroups := make([]groupdto.AdminGroup[struct{}], 0, len(groups))
 	for i := range groups {
 		outGroups = append(outGroups, *groupdto.AdminGroupFromRouting[struct{}](&groups[i]))
@@ -410,7 +420,8 @@ func (h *GroupHandler) List(c *gin.Context) {
 // GetAll returns administrator group choices through the active-group reader
 // by default. include_inactive=true selects the broader administration
 // reader, and any supplied platform parameter is rejected before reading
-// groups.
+// groups. view=summary returns selector fields in the same group order; omitted
+// or other view values retain the complete administrator response.
 func (h *GroupHandler) GetAll(c *gin.Context) {
 	if _, supplied := c.GetQuery("platform"); supplied {
 		httpx.ErrorFrom(c, infraerrors.BadRequest("REMOVED_GROUP_FIELD", "groups no longer have a platform"))
@@ -429,6 +440,15 @@ func (h *GroupHandler) GetAll(c *gin.Context) {
 
 	if err != nil {
 		httpx.ErrorFrom(c, err)
+		return
+	}
+
+	if c.Query("view") == "summary" {
+		out := make([]groupdto.AdminGroupSummary, 0, len(groups))
+		for i := range groups {
+			out = append(out, groupdto.AdminGroupSummaryFromRouting(&groups[i]))
+		}
+		httpx.Success(c, out)
 		return
 	}
 

@@ -22,7 +22,7 @@ vi.mock('@/api/admin', () => ({
       getUserApiKeys: apiMocks.getUserApiKeys, // User-key request spy.
     }, // User endpoint substitutes.
     groups: {
-      getAll: apiMocks.getAllGroups, // Group-catalog request substitute.
+      getOptions: apiMocks.getAllGroups,
     }, // Group endpoint substitutes.
     apiKeys: {
       updateApiKeyGroup: apiMocks.updateApiKeyGroup, // Key-group mutation spy.

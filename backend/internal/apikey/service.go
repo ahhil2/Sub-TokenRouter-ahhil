@@ -156,6 +156,8 @@ type APIKeyUpdateFields struct {
 // APIKeyRepository persists credentials, group bindings and selected usage or
 // presentation observations.
 type APIKeyRepository interface {
+	// HasBatchImageKey checks visible active keys for batch-image menu eligibility.
+	HasBatchImageKey(context.Context, int64) (bool, error)
 	// Create persists configuration and complete composite bindings, filling
 	// stored identity and timestamps on the supplied record. Implementations
 	// coordinate creator Key limits with insertion; caller-owned transaction
@@ -2291,4 +2293,11 @@ func (s *APIKeyService) UpdateRateLimitUsage(ctx context.Context, apiKeyID int64
 		return nil
 	}
 	return s.apiKeyRepo.IncrementRateLimitUsage(ctx, apiKeyID, cost)
+}
+
+// HasBatchImageKey delegates batch-image menu eligibility to the key repository. The
+// caller supplies the authenticated user ID; this presentation query does not replace
+// authorization when the user submits a generation request.
+func (s *APIKeyService) HasBatchImageKey(ctx context.Context, userID int64) (bool, error) {
+	return s.apiKeyRepo.HasBatchImageKey(ctx, userID)
 }

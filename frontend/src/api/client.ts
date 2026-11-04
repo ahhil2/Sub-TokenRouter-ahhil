@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
 import type { ApiResponse } from '@/api/common.types'
 import { getLocale } from '@/i18n'
+import { invalidateReadCaches } from './readCache'
 import { responseErrorMessage, localizedErrorMessage } from '@/i18n/errors'
 import {
   ADMIN_UI_REQUEST_HEADER,
@@ -41,6 +42,26 @@ export const apiClient: AxiosInstance = axios.create({
   },
 })
 
+/**
+ * activeRequests and pendingRequestCount track unsettled Axios operations so route
+ * prefetch can wait until page data requests have completed.
+ */
+const activeRequests = new WeakSet<object>()
+let pendingRequestCount = 0
+/**
+ * hasPendingRequests reports whether application API traffic is still awaiting settlement.
+ */
+export function hasPendingRequests(): boolean {
+  return pendingRequestCount > 0
+}
+/**
+ * finishRequest releases a tracked request exactly once on response or rejection. Replayed
+ * language requests enter the request interceptor again, and unknown configurations leave
+ * the count unchanged.
+ */
+function finishRequest(config: object | undefined): void {
+  if (config && activeRequests.delete(config)) pendingRequestCount--
+}
 /**
  * getUserTimezone returns the browser's IANA timezone for GET query parameters.
  * If Intl timezone lookup throws, it returns UTC so request construction can
@@ -93,6 +114,8 @@ apiClient.interceptors.request.use(
       }
     }
 
+    activeRequests.add(config)
+    pendingRequestCount++
     return config
   },
   (error) => {
@@ -104,6 +127,7 @@ apiClient.interceptors.request.use(
 
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => {
+    finishRequest(response.config)
     /**
      * When a GET finishes after the locale changes, replay it through the request
      * interceptor so the caller receives the current language.
@@ -136,9 +160,15 @@ apiClient.interceptors.response.use(
         })
       }
     }
+    // Successful writes invalidate shared configuration reads before their caller receives
+    // completion, so any ensuing editor refresh observes the updated server values.
+    if (!['get', 'head', 'options'].includes(response.config.method?.toLowerCase() ?? 'get')) {
+      invalidateReadCaches()
+    }
     return response
   },
   async (error: AxiosError<ApiResponse<unknown>>) => {
+    finishRequest(error.config)
     // Request cancellation: keep the original axios cancellation error so callers can ignore it.
     // Otherwise we'd misclassify it as a generic "network error".
     if (error.code === 'ERR_CANCELED' || axios.isCancel(error)) {

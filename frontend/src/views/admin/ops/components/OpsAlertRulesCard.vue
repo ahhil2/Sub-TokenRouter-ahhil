@@ -124,7 +124,7 @@ const groupOptionsBase = ref<SelectOption[]>([])
 // draft filters remain available for later editing.
 async function loadGroups() {
   try {
-    const list = await adminAPI.groups.getAll()
+    const list = await adminAPI.groups.getOptions()
     groupOptionsBase.value = list.map((g) => ({ value: g.id, label: g.name }))
   } catch (err) {
     // Keep the editor usable with no fetched group choices when this independent

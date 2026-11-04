@@ -27,9 +27,11 @@ import { useAppStore } from '@/stores'
 /**
  * useWebSearchSettings creates the page-owned search draft and actions during
  * component setup. The caller schedules initial loading and persistence; the returned
- * state survives category changes while the settings page stays mounted.
+ * state survives category changes while the settings page stays mounted. markClean
+ * records the search draft baseline after a successful load, independently of bulk
+ * settings hydration and its own clean snapshot.
  */
-export function useWebSearchSettings() {
+export function useWebSearchSettings(markClean: () => void) {
   // Translation and notification services belong to this setup invocation and serve all returned actions.
   const { t } = useI18n()
   const appStore = useAppStore()
@@ -243,6 +245,9 @@ export function useWebSearchSettings() {
         webSearchConfig.providers = resp.providers || []
       }
       webSearchProxies.value = proxiesResp.items || []
+      // Capture the independently loaded search draft here so first-visit loading
+      // cannot make untouched search fields appear dirty in the bulk save target.
+      markClean()
     } catch (err: unknown) {
       // An absent configuration reports 404, and statusless failures are also silent here;
       // retain the current draft in both cases while reporting other explicit HTTP failures.

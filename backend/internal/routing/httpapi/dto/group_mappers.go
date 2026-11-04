@@ -117,3 +117,30 @@ func GroupCapacityFromSummary(v *routing.GroupCapacitySummary) *GroupCapacity {
 	}
 	return &GroupCapacity{ConcurrencyUsed: v.ConcurrencyUsed, ConcurrencyMax: v.ConcurrencyMax, SessionsUsed: v.SessionsUsed, SessionsMax: v.SessionsMax, RPMUsed: v.RPMUsed, RPMMax: v.RPMMax}
 }
+
+// AdminGroupSummaryFromRouting selects list fields from a nonnil routing group. The result
+// uses effective admission protocols and shares the optional invalid-request fallback
+// pointer; HTTP callers serialize the result without modifying that referenced value.
+func AdminGroupSummaryFromRouting(g *routing.Group) AdminGroupSummary {
+	return AdminGroupSummary{
+		ClaudeCodeOnly:                  g.ClaudeCodeOnly,
+		FallbackGroupIDOnInvalidRequest: g.FallbackGroupIDOnInvalidRequest,
+		ID:                              g.ID,
+		Name:                            g.Name,
+		DisplayName:                     g.DisplayName,
+		Description:                     g.Description,
+		DisplayBrand:                    g.DisplayBrand,
+		RateMultiplier:                  g.RateMultiplier,
+		IsExclusive:                     g.IsExclusive,
+		Status:                          g.Status,
+		SessionIsolationEnabled:         g.SessionIsolationEnabled,
+		AllowedProtocols:                g.EffectiveAllowedProtocols(),
+		SchedulerType:                   string(g.SchedulerType),
+		ProviderCount:                   g.ProviderCount,
+		ActiveProviderCount:             g.ActiveProviderCount,
+		RateLimitedProviderCount:        g.RateLimitedProviderCount,
+		SortOrder:                       g.SortOrder,
+		CreatedAt:                       g.CreatedAt,
+		UpdatedAt:                       g.UpdatedAt,
+	}
+}

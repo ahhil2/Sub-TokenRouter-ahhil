@@ -1417,11 +1417,11 @@ func chatContentFromSingleResponsesPart(partType string, part map[string]json.Ra
 //
 // Namespace validation rejects joined-label owners that differ or conflict
 // with top-level names. Equivalent default-scoped definitions share the direct
-// declaration; differing schemas or kinds fail before emission. Search rejects its reserved
-// top-level name and deduplicates repeated declarations. Unsupported kinds
-// disappear. Retained schemas, slices, and optional pointers can share source
-// storage, and these name checks do not establish complete tool-schema
-// validity.
+// declaration even when tool-level descriptions differ; other field differences
+// fail before emission. Search rejects its reserved top-level name and
+// deduplicates repeated declarations. Unsupported kinds disappear. Retained
+// schemas, slices, and optional pointers can share source storage, and these
+// name checks do not establish complete tool-schema validity.
 func responsesToolsToChatTools(tools []ResponsesTool) ([]ChatTool, error) {
 	// Use the same namespace identity and schema checks as function-only Responses.
 	// Keep numeric schema literals intact while moving typed declarations through the shared flattener.

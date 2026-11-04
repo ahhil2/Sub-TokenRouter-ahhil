@@ -128,6 +128,7 @@
 
 ## 弹窗
 
+- 提供商管理的弹窗在首次打开时异步导入并挂载，关闭后保留实例。依赖 `show` 初始化的组件需要处理首次挂载时已经为 `true` 的情况；监听器使用 `immediate`，关闭时按组件的规则结束轮询和临时操作。
 - 默认使用 `BaseDialog`：宽度档位有 narrow、normal、wide、extra-wide、full；Escape 关闭、点击外部关闭、焦点管理和背景滚动锁定都已内置。新弹窗直接用它，手写 `fixed inset-0` 外壳会缺少这些行为。
 - 输入法组词期间按 Escape 取消当前输入时，`BaseDialog` 保持打开，普通 Escape 按 `closeOnEscape` 设置关闭最上层弹窗。
 - 标题需要说明或图标时，用 `subtitle` 在标题下加一行 `text-xs` 说明，用 `header-icon` 插槽在标题左侧放图标块。标题右侧的模式切换等控件放进 `header-actions` 插槽，排在关闭按钮之前。头部结构由这些插槽组成。
@@ -141,6 +142,8 @@
 ## 设置表单
 
 设置项较多的弹窗和整页设置，用 `components/common/settings/` 下的组件搭建分区和开关行。
+
+系统设置页 `SettingsView` 按首次访问挂载一级页签和网关子页，访问过的内容通过 `v-show` 切换，草稿由已挂载的组件继续持有。基础设置共用一次读取，模型候选、备份、支付通道和各网关附加配置在对应分区首次访问时读取。每个数据源加载后单独记录干净快照，统一保存按修改状态提交，尚未访问的联网搜索配置不会作为默认值写入。
 
 - 分页：`SettingsTabs` 接收 `tabs`（`key`、`label`、`hidden`），并按 `key` 提供同名插槽。所有面板一直挂载，切页时编辑器内部的草稿不会丢失；`hidden` 只隐藏页签按钮，当前页签被隐藏时回到第一个可见页签。切页后滚动到顶部，支持方向键和 Home、End。表单加 `novalidate`，提交时先调用 `validate()`，组件会切到无效字段所在的页签，再显示浏览器的原生校验提示。业务校验用 toast 提示，同时调用 `revealField()` 定位字段（提供商弹窗用 `data-provider-field` 标记）。新手引导的 `onboarding-reveal` 也走这个定位流程。
 - 分区：`SettingsSection` 提供 `text-sm font-semibold` 的标题、`.input-hint` 说明和 `actions` 插槽。相邻分区之间自动加 `border-t pt-6`，页内分区间距 24px，分区内 16px。分区标题用这个组件的标题，`.input-label` 留给字段标签；分隔线由组件自动添加。
@@ -204,6 +207,8 @@ Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`
 
 ## 主题切换入口
 
+认证页面通过 `AuthLayout` 使用浅色主题，包括登录、注册和密码找回。`useLightTheme` 在布局挂载期间固定浅色，退出后按保存的用户偏好或当前系统配色恢复。用户的 `localStorage.theme` 由主题切换操作写入。
+
 用户和管理员的共用侧栏底部提供浅色/深色切换按钮，位于滚动导航区之外。按钮沿用侧栏字体和图标尺寸，文字与图标表示点击后切换到的主题；侧栏收起时保留图标、悬浮提示和无障碍名称。移动端抽屉中同样可用，切换不触发导航，也不关闭抽屉。
 
 侧栏与顶栏用户菜单复用 `useTheme` 的响应式状态，显式选择写入浏览器 `localStorage.theme`，刷新后仍然生效。用户菜单保留“跟随系统”选项；从侧栏切换会改为显式浅色或深色偏好，不再跟随系统。未登录时的顶栏切换入口保持不变。
@@ -221,6 +226,8 @@ Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`
 
 <a id="loading_feedback"></a>
 ## 加载反馈
+
+`HelpTooltip` 在首次展开时创建提示内容，之后保留节点。仪表盘下方的图表用 `LazySection` 在接近视口时挂载，占位高度由页面指定；浏览器没有 IntersectionObserver 时立即挂载。主要趋势数据先显示，比较区间和模型排行各自完成后更新对应区域。
 
 路由切换使用 `NavigationProgress`：页面顶部一条 2px 的品牌青细线，`pointer-events: none`，不挡点击。`router/navigationLoading.ts` 在鉴权守卫之前注册导航反馈，覆盖异步页面加载、重定向、取消和异常。每次导航都有编号，较早的导航和它的结束动画无法结束较新的导航。
 

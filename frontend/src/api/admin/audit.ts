@@ -61,11 +61,15 @@ export interface AuditLogQuery {
 export type AuditLogListResponse = PaginatedResponse<AuditLog>
 
 /**
- * list retrieves paginated administrator audit records using the supplied
- * filters.
+ * list retrieves one filtered page of administrator audit records. The optional caller-
+ * owned signal cancels the HTTP request; errors propagate so the page can distinguish
+ * active failures from superseded reads.
  */
-export async function list(params: AuditLogQuery): Promise<AuditLogListResponse> {
-  const { data } = await apiClient.get('/admin/audit-logs', { params })
+export async function list(
+  params: AuditLogQuery,
+  signal?: AbortSignal,
+): Promise<AuditLogListResponse> {
+  const { data } = await apiClient.get('/admin/audit-logs', { params, signal })
   return data
 }
 

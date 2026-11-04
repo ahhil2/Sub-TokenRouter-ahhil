@@ -1,3 +1,4 @@
+import { createCachedRequest } from '../readCache'
 import type { LocalizedUpdate } from '@/i18n/content'
 import { apiClient } from '../client'
 import type { CreativeOperation } from '../creative'
@@ -1319,12 +1320,14 @@ export interface UpdateSettingsRequest {
 }
 
 /**
- * getSettings retrieves all system settings and returns the server result.
+ * getSettings shares complete system settings reads for thirty seconds within the
+ * current credential and language. Each caller receives an independent copy; passing
+ * true replaces cached and pending ownership for an explicit refresh.
  */
-export async function getSettings(): Promise<SystemSettings> {
+export const getSettings = createCachedRequest(async (): Promise<SystemSettings> => {
   const { data } = await apiClient.get<SystemSettings>('/admin/settings')
   return data
-}
+})
 
 /**
  * getCreativeModelCandidates retrieves administrator model candidates across

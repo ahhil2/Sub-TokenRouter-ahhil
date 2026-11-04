@@ -33,7 +33,7 @@ vi.mock('@/api/admin', () => ({
       delete: vi.fn(),
     },
     groups: {
-      getAll: getAllGroups,
+      getOptions: getAllGroups,
     },
     dashboard: {
       getBatchUsersUsage,

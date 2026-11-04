@@ -121,6 +121,8 @@ gzip_types text/plain text/css application/json application/javascript applicati
 
 ## Caddy 与 CDN
 
+客户端正文由 Caddy 流式转发到应用时，后端 HTTP transport 应使用 `response_header_timeout` 控制正文发完后的响应头等待。避免设置覆盖整个后端连接读取的 `read_timeout`：Caddy 2.6.2 可以在正文仍上传时触发它，造成应用收到截断正文和客户端重试。`deploy/superahhil/Caddyfile.example` 使用 300 秒响应头超时。移除后端读取超时可以减少慢上传截断，上传速度仍需通过客户端及应用入口计时诊断。
+
 仓库内 `deploy/Caddyfile` 设置了 64 KiB 请求头上限、10 秒请求头超时和 256 MiB 绝对请求体上限，并根据 TCP 对端覆盖转发地址，因此它是客户端直连 Caddy 的基线。Caddy 位于 CDN 后面时，其中的 `{remote_host}` 转发行要按下面的方式修改；原样使用的话，所有客户端都会被算成 CDN 的出口地址，使拒绝聚合和无效认证限速错误地作用于互不相关的用户。
 
 仓库内 Caddy 配置没有设置 `flush_interval`，让 Caddy 自动刷新 `text/event-stream` 响应，同时把客户端取消向上游传播。不要全局设置它：正值会增加流式延迟，而 Caddy 2.6.2 的特殊 `-1` 模式还会让反向代理请求在客户端断开后继续执行。配置用一个明确的响应内容类型列表决定压缩哪些内容。`text/*` 或简写的 `encode gzip zstd` 都会匹配 `text/event-stream`，可能把 SSE 缓冲到响应结束才发出，所以不要这样替换。流式响应应保持不压缩，Web 管理界面、JSON 和静态资源仍可压缩。

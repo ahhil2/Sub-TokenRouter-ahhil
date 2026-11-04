@@ -674,3 +674,20 @@ func (h *APIKeyHandler[G]) GetUserGroupRates(c *gin.Context) {
 
 	response.Success(c, rates)
 }
+
+// GetCapabilities reports menu eligibility for the authenticated user through one
+// capability query. An absent authentication subject returns unauthorized; caller-supplied
+// user IDs never determine the lookup owner.
+func (h *APIKeyHandler[G]) GetCapabilities(c *gin.Context) {
+	subject, ok := authctx.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	batchImages, err := h.apiKeyService.HasBatchImageKey(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"batch_images": batchImages})
+}

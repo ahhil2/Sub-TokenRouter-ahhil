@@ -1,6 +1,6 @@
 # SuperAHHil 部署与开发
 
-本仓库保存应用源码和黑色站点页面。应用使用本仓库的 Release 镜像，也可由根目录 `Dockerfile` 构建。Caddy 提供 `deploy/superahhil/site/` 中的首页、登录、注册和文档页面，其余请求反向代理到应用。
+本仓库保存应用源码和黑色站点页面。应用使用本仓库的 Release 镜像，也可由根目录 `Dockerfile` 构建。Caddy 提供 `deploy/superahhil/site/` 中的首页和文档页面，登录、注册及其余请求反向代理到应用。
 
 ## 来源与定制
 
@@ -50,11 +50,15 @@ sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy
 ```
 
-`/`、`/login`、`/register`、`/docs`、`/styles.css` 和 `/landing-assets/*` 由 Caddy 提供。其余路径交给应用，包括 `/api/*`、`/mcp`、`/dashboard`、`/purchase`、`/messages` 和应用生成的 `/assets/*`。模板的兜底代理已覆盖 `/mcp`。把 `/assets/*` 指向静态站点会导致控制台加载失败。启用 MCP 时，所有实例需要共用固定的 `TOTP_ENCRYPTION_KEY`，并核对浏览器确认使用的 `frontend_url`。
+`/`、`/docs`、`/styles.css` 和 `/landing-assets/*` 由 Caddy 提供。其余路径交给应用，包括 `/login`、`/register`、`/api/*`、`/mcp`、`/dashboard`、`/purchase`、`/messages` 和应用生成的 `/assets/*`。模板的兜底代理已覆盖 `/mcp`。把 `/assets/*` 指向静态站点会导致控制台加载失败。启用 MCP 时，所有实例需要共用固定的 `TOTP_ENCRYPTION_KEY`，并核对浏览器确认使用的 `frontend_url`。
 
-站点文件包含 SuperAHHil 的公开域名、教程和联系图片。迁移到其他站点时，搜索这些文件中的 `superahhilai.top` 和联系信息后按需修改。登录和注册页面从 unpkg 加载固定版本的 React、ReactDOM 和 Lucide，并带有 SRI 完整性校验；Cloudflare Turnstile 另行加载。客户端需要能访问这两个资源域名。
+首页的图片、专用样式和脚本放在 `site/landing-assets/`，图片文件名包含内容哈希，专用样式和脚本文件名包含发布版本。四张卡片图通过 `picture` 提供 AVIF 和 WebP，每种格式有 400、800、1280 像素宽度，浏览器根据卡片尺寸与设备像素比选图。图片使用原生延迟加载，卡片的固定比例预留显示空间。鼠标光晕在支持悬停的精细指针设备上每帧最多更新一次，触屏和减少动态效果模式下隐藏。
 
-登录和注册页面的脚本源码在 `deploy/superahhil/portal/*.jsx`。修改源码后，先在仓库根目录运行 `node deploy/superahhil/portal/build.mjs`，把编译结果写回 `site/` 中的页面，再复制到静态目录。直接修改 HTML 里生成的脚本，会在下次构建时被覆盖。升级 CDN 依赖版本时，需要同时更新页面上的 `integrity` 哈希，否则浏览器会拒绝加载脚本。
+已有部署更新首页时，先备份当前 `index.html`，上传新增的版本化资源并验证可访问，再在同一文件系统内原子替换首页入口。旧资源继续留在静态目录，供已打开的页面和回退使用。确认 Caddy 已经配置上述静态路径后，文件更新会直接生效，TokenRouter 和 Caddy 都无需重启或重载。回退时恢复配套的入口 HTML。
+
+首页使用独立的 `home-*.css`，文档页面继续使用 `/styles.css`。更新资源内容时使用新的内容哈希或版本文件名，并同步修改首页引用；各部署的导航项按当前站点配置维护。
+
+站点文件包含 SuperAHHil 的公开域名、教程和联系图片。迁移到其他站点时，搜索这些文件中的 `superahhilai.top` 和联系信息后按需修改。登录和注册使用应用内置的浅色居中表单页面，采用站点品牌设置。认证布局退出后恢复用户的主题偏好。认证、邮箱验证、邀请码和条款确认由应用处理。`/login` 和 `/register` 返回 `Cache-Control: no-store, max-age=0`。`site/login.html` 和 `site/register.html` 是历史静态页面，部署模板未将请求路由到这些文件。
 
 ## 后台品牌与购买地址
 

@@ -2729,3 +2729,18 @@ func (c *stubConcurrencyCacheForTest) GetAPIKeyConcurrencyBatch(_ context.Contex
 	}
 	return result, nil
 }
+
+// HasBatchImageKey rejects unexpected capability reads in this unrelated service fixture.
+func (s *apiKeyRepoStub) HasBatchImageKey(context.Context, int64) (bool, error) {
+	panic("unexpected HasBatchImageKey call")
+}
+
+// HasBatchImageKey rejects unexpected capability reads in this unrelated service fixture.
+func (s *apiKeyNameSanitizeRepoStub) HasBatchImageKey(context.Context, int64) (bool, error) {
+	panic("unexpected HasBatchImageKey call")
+}
+
+// HasBatchImageKey rejects unexpected capability reads in this unrelated service fixture.
+func (s *quotaBaseAPIKeyRepoStub) HasBatchImageKey(context.Context, int64) (bool, error) {
+	panic("unexpected HasBatchImageKey call")
+}

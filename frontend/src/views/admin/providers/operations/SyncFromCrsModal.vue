@@ -372,22 +372,6 @@ const errorItems = computed(() => {
   )
 })
 
-watch(
-  () => props.show,
-  (open) => {
-    if (open) {
-      currentStep.value = 'input'
-      previewResult.value = null
-      selectedIds.value = new Set()
-      result.value = null
-      form.base_url = ''
-      form.username = ''
-      form.password = ''
-      form.sync_proxies = true
-    }
-  },
-)
-
 /**
  * handleClose requests closure only while preview and synchronization are both idle. In-flight
  * operations keep the dialog open through this handler so their eventual result remains
@@ -505,4 +489,23 @@ const handleSync = async () => {
     syncing.value = false
   }
 }
+
+// Reset synchronization credentials and selections on first visible mount and reopening.
+// The retained instance starts each synchronization attempt at its input step.
+watch(
+  () => props.show,
+  (open) => {
+    if (open) {
+      currentStep.value = 'input'
+      previewResult.value = null
+      selectedIds.value = new Set()
+      result.value = null
+      form.base_url = ''
+      form.username = ''
+      form.password = ''
+      form.sync_proxies = true
+    }
+  },
+  { immediate: true },
+)
 </script>

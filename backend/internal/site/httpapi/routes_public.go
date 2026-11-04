@@ -13,5 +13,6 @@ import "github.com/gin-gonic/gin"
 // bindings inherit that middleware and the caller's chosen URL prefix.
 func RegisterPublicSettingsRoutes(group *gin.RouterGroup, endpoint *PublicHandler) {
 	group.GET("/public", endpoint.GetPublicSettings)
+	group.GET("/logo/:version", endpoint.GetLogo)
 	group.GET("/legal/:id", endpoint.GetLegalDocument)
 }

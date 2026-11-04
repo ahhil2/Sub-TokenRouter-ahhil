@@ -109,12 +109,14 @@ describe('useOnboardingTour team flow', () => {
     })
     const wrapper = mount(Harness)
     await flushPromises()
+    expect(driverFactory).not.toHaveBeenCalled()
 
     const startTeamTour = (wrapper.vm as any).startTeamTour as (options: {
       isOwner: boolean // Current team ownership flag.
       hasTeam: boolean // Current team membership flag.
     }) => void
     startTeamTour({ isOwner: true, hasTeam: true })
+    await vi.dynamicImportSettled()
     await flushPromises()
 
     // The driver keeps progress visible while the highlight callback reveals and
@@ -144,5 +146,19 @@ describe('useOnboardingTour team flow', () => {
     config.onCloseClick()
     wrapper.unmount()
     querySelector.mockRestore()
+  })
+
+  it('离开页面后丢弃等待资源的引导启动', async () => {
+    const Harness = defineComponent({
+      setup() {
+        return useOnboardingTour({ autoStart: false })
+      },
+      template: '<div />',
+    })
+    const wrapper = mount(Harness)
+    const started = wrapper.vm.startTour()
+    wrapper.unmount()
+    await started
+    expect(driverFactory).not.toHaveBeenCalled()
   })
 })

@@ -27,13 +27,13 @@ const routes: RouteRecordRaw[] = [
     path: '/login',
     name: 'Login',
     component: LoginView,
-    meta: { requiresAuth: false }
+    meta: { requiresAuth: false },
   },
   {
     path: '/register',
     name: 'Register',
     component: RegisterView,
-    meta: { requiresAuth: false }
+    meta: { requiresAuth: false },
   },
 
   // User routes (use AppLayout)
@@ -41,31 +41,31 @@ const routes: RouteRecordRaw[] = [
     path: '/dashboard',
     name: 'Dashboard',
     component: DashboardView,
-    meta: { requiresAuth: true, title: 'Dashboard' }
+    meta: { requiresAuth: true, title: 'Dashboard' },
   },
   {
     path: '/api-keys',
     name: 'ApiKeys',
     component: () => import('@/views/ApiKeysView.vue'),
-    meta: { requiresAuth: true, title: 'API Keys' }
+    meta: { requiresAuth: true, title: 'API Keys' },
   },
   {
     path: '/usage',
     name: 'Usage',
     component: () => import('@/views/UsageView.vue'),
-    meta: { requiresAuth: true, title: 'Usage Statistics' }
+    meta: { requiresAuth: true, title: 'Usage Statistics' },
   },
   {
     path: '/redeem',
     name: 'Redeem',
     component: () => import('@/views/RedeemView.vue'),
-    meta: { requiresAuth: true, title: 'Redeem Code' }
+    meta: { requiresAuth: true, title: 'Redeem Code' },
   },
   {
     path: '/profile',
     name: 'Profile',
     component: () => import('@/views/ProfileView.vue'),
-    meta: { requiresAuth: true, title: 'Profile Settings' }
+    meta: { requiresAuth: true, title: 'Profile Settings' },
   },
 
   // Admin routes (use AppLayout, admin only)
@@ -73,49 +73,49 @@ const routes: RouteRecordRaw[] = [
     path: '/admin/dashboard',
     name: 'AdminDashboard',
     component: () => import('@/views/admin/DashboardView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Admin Dashboard' }
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Admin Dashboard' },
   },
   {
     path: '/admin/users',
     name: 'AdminUsers',
     component: () => import('@/views/admin/UsersView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'User Management' }
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'User Management' },
   },
   {
     path: '/admin/groups',
     name: 'AdminGroups',
     component: () => import('@/views/admin/GroupsView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Groups' }
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Groups' },
   },
   {
     path: '/admin/providers',
     name: 'AdminProviders',
     component: () => import('@/views/admin/providers/ProvidersView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Providers' }
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Providers' },
   },
   {
     path: '/admin/proxies',
     name: 'AdminProxies',
     component: () => import('@/views/admin/ProxiesView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Proxies' }
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Proxies' },
   },
   {
     path: '/admin/redeem-codes',
     name: 'AdminRedeemCodes',
     component: () => import('@/views/admin/RedeemCodesView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Redeem Codes' }
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Redeem Codes' },
   },
 
   // Default redirect
   {
     path: '/',
-    redirect: '/dashboard'
-  }
+    redirect: '/dashboard',
+  },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
 })
 
 // Navigation guards
@@ -259,7 +259,7 @@ Modify navigation items in `AppSidebar.vue`:
 // Add/remove/modify navigation items
 const userNavItems = [
   { path: '/dashboard', label: 'Dashboard', icon: '&#128200;' },
-  { path: '/new-page', label: 'New Page', icon: '&#128196;' } // Add new item
+  { path: '/new-page', label: 'New Page', icon: '&#128196;' }, // Add new item
   // ...
 ]
 ```
@@ -304,7 +304,7 @@ To improve mobile experience, you can add overlay and transitions:
     sidebarCollapsed ? 'w-16' : 'w-64',
     // Hide on mobile when collapsed
     'md:translate-x-0',
-    sidebarCollapsed ? '-translate-x-full md:translate-x-0' : 'translate-x-0'
+    sidebarCollapsed ? '-translate-x-full md:translate-x-0' : 'translate-x-0',
   ]"
 >
   <!-- ... -->

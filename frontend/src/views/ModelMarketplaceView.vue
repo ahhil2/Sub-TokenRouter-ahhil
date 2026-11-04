@@ -199,7 +199,7 @@
 
             <div v-else class="space-y-4">
               <section
-                v-for="group in filteredGroups"
+                v-for="group in pagedGroups"
                 :key="group.id"
                 class="card overflow-hidden"
                 data-testid="marketplace-group-section"
@@ -346,6 +346,17 @@
                   </article>
                 </div>
               </section>
+              <Pagination
+                v-if="matchingModelCount > marketplacePageSize"
+                :page="marketplacePage"
+                :total="matchingModelCount"
+                :page-size="marketplacePageSize"
+                @update:page="marketplacePage = $event"
+                @update:page-size="
+                  marketplacePageSize = $event;
+                  marketplacePage = 1;
+                "
+              />
             </div>
           </div>
         </div>
@@ -372,6 +383,7 @@ import ModelAttributeDetails from '@/components/marketplace/ModelAttributeDetail
 import ModelPricingPanel from '@/components/marketplace/ModelPricingPanel.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import Select from '@/components/common/Select.vue'
 import FilterDropdown from '@/components/common/FilterDropdown.vue'
@@ -618,6 +630,29 @@ const hasMarketplaceResults = computed(() => filteredGroups.value.length > 0)
 const matchingModelCount = computed(() =>
   filteredGroups.value.reduce((total, group) => total + group.models.length, 0),
 )
+
+// marketplacePage and marketplacePageSize bound rendered model cards across group
+// boundaries; filtering resets the page so a narrower result starts with visible models.
+const marketplacePage = ref(1)
+const marketplacePageSize = ref(20)
+const pagedGroups = computed<VisibleMarketplaceGroup[]>(() => {
+  let skip = (marketplacePage.value - 1) * marketplacePageSize.value
+  let remaining = marketplacePageSize.value
+  return filteredGroups.value.flatMap((group) => {
+    if (remaining === 0) return []
+    if (skip >= group.models.length) {
+      skip -= group.models.length
+      return []
+    }
+    const models = group.models.slice(skip, skip + remaining)
+    remaining -= models.length
+    skip = 0
+    return [{ ...group, models }]
+  })
+})
+watch(filteredGroups, () => {
+  marketplacePage.value = 1
+})
 
 // hasPositiveValue accepts numeric values greater than zero without a finiteness check.
 function hasPositiveValue(value?: number | null): value is number {

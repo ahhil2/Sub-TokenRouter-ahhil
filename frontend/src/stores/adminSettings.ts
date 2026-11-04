@@ -1,24 +1,31 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { onScopeDispose, ref } from 'vue'
 import { adminAPI } from '@/api'
+import { getLocale } from '@/i18n'
 import type { CustomMenuItem } from '@/api/settings.types'
 
-// adminSettings.ts caches administrator navigation switches and custom menu entries.
-// Browser storage supplies initial switch values before the settings and payment
-// requests complete, reducing changes to visible navigation during startup.
-//
-// The two requests publish their results together after Promise.all succeeds. A failed
-// request retains cached values and marks the store loaded, so another ordinary read
-// does not repeatedly retry. Local setters publish their reactive value before
-// attempting persistence, and storage failures leave that value available. An
-// application-lifetime window listener applies the operations-disabled signal emitted by
-// the HTTP interceptor.
-
-// useAdminSettingsStore exposes administrator navigation switches and custom menus
-// through Pinia. Browser-cached switches initialize synchronously, and an application-lifetime listener applies operations-disabled signals when window is available.
+/**
+ * adminSettings.ts shares administrator navigation settings and payment availability.
+ * Browser-cached switches initialize the navigation while requests load. Settings
+ * and payment responses publish together, and successful reads record the credential
+ * and language that own the result. Failed reads remain retryable and retain the
+ * last published switches for the current display.
+ *
+ * Concurrent callers in the same scope await one request. Force refresh creates
+ * new ownership, and a changed account or language starts a distinct request;
+ * older completions cannot publish into either replacement. Local setters update
+ * navigation immediately and attempt storage persistence. The store also owns an
+ * operations-disabled listener, removed with pending publication ownership when
+ * the Pinia scope is disposed.
+ */
+/**
+ * useAdminSettingsStore exposes navigation switches and custom menus through Pinia.
+ * Callers await fetch before interpreting readiness. Local setters update individual
+ * switches, while complete successful fetches establish the current account and language.
+ */
 export const useAdminSettingsStore = defineStore('adminSettings', () => {
-  // loaded prevents repeated ordinary reads after success or failure, while loading
-  // prevents overlapping settings and payment configuration requests.
+  // loaded records successful publication for loadedScope. loading follows the active
+  // pending owner, which ordinary callers share and a forced request may replace.
   const loaded = ref(false)
   const loading = ref(false)
 
@@ -58,49 +65,77 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   )
   const paymentEnabled = ref(readCachedBool('payment_enabled_cached', false))
   const customMenuItems = ref<CustomMenuItem[]>([])
+  // loadedScope identifies successful settings, while pending owns a combined lookup.
+  // Replacing pending invalidates earlier publication even when those requests still finish.
+  let loadedScope = ''
+  let pending: {
+    scope: string // Credential and language identity.
+    promise: Promise<void> // Combined settings lookup completion.
+  } | null = null
 
-  // fetch loads administrator settings and payment availability together unless already
-  // loaded or busy. Force bypasses freshness but still respects the busy flag. Both
-  // responses must succeed before values publish, and each switch is persisted after its
-  // reactive assignment. Failure retains current values and marks the store loaded,
-  // requiring force for another attempt. Concurrent callers return immediately rather
-  // than waiting for the active request.
-  async function fetch(force = false): Promise<void> {
-    if (loaded.value && !force) return
-    if (loading.value) return
-
-    loading.value = true
+  /**
+   * requestScope combines the active locale and browser credential for store ownership.
+   */
+  function requestScope(): string {
+    let token = ''
     try {
-      const [settings, paymentConfigResp] = await Promise.all([
-        adminAPI.settings.getSettings(),
-        adminAPI.payment.getConfig(),
-      ])
-      // Publish switches only after both responses succeed, then persist each
-      // corresponding value so later startup can reuse the last learned navigation
-      // state.
-      opsMonitoringEnabled.value = settings.ops_monitoring_enabled ?? true
-      writeCachedBool('ops_monitoring_enabled_cached', opsMonitoringEnabled.value)
-
-      opsRealtimeMonitoringEnabled.value = settings.ops_realtime_monitoring_enabled ?? true
-      writeCachedBool('ops_realtime_monitoring_enabled_cached', opsRealtimeMonitoringEnabled.value)
-
-      customMenuItems.value = Array.isArray(settings.custom_menu_items)
-        ? settings.custom_menu_items
-        : []
-
-      paymentEnabled.value = paymentConfigResp.data?.enabled ?? false
-      writeCachedBool('payment_enabled_cached', paymentEnabled.value)
-
-      loaded.value = true
-    } catch (err) {
-      // Treat this failed load as attempted while keeping cached switches; only a forced
-      // refresh retries, preventing repeated navigation reads from hammering unavailable
-      // settings.
-      loaded.value = true
-      console.error('[adminSettings] Failed to fetch settings:', err)
-    } finally {
-      loading.value = false
+      token = localStorage.getItem('auth_token') ?? ''
+    } catch {
+      // Storage restrictions leave an empty credential scope; locale still distinguishes
+      // translated navigation, and each forced request receives separate publication ownership.
     }
+    return `${getLocale()}:${token}`
+  }
+
+  /**
+   * fetch loads settings and payment availability for the current credential and language.
+   * Ordinary callers await pending work or reuse a complete result for the same scope.
+   * Force refresh bypasses both the store's freshness and the settings API cache.
+   *
+   * The request object owns publication across both endpoint responses. A newer
+   * request, disposal, or changed scope prevents older responses from publishing;
+   * only the owner can clear loading. Failures retain the prior displayed switches,
+   * leave readiness false, and permit a later fetch to retry.
+   */
+  async function fetch(force = false): Promise<void> {
+    const scope = requestScope()
+    if (!force && pending?.scope === scope) return pending.promise
+    if (!force && loaded.value && loadedScope === scope) return
+
+    loaded.value = false
+    loading.value = true
+    const request = {
+      scope,
+      promise: Promise.all([adminAPI.settings.getSettings(force), adminAPI.payment.getConfig()])
+        .then(([settings, paymentConfigResp]) => {
+          if (pending !== request || requestScope() !== scope) return
+          opsMonitoringEnabled.value = settings.ops_monitoring_enabled ?? true
+          writeCachedBool('ops_monitoring_enabled_cached', opsMonitoringEnabled.value)
+          opsRealtimeMonitoringEnabled.value = settings.ops_realtime_monitoring_enabled ?? true
+          writeCachedBool(
+            'ops_realtime_monitoring_enabled_cached',
+            opsRealtimeMonitoringEnabled.value,
+          )
+          customMenuItems.value = Array.isArray(settings.custom_menu_items)
+            ? settings.custom_menu_items
+            : []
+          paymentEnabled.value = paymentConfigResp.data?.enabled ?? false
+          writeCachedBool('payment_enabled_cached', paymentEnabled.value)
+          loaded.value = true
+          loadedScope = scope
+        })
+        .catch((err) => {
+          console.error('[adminSettings] Failed to fetch settings:', err)
+        })
+        .finally(() => {
+          if (pending === request) {
+            pending = null
+            loading.value = false
+          }
+        }),
+    }
+    pending = request
+    return request.promise
   }
 
   // setOpsMonitoringEnabledLocal publishes operations monitoring and attempts to persist
@@ -109,7 +144,6 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   function setOpsMonitoringEnabledLocal(value: boolean) {
     opsMonitoringEnabled.value = value
     writeCachedBool('ops_monitoring_enabled_cached', value)
-    loaded.value = true
   }
 
   // setOpsRealtimeMonitoringEnabledLocal publishes realtime monitoring and attempts to
@@ -118,7 +152,6 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   function setOpsRealtimeMonitoringEnabledLocal(value: boolean) {
     opsRealtimeMonitoringEnabled.value = value
     writeCachedBool('ops_realtime_monitoring_enabled_cached', value)
-    loaded.value = true
   }
 
   // setPaymentEnabledLocal publishes payment availability and attempts to persist the
@@ -127,7 +160,6 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   function setPaymentEnabledLocal(value: boolean) {
     paymentEnabled.value = value
     writeCachedBool('payment_enabled_cached', value)
-    loaded.value = true
   }
 
   // eventHandlerCleanup retains the installed handler closure for this store lifetime
@@ -158,6 +190,13 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   if (typeof window !== 'undefined') {
     initializeEventListeners()
   }
+
+  // Release publication ownership before removing the listener so late requests cannot
+  // update a disposed store after another application scope takes over navigation state.
+  onScopeDispose(() => {
+    pending = null
+    eventHandlerCleanup?.()
+  })
 
   return {
     loaded,

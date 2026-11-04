@@ -94,6 +94,16 @@ const ancestorBlocked = useFloatingMotion(
   updatePosition,
 )
 const show = computed(() => requestedShow.value && !ancestorBlocked.value)
+// hasOpened retains the teleported subtree after first use so later openings keep
+// its interactive state while the initial page avoids creating unused tooltip content.
+const hasOpened = ref(false)
+watch(
+  show,
+  (visible) => {
+    if (visible) hasOpened.value = true
+  },
+  { immediate: true },
+)
 
 // Measure after a visible render so teleported panel dimensions reflect its current
 // content before viewport clamping determines the anchor position.
@@ -306,14 +316,25 @@ function updatePosition() {
   }
 }
 
-// Interactive content can resize independently of scrolling; observe its dimensions
-// when supported, then pair document dismissal and viewport listeners with component
-// cleanup.
+// The panel appears after first opening, which can occur long after component mount.
+// Observe the rendered element so dynamic content still updates placement, and release
+// any prior element before attaching observation to a replacement or changed mode.
+watch(
+  [tooltipRef, () => props.interactive],
+  ([panel, interactive]) => {
+    panelObserver?.disconnect()
+    panelObserver = undefined
+    if (interactive && typeof ResizeObserver !== 'undefined' && panel) {
+      panelObserver = new ResizeObserver(onViewportChange)
+      panelObserver.observe(panel)
+    }
+  },
+  { flush: 'post' },
+)
+
+// Document dismissal and viewport listeners belong to the component lifetime; panel
+// measurement observation starts separately when the deferred element is available.
 onMounted(() => {
-  if (props.interactive && typeof ResizeObserver !== 'undefined' && tooltipRef.value) {
-    panelObserver = new ResizeObserver(onViewportChange)
-    panelObserver.observe(tooltipRef.value)
-  }
   document.addEventListener('click', onDocumentInteraction, true)
   document.addEventListener('pointerdown', onDocumentInteraction, true)
   document.addEventListener('touchstart', onDocumentInteraction, { capture: true, passive: true })
@@ -357,8 +378,8 @@ onBeforeUnmount(() => {
       />
     </slot>
 
-    <!-- The tooltip mounts under body so modal content overflow does not clip its panel. -->
-    <Teleport to="body">
+    <!-- Mount tooltip content on first use under body so dialog overflow cannot clip it; retain the subtree for later openings. -->
+    <Teleport v-if="hasOpened" to="body">
       <!--
         The transparent before pseudo-element bridges the gap between tooltip and
         trigger so pointer movement can stay inside their interaction area.

@@ -316,5 +316,6 @@ watch(
     }
     status.value = null
   },
+  { immediate: true },
 )
 </script>

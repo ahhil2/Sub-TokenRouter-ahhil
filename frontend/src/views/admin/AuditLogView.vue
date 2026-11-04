@@ -430,9 +430,10 @@
   </AppLayout>
 </template>
 <script setup lang="ts">
+import { useLatestRequest } from '@/composables/useLatestRequest'
 import RequestIdLink from '@/components/common/RequestIdLink.vue'
 import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { adminAPI, type AuditLog } from '@/api/admin'
@@ -467,15 +468,13 @@ const appStore = useAppStore()
 // route carries the token-prefix filter from the MCP management audit link.
 const route = useRoute()
 
-// List loading, rows, total, page, and page size describe the current audit table
-// request and pagination.
-const loading = ref(false)
+// The latest read owns loading and publication; replacement or page disposal cancels
+// earlier requests so late responses and errors cannot replace the current display.
+const { loading, run: runLatest } = useLatestRequest()
 const logs = ref<AuditLog[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
-// requestVersion prevents an older filter response from replacing a newer route's rows.
-let requestVersion = 0
 
 // Text filters remain editable between requests; empty strings are omitted when
 // building endpoint query parameters.
@@ -719,19 +718,15 @@ function buildQuery() {
 // This keeps an old token's records from appearing beneath another token's filters.
 //
 // Existing rows remain visible when the current request fails. Component disposal
-// advances the version so a late response cannot publish after leaving the page.
+// cancels the active read so a late response cannot publish after leaving the page.
 async function fetchLogs() {
-  const version = ++requestVersion
-  loading.value = true
   try {
-    const res = await adminAPI.audit.list(buildQuery())
-    if (version !== requestVersion) return
+    const res = await runLatest((signal) => adminAPI.audit.list(buildQuery(), signal))
+    if (!res) return
     logs.value = res.items
     total.value = res.total
   } catch (err: any) {
-    if (version === requestVersion) appStore.showError(err?.message || t('admin.audit.loadFailed'))
-  } finally {
-    if (version === requestVersion) loading.value = false
+    appStore.showError(err?.message || t('admin.audit.loadFailed'))
   }
 }
 
@@ -910,9 +905,4 @@ watch(
   },
   { immediate: true },
 )
-
-// Responses already in flight cannot publish rows or errors after page disposal.
-onBeforeUnmount(() => {
-  requestVersion++
-})
 </script>

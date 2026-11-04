@@ -19,7 +19,7 @@ import { useUsageChartFilters } from './useUsageChartFilters'
 // usageChartState.ts coordinates dashboard usage selection and asynchronous current,
 // comparison, and model queries. The page provides one state instance to its toolbar and
 // visual sections, so changing a range or filter updates a common selection. A request
-// sequence chooses which completed batch may publish its values after overlapping loads.
+// sequence admits each response independently while rejecting results from older loads.
 //
 // Individual failures have distinct display consequences: current usage receives zero
 // buckets, comparison data becomes unavailable, and model rankings become empty. Model
@@ -78,7 +78,7 @@ const readSavedState = (): {
 // while metric and preset choices are saved for later visits.
 export function createUsageChartState() {
   // saved initializes metric and rangePreset; customRange and activeRange retain the current
-  // page selection while results and loading flags below describe its latest published batch.
+  // page selection while current, comparison, and model responses publish independently.
   const saved = readSavedState()
   const metric = ref<UsageMetric>(saved.metric)
   const rangePreset = ref<UsageRangePreset>(saved.range)
@@ -143,56 +143,60 @@ export function createUsageChartState() {
       ...filterState.queryParams.value,
     })
 
-  // loadTrend loads current usage, its preceding comparison interval, and model totals as
-  // one display batch. Each invocation advances a sequence so a late batch cannot overwrite
-  // a more recent selection. The requests settle independently: failed current usage becomes
-  // zero-filled buckets, failed comparison clears its totals and line, and failed models
-  // clear the ranking. An unfiltered successful model result also seeds filter choices for
-  // that interval.
+  // loadTrend starts current usage, comparison usage, and model totals for one selection.
+  // Each invocation advances a sequence so older responses cannot replace a newer
+  // selection. Current usage releases the chart loading indicator as soon as it settles;
+  // comparison and model responses publish independently while this function awaits all.
+  //
+  // Failed current usage becomes zero-filled buckets. Comparison starts empty and remains
+  // empty on failure, while failed models clear the ranking. Successful unfiltered model
+  // totals also supply range-wide filter choices for the active selection.
   const loadTrend = async (range: UsageRange) => {
     const seq = ++requestSeq
     // Capture whether this batch was unfiltered before awaiting its requests, so
     // filtered model totals do not replace range-wide candidates after conditions change.
     const unfiltered = filterState.activeCount.value === 0
     loading.value = true
-    const [currentResult, previousResult, modelsResult] = await Promise.allSettled([
-      fetchRange(range),
-      fetchRange(previousRange(range)),
-      fetchModels(range),
+    previous.value = []
+    previousTotals.value = null
+    await Promise.allSettled([
+      fetchRange(range)
+        .then((result) => {
+          if (seq === requestSeq)
+            current.value = fillTrendBuckets(result.trend || [], bucketKeys(range))
+        })
+        .catch((error) => {
+          if (seq !== requestSeq) return
+          console.error('Failed to load usage trend:', error)
+          current.value = fillTrendBuckets([], bucketKeys(range))
+        })
+        .finally(() => {
+          if (seq === requestSeq) {
+            loading.value = false
+            loaded.value = true
+          }
+        }),
+      fetchRange(previousRange(range)).then((result) => {
+        if (seq !== requestSeq) return
+        const points = result.trend || []
+        previous.value = fillTrendBuckets(points, bucketKeys(previousRange(range)))
+        previousTotals.value = summarizeTrend(points)
+      }),
+      fetchModels(range)
+        .then((result) => {
+          if (seq !== requestSeq) return
+          models.value = result.models || []
+          if (unfiltered) filterState.setModelOptions(models.value)
+        })
+        .catch((error) => {
+          if (seq !== requestSeq) return
+          console.error('Failed to load usage models:', error)
+          models.value = []
+        })
+        .finally(() => {
+          if (seq === requestSeq) modelsLoaded.value = true
+        }),
     ])
-    // A newer load owns the shared result refs, so discard this entire settled batch before
-    // it can replace data or complete loading for that newer selection.
-    if (seq !== requestSeq) return
-    if (currentResult.status === 'fulfilled') {
-      current.value = fillTrendBuckets(currentResult.value.trend || [], bucketKeys(range))
-    } else {
-      console.error('Failed to load usage trend:', currentResult.reason)
-      // Failed current usage still needs the selected interval's bucket positions, so supply
-      // zero observations for the chart and totals while ending its initial loading state.
-      current.value = fillTrendBuckets([], bucketKeys(range))
-    }
-    if (previousResult.status === 'fulfilled') {
-      const points = previousResult.value.trend || []
-      previous.value = fillTrendBuckets(points, bucketKeys(previousRange(range)))
-      previousTotals.value = summarizeTrend(points)
-    } else {
-      // Failed comparison data cannot support either a comparison line or metric deltas, so
-      // clear both representations together while retaining this batch's current usage.
-      previous.value = []
-      previousTotals.value = null
-    }
-    if (modelsResult.status === 'fulfilled') {
-      models.value = modelsResult.value.models || []
-      if (unfiltered) filterState.setModelOptions(models.value)
-    } else {
-      console.error('Failed to load usage models:', modelsResult.reason)
-      // A failed model query has no ranking for this interval and filter selection, so remove
-      // prior rows while allowing the independently settled trend data to publish.
-      models.value = []
-    }
-    loading.value = false
-    loaded.value = true
-    modelsLoaded.value = true
   }
 
   // load recomputes the active shortcut interval or uses the retained custom interval, then

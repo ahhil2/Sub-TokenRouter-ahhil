@@ -41,6 +41,8 @@ vi.mock('@/api/admin', () => ({
       getAll: getAllProxies,
     },
     groups: {
+      getOptions: getAllGroupsIncludingInactive,
+
       getAllIncludingInactive: getAllGroupsIncludingInactive,
     },
   },
@@ -116,7 +118,9 @@ function mountView() {
         Pagination: true,
         ConfirmDialog: true,
         ProviderTableActions: {
-          template: '<div><slot name="beforeCreate" /><slot name="after" /></div>',
+          emits: ['create'],
+          template:
+            '<div><button data-test="create" @click="$emit(\'create\')">Create</button><slot name="beforeCreate" /><slot name="after" /></div>',
         },
         ProviderTableFilters: {
           props: [
@@ -135,7 +139,12 @@ function mountView() {
         TempUnschedStatusModal: true,
         ErrorPassthroughRulesModal: true,
         TLSFingerprintProfilesModal: true,
-        CreateProviderModal: true,
+        CreateProviderModal: {
+          name: 'CreateProviderModal',
+          props: ['show'],
+          emits: ['close'],
+          template: '<div data-test="create-dialog" />',
+        },
         EditProviderModal: true,
         BulkEditProviderModal: true,
         PlatformTypeBadge: true,
@@ -178,6 +187,25 @@ describe('admin ProvidersView usage windows hint', () => {
     getBatchTodayStats.mockResolvedValue({ stats: {} })
     getAllProxies.mockResolvedValue([])
     getAllGroupsIncludingInactive.mockResolvedValue([])
+  })
+
+  it('首次点击创建才挂载弹窗，关闭后保留实例供退出动画和重开使用', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'CreateProviderModal' }).exists()).toBe(false)
+    expect(wrapper.find('edit-provider-modal-stub').exists()).toBe(false)
+    await wrapper.get('[data-test="create"]').trigger('click')
+    await flushPromises()
+    const dialog = wrapper.findComponent({ name: 'CreateProviderModal' })
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.props('show')).toBe(true)
+    dialog.vm.$emit('close')
+    await flushPromises()
+    expect(dialog.props('show')).toBe(false)
+    await wrapper.get('[data-test="create"]').trigger('click')
+    await flushPromises()
+    expect(dialog.props('show')).toBe(true)
+    wrapper.unmount()
   })
 
   // Proxy loading rejects while group loading succeeds with one result. The

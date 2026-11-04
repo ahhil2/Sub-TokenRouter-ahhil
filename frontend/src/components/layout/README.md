@@ -141,13 +141,13 @@ const routes = [
   {
     path: '/dashboard',
     component: DashboardView,
-    meta: { title: 'Dashboard' }
+    meta: { title: 'Dashboard' },
   },
   {
     path: '/api-keys',
     component: ApiKeysView,
-    meta: { title: 'API Keys' }
-  }
+    meta: { title: 'API Keys' },
+  },
   // ...
 ]
 ```
@@ -171,7 +171,7 @@ All components use TailwindCSS utility classes. Make sure your `tailwind.config.
 
 ```js
 module.exports = {
-  content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}']
+  content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}'],
   // ...
 }
 ```

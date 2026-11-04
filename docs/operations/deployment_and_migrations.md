@@ -29,7 +29,7 @@ Go 构建使用 1.27.3，后端模块、两个开发工具模块和三份源码 
 | 完整 Compose | `deploy/docker-compose.yml`、`docker-compose.local.yml` | 应用、PostgreSQL、Redis；分别使用命名卷或本地目录 |
 | 独立应用容器 | `deploy/docker-compose.standalone.yml` | PostgreSQL 和 Redis 由部署环境提供 |
 | 源码开发 Compose | `deploy/docker-compose.dev.yml` | 在本地构建应用，并启动配套的依赖 |
-| SuperAHHil 定制部署 | `deploy/superahhil/compose.yaml` | 使用本仓库 Release 镜像或本地源码构建，配套 PostgreSQL、Redis，黑色页面由宿主机 Caddy 提供 |
+| SuperAHHil 定制部署 | `deploy/superahhil/compose.yaml` | 使用本仓库 Release 镜像或本地源码构建，配套 PostgreSQL、Redis，首页和文档静态页由宿主机 Caddy 提供，登录和注册由应用提供 |
 | Apple Container | `deploy/apple-container.sh` | 独立脚本管理容器、卷和健康状态 |
 
 应用至少依赖 PostgreSQL 和 Redis。`/app/data` 或等价的 `DATA_DIR` 保存配置、安装锁和本地的运维产物；数据库、Redis 和对象存储各有自己的生命周期，只备份应用数据目录，不算完成了系统备份。

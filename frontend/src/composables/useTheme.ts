@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { onBeforeMount, onBeforeUnmount, ref } from 'vue'
 
 // useTheme.ts shares the resolved dark state and selected theme mode across the
 // application. Explicit light or dark choices are stored in localStorage, while system
@@ -27,6 +27,9 @@ const themeMode = ref<ThemeMode>('system')
 // single process-lifetime browser preference listener after initialization.
 let themeSwitchFrame: number | undefined
 let systemThemeMedia: MediaQueryList | undefined
+// lightThemeUsers counts mounted authentication layouts; the last departing owner
+// restores the resolved preference while overlapping layouts keep the document light.
+let lightThemeUsers = 0
 
 // readSavedThemeMode reads the stored explicit theme choice from localStorage. Values
 // other than light or dark select system mode; storage access errors propagate to the
@@ -50,10 +53,24 @@ function resolveIsDark(mode: ThemeMode): boolean {
 
 // applyTheme updates the shared reactive flag and document dark class.
 function applyTheme(nextIsDark: boolean) {
+  nextIsDark = lightThemeUsers > 0 ? false : nextIsDark
   isDark.value = nextIsDark
   document.documentElement.classList.toggle('dark', nextIsDark)
 }
 
+// useLightTheme keeps the document light while its authentication layout is mounted.
+// Call during component setup. A reference count supports overlapping layouts during
+// navigation, and the last layout leaving restores the saved mode or system palette.
+export function useLightTheme() {
+  onBeforeMount(() => {
+    lightThemeUsers += 1
+    applyTheme(false)
+  })
+  onBeforeUnmount(() => {
+    lightThemeUsers -= 1
+    applyTheme(resolveIsDark(themeMode.value))
+  })
+}
 // watchSystemTheme installs one module-owned listener for operating system palette
 // changes. Repeated calls reuse the existing listener, and events apply a palette only
 // while system mode is selected and the color differs.

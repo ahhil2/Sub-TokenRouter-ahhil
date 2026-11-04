@@ -119,7 +119,7 @@ const appStore = useAppStore()
 
 const form = ref({
   username: '',
-  password: ''
+  password: '',
 })
 
 const loading = ref(false)
@@ -396,7 +396,7 @@ const user = computed(() => authStore.user)
 
 const passwordForm = ref({
   old_password: '',
-  new_password: ''
+  new_password: '',
 })
 
 async function handleChangePassword() {

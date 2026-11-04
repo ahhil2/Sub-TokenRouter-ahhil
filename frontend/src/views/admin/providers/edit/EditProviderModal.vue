@@ -1005,7 +1005,7 @@ import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import type { Provider, OllamaCloudUsageState } from '@/api/admin/providers.types'
 import type { Proxy } from '@/api/admin/proxies.types'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
@@ -1213,7 +1213,7 @@ interface Props {
   // triggers hydration so drafts correspond to the parent-selected provider identity.
   provider: Provider | null // Provider response selected for editing.
   proxies: Proxy[] // Available outbound proxy records.
-  groups: AdminGroup[] // Available provider group records.
+  groups: AdminGroupSummary[]
 }
 
 // props holds the parent-owned provider response and option lists consumed by the mounted

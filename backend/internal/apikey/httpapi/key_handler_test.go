@@ -44,6 +44,14 @@ type availableGroupsRepository struct {
 	apikey.GroupRepository // unused group methods require setup
 }
 
+// capabilitiesRepository records the authenticated capability owner and returns configured
+// eligibility.
+type capabilitiesRepository struct {
+	apikey.APIKeyRepository
+	owner   int64
+	allowed bool
+}
+
 // TestValidateAPIKeyCreateRequest supplies omitted and bounded monetary
 // allowances with positive or invalid relative expiry values. It checks
 // accepted limits and early rejection of negative, nonfinite, oversized or
@@ -337,4 +345,48 @@ func TestAvailableGroupsOptionalModels(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCapabilitiesUsesAuthenticatedOwner supplies authenticated and guest requests with a
+// misleading query owner. It verifies status and eligibility come from the authenticated
+// subject rather than the query parameter.
+func TestCapabilitiesUsesAuthenticatedOwner(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		userID  int64
+		allowed bool
+		status  int
+	}{
+		{name: "allowed", userID: 3, allowed: true, status: http.StatusOK},
+		{name: "no_key", userID: 4, status: http.StatusOK},
+		{name: "guest", status: http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &capabilitiesRepository{allowed: test.allowed}
+			service := apikey.NewAPIKeyService(repo, nil, nil, nil, nil, nil, &apikey.Options{})
+			router := gin.New()
+			group := router.Group("/api/v1")
+			if test.userID != 0 {
+				group.Use(func(c *gin.Context) { c.Set(authctx.ContextKeyUser, authctx.AuthSubject{UserID: test.userID}) })
+			}
+			RegisterUserRoutes(group, NewAPIKeyHandler(service, func(*routing.Group, *accessview.GroupCapacitySummary) *struct{} { return nil }))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/keys/capabilities?user_id=999", nil))
+			require.Equal(t, test.status, rec.Code, rec.Body.String())
+			require.Equal(t, test.userID, repo.owner)
+			if test.status == http.StatusOK {
+				var envelope struct {
+					Data map[string]bool `json:"data"`
+				}
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+				require.Equal(t, map[string]bool{"batch_images": test.allowed}, envelope.Data)
+			}
+		})
+	}
+}
+
+// HasBatchImageKey records the requested owner and returns fixture eligibility.
+func (r *capabilitiesRepository) HasBatchImageKey(_ context.Context, userID int64) (bool, error) {
+	r.owner = userID
+	return r.allowed, nil
 }

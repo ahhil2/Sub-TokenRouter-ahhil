@@ -37,11 +37,9 @@ function mountField(props: {
 }
 
 describe('UpstreamRequestIdHeaderField', () => {
-  // An OpenAI API-key provider opens the request-ID header help panel. The examples must
-  // include relay header names, the platform header, and the relay-specific explanatory
-  // note.
-  it('lists relay and official header examples for API key providers', () => {
+  it('lists relay and official header examples for API key providers', async () => {
     const wrapper = mountField({ platform: 'openai', type: 'apikey' })
+    await wrapper.get('[data-icon-trigger]').trigger('mouseenter')
     const text = wrapper.text()
 
     expect(text).toContain('admin.providers.upstreamRequestIdHeaderHelp.intro')
@@ -53,10 +51,9 @@ describe('UpstreamRequestIdHeaderField', () => {
     expect(text).toContain('x-request-id')
   })
 
-  // An Anthropic OAuth provider opens the request-ID header help panel. The examples must
-  // show the platform header while omitting suggestions gated on API-key credential type.
-  it('lists only the official header for providers that connect to the platform directly', () => {
+  it('lists only the official header for providers that connect to the platform directly', async () => {
     const wrapper = mountField({ platform: 'anthropic', type: 'oauth' })
+    await wrapper.get('[data-icon-trigger]').trigger('mouseenter')
     const text = wrapper.text()
 
     expect(text).toContain('admin.providers.upstreamRequestIdHeaderHelp.official:Anthropic')
@@ -65,11 +62,9 @@ describe('UpstreamRequestIdHeaderField', () => {
     expect(text).not.toContain('X-Oneapi-Request-Id')
   })
 
-  // The provider platform has no configured example and its type does not enable relay
-  // suggestions. The help introduction must remain visible while the example section is
-  // omitted.
-  it('omits the examples section when no header is known for the platform', () => {
+  it('omits the examples section when no header is known for the platform', async () => {
     const wrapper = mountField({ platform: 'kimi', type: 'oauth' })
+    await wrapper.get('[data-icon-trigger]').trigger('mouseenter')
     const text = wrapper.text()
 
     expect(text).toContain('admin.providers.upstreamRequestIdHeaderHelp.intro')

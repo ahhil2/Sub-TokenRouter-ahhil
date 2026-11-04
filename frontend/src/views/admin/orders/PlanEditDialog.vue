@@ -234,7 +234,7 @@ import { groupsAPI } from '@/api/admin/groups'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatPaymentAmount } from '@/utils/payment/currency'
 import type { SubscriptionPlan } from '@/api/payment.types'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 
@@ -284,7 +284,7 @@ const saving = ref(false)
 const groupsLoading = ref(false)
 // groups supplies available group choices and default rate placeholders; failed reloads
 // retain the most recently loaded group list.
-const groups = ref<AdminGroup[]>([])
+const groups = ref<AdminGroupSummary[]>([])
 // planCopyFields describes the shared localized name, description, benefits, and product name
 // editor; benefits are entered as newline-separated text.
 const planCopyFields = computed(() => [
@@ -444,7 +444,7 @@ watch(
 async function loadGroups() {
   groupsLoading.value = true
   try {
-    groups.value = await groupsAPI.getAllIncludingInactive()
+    groups.value = await groupsAPI.getOptions(true)
   } catch (error: unknown) {
     appStore.showError(extractApiErrorMessage(error, t('admin.groups.failedToLoad')))
   } finally {
@@ -512,7 +512,7 @@ function setGroupRate(groupId: number, event: Event) {
 // formatGroupDefaultRate formats a positive finite group multiplier as a placeholder.
 // Invalid or nonpositive values yield empty text, leaving the rate input without a
 // misleading configured default.
-function formatGroupDefaultRate(group: AdminGroup): string {
+function formatGroupDefaultRate(group: AdminGroupSummary): string {
   const rate = Number(group.rate_multiplier)
   if (!Number.isFinite(rate) || rate <= 0) return ''
   return `${rate}x`

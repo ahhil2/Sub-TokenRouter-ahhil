@@ -1,279 +1,122 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import type { RouteLocationNormalized, Router, RouteRecordNormalized } from 'vue-router'
+import { ref } from 'vue'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RouteLocationNormalized, Router } from 'vue-router'
+import { useRoutePrefetch } from '../useRoutePrefetch'
 
-import { useRoutePrefetch, _adminPrefetchMap, _userPrefetchMap } from '../useRoutePrefetch'
-
-// useRoutePrefetch.spec.ts checks lazy route lookup, idle scheduling, cancellation, and
-// processed-origin tracking with a mock router. Tests provide timer-backed idle callbacks
-// and restore browser scheduling afterward, allowing both ordinary idle execution and
-// timeout-triggered dispatch to be observed.
-
-// createMockRoute builds normalized route fields for one exact path. Matching metadata and
-// navigation history are empty because these tests exercise path-based prefetch adjacency
-// rather than router resolution.
-const createMockRoute = (path: string): RouteLocationNormalized => ({
-  path,
-  name: undefined,
-  params: {},
-  query: {},
-  hash: '',
-  fullPath: path,
-  matched: [],
-  meta: {},
-  redirectedFrom: undefined,
-})
-
-// createMockRouter supplies lazy component records for supported administrator and user
-// routes. All records share one resolving import spy, and only getRoutes is implemented
-// because prefetch lookup uses that router surface.
-const createMockRouter = (): Router => {
-  const mockImportFn = vi.fn().mockResolvedValue({ default: {} })
-
-  const routes: Partial<RouteRecordNormalized>[] = [
-    { path: '/admin/dashboard', components: { default: mockImportFn } },
-    { path: '/admin/providers', components: { default: mockImportFn } },
-    { path: '/admin/users', components: { default: mockImportFn } },
-    { path: '/admin/groups', components: { default: mockImportFn } },
-    { path: '/admin/subscriptions', components: { default: mockImportFn } },
-    { path: '/admin/redeem', components: { default: mockImportFn } },
-    { path: '/dashboard', components: { default: mockImportFn } },
-    { path: '/keys', components: { default: mockImportFn } },
-    { path: '/usage', components: { default: mockImportFn } },
-    { path: '/redeem', components: { default: mockImportFn } },
-    { path: '/profile', components: { default: mockImportFn } },
-  ]
-
-  return {
-    getRoutes: () => routes as RouteRecordNormalized[],
-  } as Router
+/**
+ * useRoutePrefetch.spec.ts verifies idle route prefetch admission under navigation, network, and visibility changes.
+ * Controlled requests and browser substitutes isolate the observable state transitions
+ * so fixtures can reproduce delayed completion and cleanup without external services.
+ */
+const hasPendingRequests = vi.hoisted(() => vi.fn(() => false))
+vi.mock('@/api/client', () => ({ hasPendingRequests }))
+/**
+ * route creates the minimal destination used by the prefetch scheduler fixture.
+ */
+const route = (path: string) => ({ path }) as RouteLocationNormalized
+/**
+ * fixture supplies a router with observable lazy imports and mutable current navigation.
+ */
+function fixture() {
+  const load = vi.fn().mockResolvedValue({ default: {} })
+  const currentRoute = ref(route('/admin/dashboard'))
+  const router = {
+    currentRoute,
+    getRoutes: () =>
+      ['/admin/providers', '/admin/users', '/admin/groups', '/admin/dashboard'].map((path) => ({
+        path,
+        components: { default: load },
+      })),
+  } as unknown as Router
+  return { ...useRoutePrefetch(router), currentRoute, load }
 }
 
-describe('useRoutePrefetch', () => {
-  let originalRequestIdleCallback: typeof window.requestIdleCallback
-  let originalCancelIdleCallback: typeof window.cancelIdleCallback
-  let mockRouter: Router
+beforeEach(() => {
+  vi.useFakeTimers()
+  hasPendingRequests.mockReturnValue(false)
+  vi.stubGlobal(
+    'requestIdleCallback',
+    vi.fn((callback: () => void) => setTimeout(callback, 0)),
+  )
+  vi.stubGlobal(
+    'cancelIdleCallback',
+    vi.fn((handle: number) => clearTimeout(handle)),
+  )
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+})
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
-  beforeEach(() => {
-    mockRouter = createMockRouter()
-
-    originalRequestIdleCallback = window.requestIdleCallback
-    originalCancelIdleCallback = window.cancelIdleCallback
-
-    // Run idle callbacks through a timer so cancellation can remove queued work before
-    // dispatch while imports still complete asynchronously.
-    vi.stubGlobal('requestIdleCallback', (cb: IdleRequestCallback) => {
-      const id = setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 50 }), 0)
-      return id
-    })
-    vi.stubGlobal('cancelIdleCallback', (id: number) => clearTimeout(id))
+describe('路由预取', () => {
+  // Page requests remain active after navigation has mounted its destination. Prefetch must
+  // wait for their completion and idle admission, then reuse the completed-origin record.
+  it('等待页面挂载和业务请求完成，再使用空闲回调', async () => {
+    const state = fixture()
+    state.triggerPrefetch(state.currentRoute.value)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(state.load).not.toHaveBeenCalled()
+    hasPendingRequests.mockReturnValue(true)
+    await vi.advanceTimersByTimeAsync(1001)
+    expect(state.load).not.toHaveBeenCalled()
+    hasPendingRequests.mockReturnValue(false)
+    await vi.advanceTimersByTimeAsync(1001)
+    expect(state.load).toHaveBeenCalledTimes(2)
+    expect(window.requestIdleCallback).toHaveBeenCalledWith(expect.any(Function))
+    state.triggerPrefetch(state.currentRoute.value)
+    await vi.advanceTimersByTimeAsync(1001)
+    expect(state.load).toHaveBeenCalledTimes(2)
   })
 
-  afterEach(() => {
-    vi.restoreAllMocks()
-
-    // Restore captured idle APIs after each test so timeout-specific stubs do not affect
-    // scheduling behavior in later cases.
-    window.requestIdleCallback = originalRequestIdleCallback
-    window.cancelIdleCallback = originalCancelIdleCallback
+  // The browser reports data-saving mode or a slow effective connection before scheduling.
+  // Adjacent route imports must remain unstarted after timers have fully advanced.
+  it.each([{ saveData: true }, { effectiveType: '3g' }, { effectiveType: '2g' }])(
+    '受限网络 %j 跳过预取',
+    async (connection) => {
+      vi.stubGlobal('navigator', { connection })
+      const state = fixture()
+      state.triggerPrefetch(state.currentRoute.value)
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(state.load).not.toHaveBeenCalled()
+    },
+  )
+  // Queued prefetch is cancelled, its document becomes hidden, or its route changes. The
+  // delayed callback must avoid importing neighbors for the obsolete destination.
+  it.each(['cancel', 'hidden', 'navigation'])('%s 会跳过等待中的预取', async (reason) => {
+    const state = fixture()
+    state.triggerPrefetch(state.currentRoute.value)
+    if (reason === 'cancel') state.cancelPendingPrefetch()
+    if (reason === 'hidden') vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    if (reason === 'navigation') state.currentRoute.value = route('/admin/users')
+    await vi.advanceTimersByTimeAsync(1001)
+    expect(state.load).not.toHaveBeenCalled()
   })
 
-  describe('_isAdminRoute', () => {
-    // The classifier receives several administrator paths from the supported adjacency
-    // table. Each path must be recognized as administrative by its shared prefix rule.
-    it('应该正确识别管理员路由', () => {
-      const { _isAdminRoute } = useRoutePrefetch(mockRouter)
-      expect(_isAdminRoute('/admin/dashboard')).toBe(true)
-      expect(_isAdminRoute('/admin/users')).toBe(true)
-      expect(_isAdminRoute('/admin/providers')).toBe(true)
-    })
-
-    // The classifier receives dashboard, keys, and usage paths outside the administrator
-    // namespace. Each must remain classified as a non-administrator route for prefetch
-    // configuration consumers.
-    it('应该正确识别非管理员路由', () => {
-      const { _isAdminRoute } = useRoutePrefetch(mockRouter)
-      expect(_isAdminRoute('/dashboard')).toBe(false)
-      expect(_isAdminRoute('/keys')).toBe(false)
-      expect(_isAdminRoute('/usage')).toBe(false)
-    })
+  // A new navigation replaces a queued origin before imports begin. Completion must record
+  // the new origin, and reset must clear that recorded state.
+  it('导航切换取消旧任务，重置后允许再次预取', async () => {
+    const state = fixture()
+    state.triggerPrefetch(state.currentRoute.value)
+    state.currentRoute.value = route('/admin/users')
+    state.triggerPrefetch(state.currentRoute.value)
+    await vi.advanceTimersByTimeAsync(1001)
+    expect([...state.prefetchedRoutes.value]).toEqual(['/admin/users'])
+    state.resetPrefetchState()
+    expect(state.prefetchedRoutes.value.size).toBe(0)
   })
 
-  describe('_getPrefetchConfig', () => {
-    // The administrator dashboard has two configured neighboring routes available in the
-    // mock router. Configuration lookup must return two lazy import functions for those
-    // neighbors.
-    it('管理员 dashboard 应该返回正确的预加载配置', () => {
-      const { _getPrefetchConfig } = useRoutePrefetch(mockRouter)
-      const route = createMockRoute('/admin/dashboard')
-      const config = _getPrefetchConfig(route)
-
-      expect(config).toHaveLength(2)
-    })
-
-    // The user dashboard has two configured neighboring routes available in the mock
-    // router. Configuration lookup must return two entries for that dashboard's prefetch
-    // configuration.
-    it('普通用户 dashboard 应该返回正确的预加载配置', () => {
-      const { _getPrefetchConfig } = useRoutePrefetch(mockRouter)
-      const route = createMockRoute('/dashboard')
-      const config = _getPrefetchConfig(route)
-
-      expect(config).toHaveLength(2)
-    })
-
-    // A route outside the adjacency table is passed to configuration lookup. Its result
-    // must be an empty list even though the router contains other lazy components.
-    it('未定义的路由应该返回空数组', () => {
-      const { _getPrefetchConfig } = useRoutePrefetch(mockRouter)
-      const route = createMockRoute('/unknown-route')
-      const config = _getPrefetchConfig(route)
-
-      expect(config).toHaveLength(0)
-    })
-  })
-
-  describe('triggerPrefetch', () => {
-    // An administrator dashboard prefetch is scheduled through the timer-backed idle
-    // callback. After dispatch and import completion, the originating path must appear in
-    // processed routes.
-    it('应该在浏览器空闲时触发预加载', async () => {
-      const { triggerPrefetch, prefetchedRoutes } = useRoutePrefetch(mockRouter)
-      const route = createMockRoute('/admin/dashboard')
-
-      triggerPrefetch(route)
-
-      await new Promise((resolve) => setTimeout(resolve, 100))
-
-      expect(prefetchedRoutes.value.has('/admin/dashboard')).toBe(true)
-    })
-
-    // The same originating route is triggered again after its first batch has completed.
-    // The processed-origin set must still contain a single entry for that path.
-    it('应该避免重复预加载同一路由', async () => {
-      const { triggerPrefetch, prefetchedRoutes } = useRoutePrefetch(mockRouter)
-      const route = createMockRoute('/admin/dashboard')
-
-      triggerPrefetch(route)
-      await new Promise((resolve) => setTimeout(resolve, 100))
-
-      triggerPrefetch(route)
-      await new Promise((resolve) => setTimeout(resolve, 100))
-
-      expect(prefetchedRoutes.value.size).toBe(1)
-    })
-  })
-
-  describe('cancelPendingPrefetch', () => {
-    // A route schedules idle work and is cancelled immediately before it runs. The
-    // processed-route set must remain empty at the synchronous cancellation check.
-    it('应该取消挂起的预加载任务', () => {
-      const { triggerPrefetch, cancelPendingPrefetch, prefetchedRoutes } =
-        useRoutePrefetch(mockRouter)
-      const route = createMockRoute('/admin/dashboard')
-
-      triggerPrefetch(route)
-      cancelPendingPrefetch()
-
-      expect(prefetchedRoutes.value.size).toBe(0)
-    })
-  })
-
-  describe('路由变化时取消之前的预加载', () => {
-    // Two different routes are triggered before the first idle callback runs. After
-    // waiting for dispatch, the latest originating route must be recorded as processed.
-    it('应该在路由变化时取消之前的预加载任务', async () => {
-      const { triggerPrefetch, prefetchedRoutes } = useRoutePrefetch(mockRouter)
-
-      triggerPrefetch(createMockRoute('/admin/dashboard'))
-
-      triggerPrefetch(createMockRoute('/admin/users'))
-
-      await new Promise((resolve) => setTimeout(resolve, 100))
-
-      expect(prefetchedRoutes.value.has('/admin/users')).toBe(true)
-    })
-  })
-
-  describe('resetPrefetchState', () => {
-    // A route completes its import batch before reset is invoked. Reset must clear the
-    // recorded processed routes so the scheduler has no retained completed origin.
-    it('应该重置所有预加载状态', async () => {
-      const { triggerPrefetch, resetPrefetchState, prefetchedRoutes } = useRoutePrefetch(mockRouter)
-      const route = createMockRoute('/admin/dashboard')
-
-      triggerPrefetch(route)
-      await new Promise((resolve) => setTimeout(resolve, 100))
-
-      expect(prefetchedRoutes.value.size).toBeGreaterThan(0)
-
-      resetPrefetchState()
-
-      expect(prefetchedRoutes.value.size).toBe(0)
-    })
-  })
-
-  describe('预加载映射表', () => {
-    // The exported administrator adjacency map is read directly by path. It must expose
-    // the dashboard entry with its expected pair of neighboring routes.
-    it('管理员预加载映射表应该包含正确的路由', () => {
-      expect(_adminPrefetchMap).toHaveProperty('/admin/dashboard')
-      expect(_adminPrefetchMap['/admin/dashboard']).toHaveLength(2)
-    })
-
-    // The exported user adjacency map is read directly by path. It must expose the user
-    // dashboard entry with its expected pair of neighboring routes.
-    it('用户预加载映射表应该包含正确的路由', () => {
-      expect(_userPrefetchMap).toHaveProperty('/dashboard')
-      expect(_userPrefetchMap['/dashboard']).toHaveLength(2)
-    })
-  })
-
-  describe('requestIdleCallback 超时处理', () => {
-    // The idle stub invokes its callback only after the configured timeout with no
-    // remaining idle budget. The originating route must still be processed after dispatch.
-    it('超时后仍能正常执行预加载', async () => {
-      vi.stubGlobal(
-        'requestIdleCallback',
-        (cb: IdleRequestCallback, options?: IdleRequestOptions) => {
-          const timeout = options?.timeout || 2000
-          return setTimeout(() => cb({ didTimeout: true, timeRemaining: () => 0 }), timeout)
-        },
-      )
-
-      const { triggerPrefetch, prefetchedRoutes } = useRoutePrefetch(mockRouter)
-      const route = createMockRoute('/dashboard')
-
-      triggerPrefetch(route)
-
-      await new Promise((resolve) => setTimeout(resolve, 2100))
-
-      expect(prefetchedRoutes.value.has('/dashboard')).toBe(true)
-    })
-  })
-
-  describe('预加载失败处理', () => {
-    // A normal mock router is used to invoke triggerPrefetch inside a synchronous
-    // exception assertion. Scheduling must not throw synchronously; this case does not
-    // simulate an import rejection.
-    it('预加载失败时应该静默处理不影响页面功能', async () => {
-      const { triggerPrefetch } = useRoutePrefetch(mockRouter)
-      const route = createMockRoute('/admin/dashboard')
-
-      expect(() => triggerPrefetch(route)).not.toThrow()
-    })
-  })
-
-  describe('无 router 时的行为', () => {
-    // Prefetch is triggered with no router instance while adjacency exists for the origin.
-    // After idle dispatch, no component imports can be found and no origin is recorded.
-    it('没有传入 router 时应该正常工作但不执行预加载', async () => {
-      const { triggerPrefetch, prefetchedRoutes } = useRoutePrefetch()
-      const route = createMockRoute('/admin/dashboard')
-
-      triggerPrefetch(route)
-      await new Promise((resolve) => setTimeout(resolve, 100))
-
-      expect(prefetchedRoutes.value.size).toBe(0)
-    })
+  // The browser has no idle callback implementation and uses the delayed scheduler.
+  // Cancellation must still prevent imports before the replacement timeout is allowed to
+  // run.
+  it('没有空闲回调时仍可取消延时预取', async () => {
+    vi.stubGlobal('requestIdleCallback', undefined)
+    const state = fixture()
+    state.triggerPrefetch(state.currentRoute.value)
+    await vi.advanceTimersByTimeAsync(1001)
+    state.cancelPendingPrefetch()
+    await vi.advanceTimersByTimeAsync(1001)
+    expect(state.load).not.toHaveBeenCalled()
   })
 })

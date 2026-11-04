@@ -932,7 +932,7 @@ function handleIdentityFilter() {
 }
 import { adminAPI } from '@/api/admin'
 import type { AdminUser } from '@/api/admin/users.types'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import type { UserAttributeDefinition } from '@/api/admin/userAttributes.types'
 import type { BatchUserUsageStats } from '@/api/admin/dashboard'
 import type { Column } from '@/components/common/table/types'
@@ -1281,16 +1281,18 @@ const loadInitialSortState = (): {
 // independently of current-page usage sorting.
 const sortState = reactive(loadInitialSortState())
 
+// allGroups supplies active-group summaries for membership columns and the existing
+// authorization filter, keeping its candidate list independent of user pagination.
 // allGroups supplies active choices for the group column and authorized-group filter,
 // with lazy loading when those controls need them.
-const allGroups = ref<AdminGroup[]>([])
+const allGroups = ref<AdminGroupSummary[]>([])
 // loadAllGroups fetches active groups when the current collection is empty. Failures
 // are logged and keep the existing collection, so the group column and authorization
 // filter can retry on a later call.
 const loadAllGroups = async () => {
   if (allGroups.value.length > 0) return
   try {
-    allGroups.value = await adminAPI.groups.getAll()
+    allGroups.value = await adminAPI.groups.getOptions()
   } catch (e) {
     // Keep the current group collection when lookup fails, allowing the existing user
     // table to remain visible and a later call to retry.
@@ -1298,16 +1300,18 @@ const loadAllGroups = async () => {
   }
 }
 
+// allGroupsForApiKeyFilter also includes disabled groups so administrators can find
+// users whose existing credentials still reference a group that is no longer active.
 // allGroupsForApiKeyFilter includes inactive groups so key bindings can be filtered
 // even when their referenced group is disabled.
-const allGroupsForApiKeyFilter = ref<AdminGroup[]>([])
+const allGroupsForApiKeyFilter = ref<AdminGroupSummary[]>([])
 // loadAllGroupsForApiKeyFilter loads groups including inactive entries when its
 // collection is empty. This lets administrators find users whose keys still reference
 // disabled groups; failures are logged and leave current choices available.
 const loadAllGroupsForApiKeyFilter = async () => {
   if (allGroupsForApiKeyFilter.value.length > 0) return
   try {
-    allGroupsForApiKeyFilter.value = await adminAPI.groups.getAllIncludingInactive()
+    allGroupsForApiKeyFilter.value = await adminAPI.groups.getOptions(true)
   } catch (e) {
     // Keep the current key-group choices after lookup failure so existing filters
     // remain usable and a later opening can retry an empty collection.
@@ -1322,8 +1326,8 @@ const loadAllGroupsForApiKeyFilter = async () => {
 // within each category, allowing the template to display counts, tooltips, and
 // replacement actions against the same membership decision.
 const getUserGroups = (user: AdminUser) => {
-  const exclusive: AdminGroup[] = []
-  const publicGroups: AdminGroup[] = []
+  const exclusive: AdminGroupSummary[] = []
+  const publicGroups: AdminGroupSummary[] = []
   const disabledPublicGroups = new Set(user.disabled_public_groups || [])
   for (const g of allGroups.value) {
     if (g.status !== 'active') continue

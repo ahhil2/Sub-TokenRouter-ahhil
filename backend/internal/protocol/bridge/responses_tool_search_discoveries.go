@@ -16,12 +16,13 @@ import (
 // history for a separate output-normalization pass.
 //
 // One flat upstream name must retain its original client identity. Static
-// records therefore register kind, namespace/name, and encoded normalized
-// shape before discoveries are admitted. Repeated equal identities are
-// skipped, conflicting keys fail, and namespace promotion retains only newly
-// admitted children. Shallow copies keep nested schema sharing, while custom
-// comparison uses the lowered wrapper shape because that is the declaration
-// sent to function execution.
+// records therefore register kind, namespace/name, and encoded comparison
+// shape before discoveries are admitted. Tool-level help text is excluded from
+// that comparison so refreshed descriptions retain the static declaration.
+// Repeated equal identities are skipped, conflicting keys fail, and namespace
+// promotion retains newly admitted children. Shallow copies keep nested schema
+// sharing, while custom comparison uses the lowered wrapper shape because that
+// is the declaration sent to function execution.
 
 // responsesDiscoveredToolIdentity records the normalized client identity and
 // encoded comparison shape of a declaration.
@@ -274,8 +275,10 @@ func sameResponsesDiscoveredTool(left, right responsesDiscoveredToolIdentity) bo
 // format removal, while the returned copy keeps the client-facing declaration
 // fields. The identity also retains the custom kind, preventing equivalence
 // with an ordinary function that has the same lowered shape. Encoded bytes
-// compare the entire normalized shape, including retained extension fields,
-// rather than only its parameter schema.
+// compare every remaining field, including retained extensions and nested
+// schema descriptions. Tool-level descriptions are excluded using the same
+// comparison rule as namespace flattening, so a discovery with changed help
+// text keeps the already registered declaration and its description.
 func responsesDirectToolDiscovery(tool map[string]any, typ string) (map[string]any, responsesDiscoveredToolIdentity, bool) {
 	name := strings.TrimSpace(stringValue(tool["name"]))
 	if name == "" {
@@ -284,11 +287,10 @@ func responsesDirectToolDiscovery(tool map[string]any, typ string) (map[string]a
 	copy := copyClientTool(tool)
 	copy["type"] = typ
 	copy["name"] = name
-	identityCopy := copy
+	identityCopy := responsesToolDeclarationForComparison(copy)
 	if typ == "custom" {
 		// Function-only execution represents freeform input with one wrapper field.
 		// Compare that lowered schema while keeping the custom client kind distinct.
-		identityCopy = copyClientTool(copy)
 		identityCopy["type"] = "function"
 		identityCopy["parameters"] = json.RawMessage(customToolInputSchema)
 		delete(identityCopy, "format")

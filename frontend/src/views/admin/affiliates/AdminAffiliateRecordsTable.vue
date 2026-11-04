@@ -194,8 +194,18 @@
 </template>
 
 <script setup lang="ts">
+import { useLatestRequest } from '@/composables/useLatestRequest'
 import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
-import { computed, defineComponent, h, onMounted, reactive, ref, type PropType } from 'vue'
+import {
+  computed,
+  defineComponent,
+  h,
+  onMounted,
+  onUnmounted,
+  reactive,
+  ref,
+  type PropType,
+} from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -248,9 +258,9 @@ const props = defineProps<{
 const { t } = useI18n()
 const appStore = useAppStore()
 const { balanceUnitName, formatBalanceAmount } = useBalanceDisplay()
-// List rows, search/date filters, pagination, and dialog state track the table and
-// independently loaded user overview.
-const loading = ref(false)
+// The latest read owns loading and publication; replacement or page disposal cancels
+// earlier requests so late responses and errors cannot replace the current display.
+const { loading, run: runLatest } = useLatestRequest()
 const records = ref<AffiliateRecord[]>([])
 const filters = reactive({
   search: '', // record search text
@@ -402,23 +412,24 @@ function buildParams(): ListAffiliateRecordsParams {
 // fetchRecords dispatches record queries to the endpoint selected by the type prop.
 async function fetchRecords(
   params: ListAffiliateRecordsParams,
+  signal?: AbortSignal,
 ): Promise<PaginatedResponse<AffiliateRecord>> {
   if (props.type === 'invites') {
-    return affiliatesAPI.listInviteRecords(params)
+    return affiliatesAPI.listInviteRecords(params, signal)
   }
   if (props.type === 'rebates') {
-    return affiliatesAPI.listRebateRecords(params)
+    return affiliatesAPI.listRebateRecords(params, signal)
   }
-  return affiliatesAPI.listTransferRecords(params)
+  return affiliatesAPI.listTransferRecords(params, signal)
 }
 
 // loadRecords replaces rows and total from the selected record endpoint. Missing
 // response collections become empty rows, and request failure shows a translated error
 // while leaving the previously displayed records available.
 async function loadRecords() {
-  loading.value = true
   try {
-    const res = await fetchRecords(buildParams())
+    const res = await runLatest((signal) => fetchRecords(buildParams(), signal))
+    if (!res) return
     // Missing response collections represent an empty page here, so initialize rows
     // and total together before the table leaves its loading state.
     records.value = res.items || []
@@ -427,8 +438,6 @@ async function loadRecords() {
     appStore.showError(
       extractI18nErrorMessage(error, t, 'admin.affiliates.errors', t('common.error')),
     )
-  } finally {
-    loading.value = false
   }
 }
 
@@ -653,5 +662,8 @@ const OverviewStat = defineComponent({
 // validated sort state determine the initial table query.
 onMounted(() => {
   void loadRecords()
+})
+onUnmounted(() => {
+  if (debounceTimer) clearTimeout(debounceTimer)
 })
 </script>

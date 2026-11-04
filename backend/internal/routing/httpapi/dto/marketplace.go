@@ -231,6 +231,19 @@ type ModelMarketplaceGroup struct {
 	Models       []ModelMarketplaceModel       `json:"models"`                 // requestable public model entries
 }
 
+// ModelMarketplaceOptions contains group labels and model identifiers for homepage
+// selectors.
+type ModelMarketplaceOptions struct {
+	ID     int64                    `json:"id"`     // group numeric identifier
+	Name   string                   `json:"name"`   // localized group name
+	Models []ModelMarketplaceOption `json:"models"` // selectable model identifiers
+}
+
+// ModelMarketplaceOption identifies one requestable model in a selector response.
+type ModelMarketplaceOption struct {
+	ID string `json:"id"` // requestable model identifier
+}
+
 // ModelMarketplaceGroupsFromRouting returns public group DTOs in the supplied
 // order, including an empty nonnil slice for empty input. It allocates group
 // and model records, while attribute pointers, model modality/protocol

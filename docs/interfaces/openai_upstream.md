@@ -265,7 +265,11 @@ OpenAI OAuth 和 API Key 的普通 Responses 请求保留 `function_call`、`too
 
 转换到 Chat 或 function-only Responses 时，协议桥接层先解析有效声明，再生成已知历史调用、`tool_choice` 和响应恢复使用的名称映射。默认 `functions` 命名空间使用工具裸名；其他显式 namespace 子工具使用稳定的平铺名称。工具搜索加载的普通 function 根据实际加载声明保留自己的调用身份。转换后的非流式结果、SSE 生命周期和终态使用声明映射恢复名称、namespace 和调用 ID；声明之间的名称碰撞或无法解析的限定工具选择返回错误。
 
-namespace 中的 function 和 custom 子工具都参与转换，包括 `additional_tools`、工具搜索发现和 `children` 别名。custom 使用单个字符串 `input` 的 function 参数包装；返回的 custom 调用在 JSON、SSE added/done 和终态中恢复原始 namespace 与工具名。默认 `functions` 内的工具与顶层工具定义完全相同时合并；类型、schema 或其他声明字段不同，以及不同 namespace 平铺后的名称碰撞，仍然拒绝。Chat 和 function-only Responses 共用这套命名空间检查。
+namespace 中的 function 和 custom 子工具都参与转换，包括 `additional_tools`、工具搜索发现和 `children` 别名。custom 使用单个字符串 `input` 的 function 参数包装；返回的 custom 调用在 JSON、SSE added/done 和终态中恢复原始 namespace 与工具名。
+
+同一 namespace 内的重复工具，以及默认 `functions` 内与顶层同名的工具，在除工具级 `description` 外的声明字段一致时合并；描述缺失、为空或内容不同都允许。顶层声明优先于默认 namespace 子工具，否则保留最先出现的子工具及其描述。参数 schema（包括其中的描述）、strict、类型、其他声明字段不同，以及不同 namespace 平铺后的名称碰撞，仍然拒绝。
+
+工具搜索的重复发现也忽略工具级描述差异，已有声明优先。custom 的发现比较使用降级后的参数包装，忽略已移除的 format。Chat 和 function-only Responses 共用这套检查。
 
 HTTP Responses 客户端工具转换失败发生在上游派发之前，返回带具体解释的 `400 invalid_request_error`，不计作提供商健康失败。输入回放只改写直接调用项，工具输出内的嵌套 JSON 保留为业务数据。
 

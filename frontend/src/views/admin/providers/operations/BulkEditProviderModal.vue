@@ -672,7 +672,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import type { Proxy as ProxyConfig } from '@/api/admin/proxies.types'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import type {
   ProviderPlatform,
   ProviderType,
@@ -763,7 +763,7 @@ interface Props {
     selectedTypes?: ProviderType[] // summarized target authentication types
   }
   proxies: ProxyConfig[] // available administrator proxy choices
-  groups: AdminGroup[] // available administrator group choices
+  groups: AdminGroupSummary[]
 }
 
 /**

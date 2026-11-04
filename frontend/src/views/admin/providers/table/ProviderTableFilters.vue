@@ -66,7 +66,7 @@ import Select from '@/components/common/Select.vue'
 import FilterDropdown from '@/components/common/FilterDropdown.vue'
 import FilterField from '@/components/common/FilterField.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 
 /**
@@ -83,7 +83,7 @@ import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 const props = defineProps<{
   searchQuery: string // parent-owned provider search text
   filters: Record<string, any> // parent-owned provider filter values
-  groups?: AdminGroup[] // available administrator group records
+  groups?: AdminGroupSummary[]
 }>()
 /**
  * emit publishes search or copied filter updates, and change asks the parent to apply the

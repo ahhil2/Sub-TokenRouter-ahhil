@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="w-full min-w-0 space-y-4">
-      <!-- Mount editable panels after bulk loading completes; every tab then keeps its controls mounted while hidden. -->
+      <!-- Mount editable panels after bulk loading completes; visited tabs keep their controls mounted while hidden. -->
       <SettingsSkeleton v-if="loading" />
 
       <form v-else @submit.prevent="saveAllSettings" class="space-y-4" novalidate>
@@ -84,6 +84,7 @@
         </div>
 
         <div
+          v-if="visitedTabs.has('security')"
           v-show="activeTab === 'security'"
           v-content-reveal="activeTab === 'security'"
           class="space-y-4"
@@ -92,6 +93,7 @@
         </div>
 
         <div
+          v-if="visitedTabs.has('gateway')"
           v-show="activeTab === 'gateway'"
           v-content-reveal="activeTab === 'gateway'"
           :ref="navigation.gatewayContentStartRef"
@@ -100,10 +102,12 @@
           <GatewayPolicySettings
             :controller="gateway"
             :active-gateway-section="activeGatewaySection"
+            :visited-gateway-sections="visitedGatewaySections"
           />
         </div>
 
         <div
+          v-if="visitedTabs.has('security')"
           v-show="activeTab === 'security'"
           v-content-reveal="activeTab === 'security'"
           class="space-y-4"
@@ -114,6 +118,7 @@
         </div>
 
         <div
+          v-if="visitedTabs.has('users')"
           v-show="activeTab === 'users'"
           v-content-reveal="activeTab === 'users'"
           class="space-y-4"
@@ -122,6 +127,7 @@
         </div>
 
         <div
+          v-if="visitedTabs.has('gateway')"
           v-show="activeTab === 'gateway'"
           v-content-reveal="activeTab === 'gateway'"
           class="space-y-4"
@@ -131,10 +137,12 @@
             :controller="gateway"
             :web-search="webSearch"
             :active-gateway-section="activeGatewaySection"
+            :visited-gateway-sections="visitedGatewaySections"
           />
         </div>
 
         <div
+          v-if="visitedTabs.has('general')"
           v-show="activeTab === 'general'"
           v-content-reveal="activeTab === 'general'"
           class="space-y-4"
@@ -143,6 +151,7 @@
         </div>
 
         <div
+          v-if="visitedTabs.has('agreement')"
           v-show="activeTab === 'agreement'"
           v-content-reveal="activeTab === 'agreement'"
           class="space-y-4"
@@ -151,6 +160,7 @@
         </div>
 
         <div
+          v-if="visitedTabs.has('features')"
           v-show="activeTab === 'features'"
           v-content-reveal="activeTab === 'features'"
           class="space-y-4"
@@ -163,6 +173,7 @@
         </div>
 
         <div
+          v-if="visitedTabs.has('payment')"
           v-show="activeTab === 'payment'"
           v-content-reveal="activeTab === 'payment'"
           class="space-y-4"
@@ -175,6 +186,7 @@
         </div>
 
         <div
+          v-if="visitedTabs.has('email')"
           v-show="activeTab === 'email'"
           v-content-reveal="activeTab === 'email'"
           class="space-y-4"
@@ -187,7 +199,11 @@
           />
         </div>
 
-        <div v-show="activeTab === 'backup'" v-content-reveal="activeTab === 'backup'">
+        <div
+          v-if="visitedTabs.has('backup')"
+          v-show="activeTab === 'backup'"
+          v-content-reveal="activeTab === 'backup'"
+        >
           <BackupSettings />
         </div>
 
@@ -252,7 +268,7 @@
 
 <script setup lang="ts">
 import { vContentReveal } from '@/directives/contentReveal'
-import { ref, computed, onMounted } from 'vue'
+import { defineAsyncComponent, ref, reactive, computed, onMounted, watch } from 'vue'
 import SettingsSkeleton from './settings/SettingsSkeleton.vue'
 import SettingsSaveBar from '@/components/common/settings/SettingsSaveBar.vue'
 import { useDirtyTracker } from '@/composables/useDirtyTracker'
@@ -265,12 +281,14 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import PaymentProviderDialog from '@/components/admin/payment/PaymentProviderDialog.vue'
-import BackupSettings from './settings/BackupSettings.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import { useAppStore } from '@/stores'
 import { createSettingsForm } from './settings/settingsState'
-import { useNavigationSettings } from './settings/useNavigationSettings'
+import {
+  useNavigationSettings,
+  type SettingsTab,
+  type GatewaySection,
+} from './settings/useNavigationSettings'
 import { useGatewaySettings } from './settings/useGatewaySettings'
 import { useEmailSettings } from './settings/useEmailSettings'
 import { useSecuritySettings } from './settings/useSecuritySettings'
@@ -304,15 +322,24 @@ import { useSettingsPersistence } from './settings/settingsPersistence'
  * snapshots. Controllers start during root setup, including feature polling for
  * an initial Features tab; editable panels mount after the bulk loader finishes.
  *
- * All tab containers remain mounted while hidden, preserving editor drafts and
- * child save registrations. The bulk target includes search and registers before
+ * Tab containers mount on first visit and remain mounted while hidden, retaining
+ * drafts and child save registrations. Auxiliary endpoints load for their own
+ * visited sections and capture separate clean snapshots. The bulk target includes
+ * changed search configuration and registers before
  * the eight dedicated targets and mounted child targets. Payment dialogs stay
  * outside the root form because their submissions belong to immediate provider
  * operations. The page delegates bulk persistence ordering to settingsPersistence.ts.
  */
-/**
- * Page services supply translated feedback and the one reactive draft shared by all settings domains.
- */
+// PaymentProviderDialog and BackupSettings defer their editor modules until the
+// corresponding dialog or tab first mounts, then Vue reuses the resolved components.
+const PaymentProviderDialog = defineAsyncComponent(
+  () => import('@/components/admin/payment/PaymentProviderDialog.vue'),
+)
+
+const BackupSettings = defineAsyncComponent(() => import('./settings/BackupSettings.vue'))
+
+// Page services supply translated feedback and the shared reactive settings draft
+// used by the domain controllers and their bulk persistence coordinator.
 const { t } = useI18n()
 
 const appStore = useAppStore()
@@ -337,9 +364,14 @@ const {
   scrollActiveGatewaySectionIntoView,
 } = navigation
 
-/**
- * Domain controllers share selected fields of form and retain their own transient editor and request state.
- */
+// Visited panels retain their controls and drafts after first use. Separate gateway
+// membership prevents unrelated protocol editors from mounting on the general tab.
+const visitedTabs = reactive(new Set<SettingsTab>([activeTab.value]))
+const visitedGatewaySections = reactive(new Set<GatewaySection>())
+const initializedSections = new Set<string>()
+
+// Domain controllers share selected fields of form and retain their own transient
+// editor state, auxiliary loading indicators, and endpoint-specific save actions.
 const general = useGeneralSettings(form)
 const { tablePageSizeOptionsInput, loadHomeFeaturedModelOptions } = general
 
@@ -390,7 +422,7 @@ const {
 
 const email = useEmailSettings(form)
 
-const webSearch = useWebSearchSettings()
+const webSearch = useWebSearchSettings(() => markSettingsClean('webSearch'))
 
 const { webSearchConfig, loadWebSearchConfig, saveWebSearchConfig } = webSearch
 
@@ -414,9 +446,9 @@ const hydration = createSettingsHydration(form, { general, security, users, gate
 const { loading, loadFailed, settingsStepUp, loadSettings, saveSettings } = useSettingsPersistence({
   buildPayload,
   ...hydration,
-  loadWebSearchConfig,
   saveWebSearchConfig,
-  loadCreativeModelCandidates,
+  isWebSearchDirty: () => isSettingsDirty('webSearch'),
+  preparePayload: features.ensureCreativeModelCandidates,
   markSettingsClean: (...keys) => markSettingsClean(...keys),
   afterLoad: () => {
     scrollActiveSettingsTabIntoView()
@@ -488,7 +520,10 @@ const settingsSaveTargets: Array<[string, SettingsSaveTarget]> = [
     {
       dirty: computed(() => isSettingsDirty('settings') || isSettingsDirty('webSearch')),
       save: saveSettings,
-      discard: () => loadSettings({ silent: true }),
+      discard: async () => {
+        await loadSettings({ silent: true })
+        if (visitedGatewaySections.has('anthropic')) await loadWebSearchConfig()
+      },
     },
   ],
   [
@@ -599,25 +634,63 @@ async function saveAllSettings() {
 }
 
 /**
- * Start settings, catalog, key, and provider reads when the page mounts. The
- * bulk/search path records clean snapshots after normalization; other loaders
- * independently populate catalogs, API-key status, provider configuration, or
- * their own editable targets.
+ * loadActiveSettingsSection initializes the selected tab's auxiliary data once.
+ * Visit markers are published before mounting its controls, and the initialization
+ * set prevents navigation from replacing unsaved drafts with another server read.
+ * Dedicated discard actions remain responsible for deliberate refreshes. Gateway
+ * sections have independent markers because their settings use separate endpoints;
+ * bulk fields already share the page's loaded draft regardless of which editor is
+ * visible. The controller and visit sets live until this settings page unmounts.
  */
+function loadActiveSettingsSection() {
+  const tab = activeTab.value
+  visitedTabs.add(tab)
+  const section = activeGatewaySection.value
+  if (tab === 'gateway') visitedGatewaySections.add(section)
+  const key = tab === 'gateway' ? `gateway:${section}` : tab
+  if (initializedSections.has(key)) return
+  initializedSections.add(key)
+  switch (key) {
+    case 'general':
+      void loadHomeFeaturedModelOptions()
+      break
+    case 'users':
+      void loadSubscriptionPlans()
+      break
+    case 'security':
+      void loadAdminApiKey()
+      void loadPanelRateLimitSettings()
+      break
+    case 'features':
+      void loadCreativeModelCandidates()
+      break
+    case 'payment':
+      void loadProviders()
+      break
+    case 'gateway:general':
+      void loadOverloadCooldownSettings()
+      void loadRateLimit429CooldownSettings()
+      void loadStreamTimeoutSettings()
+      void loadRectifierSettings()
+      break
+    case 'gateway:openai':
+      void loadOpenAI403CooldownSettings()
+      break
+    case 'gateway:anthropic':
+      void loadWebSearchConfig()
+      void loadBetaPolicySettings()
+      break
+    case 'gateway:ollamaCloud':
+      void loadOllamaCloudUsageSettings()
+      break
+  }
+}
+watch([activeTab, activeGatewaySection], loadActiveSettingsSection)
+// Bulk loading controls the initial skeleton; auxiliary data belongs to the active
+// section so entering this page does not fetch every editor's independent settings.
 onMounted(() => {
-  loadSettings()
-  loadHomeFeaturedModelOptions()
-  loadSubscriptionPlans()
-  loadAdminApiKey()
-  loadOllamaCloudUsageSettings()
-  loadOverloadCooldownSettings()
-  loadOpenAI403CooldownSettings()
-  loadRateLimit429CooldownSettings()
-  loadPanelRateLimitSettings()
-  loadStreamTimeoutSettings()
-  loadRectifierSettings()
-  loadBetaPolicySettings()
-  loadProviders()
+  void loadSettings()
+  loadActiveSettingsSection()
 })
 </script>
 

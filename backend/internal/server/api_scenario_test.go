@@ -3475,6 +3475,10 @@ func (r *stubApiKeyRepo) CountByUserID(ctx context.Context, userID int64) (int64
 	return count, nil
 }
 
+func (r *stubApiKeyRepo) HasBatchImageKey(context.Context, int64) (bool, error) {
+	return false, errors.New("not implemented")
+}
+
 // ExistsByKey reports whether the exact credential text is present in the
 // fixture index. It includes any credential aliases left by Update and performs
 // no status or ownership check.

@@ -74,14 +74,22 @@ export const paymentAPI = {
   },
 
   /**
-   * getMyOrders retrieves current user's orders and returns the server result.
+   * getMyOrders retrieves the authenticated user's filtered order page. The optional
+   * caller-owned signal cancels the request, and errors propagate to the view for
+   * current-request handling.
    */
-  getMyOrders(params?: {
-    page?: number // Requested page number.
-    page_size?: number // Requested page size.
-    status?: string // Current server-reported status.
-  }) {
-    return apiClient.get<BasePaginationResponse<PaymentOrder>>('/payment/orders/my', { params })
+  getMyOrders(
+    params?: {
+      page?: number // Requested page number.
+      page_size?: number // Requested page size.
+      status?: string // Current server-reported status.
+    },
+    signal?: AbortSignal,
+  ) {
+    return apiClient.get<BasePaginationResponse<PaymentOrder>>('/payment/orders/my', {
+      params,
+      signal,
+    })
   },
 
   /**

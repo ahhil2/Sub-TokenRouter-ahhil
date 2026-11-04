@@ -76,6 +76,10 @@ export function useFeaturesSettings(form: FeaturesSettingsForm, activeTab: Ref<S
   const creativeModelCandidatesLoading = ref(false)
 
   const creativeModelCandidatesError = ref(false)
+  // A pending lookup is shared by first-visit loading and save preparation. A
+  // successful lookup records readiness until the controller's page is discarded.
+  let creativeModelCandidatesLoaded = false
+  let creativeModelCandidatesRequest: Promise<void> | null = null
 
   // Status snapshots drive the usage display independently from draft edits;
   // the timer exists only while the features tab is active.
@@ -414,22 +418,39 @@ export function useFeaturesSettings(form: FeaturesSettingsForm, activeTab: Ref<S
   }
 
   /**
-   * loadCreativeModelCandidates refreshes the available creative group/model pairs and
-   * capability lists. It resets the error indicator before loading; failure sets the
-   * indicator while retaining earlier candidates, and loading clears when the request
-   * settles.
+   * loadCreativeModelCandidates shares one active model lookup across callers.
+   * Failure retains earlier choices and sets the visible warning; successful reads
+   * establish readiness for save validation. Settlement releases the pending handle
+   * so a later explicit refresh or failed-save retry can request current capabilities.
    */
   async function loadCreativeModelCandidates() {
+    if (creativeModelCandidatesRequest) return creativeModelCandidatesRequest
     creativeModelCandidatesLoading.value = true
     creativeModelCandidatesError.value = false
-    try {
-      creativeModelCandidates.value = await adminAPI.settings.getCreativeModelCandidates()
-    } catch {
-      // Retain earlier candidates after refresh failure so current rows remain
-      // inspectable, while the warning tells the administrator that loading failed.
-      creativeModelCandidatesError.value = true
-    } finally {
-      creativeModelCandidatesLoading.value = false
+    creativeModelCandidatesRequest = adminAPI.settings
+      .getCreativeModelCandidates()
+      .then((candidates) => {
+        creativeModelCandidates.value = candidates
+        creativeModelCandidatesLoaded = true
+      })
+      .catch(() => {
+        creativeModelCandidatesError.value = true
+      })
+      .finally(() => {
+        creativeModelCandidatesLoading.value = false
+        creativeModelCandidatesRequest = null
+      })
+    return creativeModelCandidatesRequest
+  }
+
+  /**
+   * ensureCreativeModelCandidates loads capabilities before validating configured rows.
+   * Empty selections need no catalog. Existing selections share any pending lookup;
+   * failure leaves the normalizer's historical-row handling available to the save.
+   */
+  async function ensureCreativeModelCandidates() {
+    if (form.creative_model_settings.length && !creativeModelCandidatesLoaded) {
+      await loadCreativeModelCandidates()
     }
   }
   return {
@@ -457,5 +478,6 @@ export function useFeaturesSettings(form: FeaturesSettingsForm, activeTab: Ref<S
     toggleCreativeOperation,
     normalizeCreativeModelSettingsForSave,
     loadCreativeModelCandidates,
+    ensureCreativeModelCandidates,
   }
 }

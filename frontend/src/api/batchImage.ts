@@ -245,10 +245,13 @@ export async function getBatchImageJob(apiKey: string, batchId: string): Promise
  * listBatchImageJobs retrieves jobs using a numeric limit or filter object.
  * Numeric input is sent directly; an object uses twenty when limit is falsy and
  * includes other filters only when truthy.
+ * An optional caller-owned signal cancels this HTTP request; rejection remains with
+ * the caller, which decides whether the requested data is still current.
  */
 export async function listBatchImageJobs(
   apiKey: string,
   options: number | BatchImageJobsListOptions = 20,
+  signal?: AbortSignal,
 ): Promise<BatchImageJobsResponse> {
   const params = new URLSearchParams()
   if (typeof options === 'number') {
@@ -264,6 +267,7 @@ export async function listBatchImageJobs(
   }
   const response = await fetch(buildGatewayUrl(`/v1/images/batches?${params.toString()}`), {
     headers: authHeaders(apiKey),
+    signal,
   })
   if (!response.ok) throw await parseBatchImageError(response)
   return response.json()

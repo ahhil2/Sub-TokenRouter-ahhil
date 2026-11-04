@@ -3,6 +3,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
+import { loadRouteLocaleMessages } from '@/i18n'
 import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
@@ -83,6 +84,9 @@ export function installRouteGuards(router: Router): void {
   }
 
   router.beforeEach(async (to, _from, next) => {
+    // Load destination labels before resolving its title; authentication routes use
+    // their smaller catalog while console routes await the complete locale catalog.
+    await loadRouteLocaleMessages(to.path)
     const authStore = useAuthStore()
     // Restore browser authentication before title and permission evaluation, then retain
     // the initialization marker for later navigations on this router.

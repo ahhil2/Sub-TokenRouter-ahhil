@@ -1,4 +1,4 @@
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 
 // apiKeyGroupFilterOptions.ts constructs grouped options for filtering users by their
 // API keys' group identifiers. Active groups are separated into exclusive and public
@@ -47,7 +47,7 @@ const HEADER_DISABLED = -3 // disabled section header
 // options retain their numeric server identifiers, while the leading null option clears
 // the filter and empty sections contribute no header.
 export function buildApiKeyGroupFilterOptions(
-  groups: AdminGroup[],
+  groups: AdminGroupSummary[],
   labels: ApiKeyGroupFilterLabels,
 ): ApiKeyGroupFilterOption[] {
   const exclusive: ApiKeyGroupFilterOption[] = []

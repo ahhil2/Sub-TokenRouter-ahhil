@@ -32,6 +32,7 @@ vi.mock('vue-i18n', async () => {
 vi.mock('@/stores', () => ({
   // useAppStore exposes the toast and settings fixtures consumed by the component.
   useAppStore: () => ({
+    fetchPublicSettings: (...args: unknown[]) => getPublicSettingsMock(...args),
     showError: vi.fn(),
     showSuccess: vi.fn(),
   }),

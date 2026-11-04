@@ -617,11 +617,13 @@
       /></template>
     </TablePageLayout>
     <ProviderSortDialog
+      v-if="openedDialogs.showDisplayOrder"
       :show="showDisplayOrder"
       @close="showDisplayOrder = false"
       @saved="handleDisplayOrderSaved"
     />
     <CreateProviderModal
+      v-if="openedDialogs.showCreate"
       :show="showCreate"
       :initial-platform="createInitialPlatform"
       :proxies="proxies"
@@ -630,6 +632,7 @@
       @created="reload"
     />
     <EditProviderModal
+      v-if="openedDialogs.showEdit"
       :show="showEdit"
       :provider="edAcc"
       :proxies="proxies"
@@ -638,30 +641,40 @@
       @updated="handleProviderUpdated"
     />
     <ReAuthProviderModal
+      v-if="openedDialogs.showReAuth"
       :show="showReAuth"
       :provider="reAuthAcc"
       @close="closeReAuthModal"
       @reauthorized="handleProviderUpdated"
     />
     <ProviderTestModal
+      v-if="openedDialogs.showTest"
       :show="showTest"
       :provider="testingAcc"
       :initial-group-id="Number(params.group) || undefined"
       @close="closeTestModal"
     />
-    <ProviderStatsModal :show="showStats" :provider="statsAcc" @close="closeStatsModal" />
+    <ProviderStatsModal
+      v-if="openedDialogs.showStats"
+      :show="showStats"
+      :provider="statsAcc"
+      @close="closeStatsModal"
+    />
     <AdvancedSchedulerScoreModal
+      v-if="openedDialogs.showAdvancedSchedulerScore"
       :show="showAdvancedSchedulerScore"
       :provider="advancedSchedulerScoreAcc"
       @close="closeAdvancedSchedulerScoreModal"
     />
     <CodexInviteResetModal
+      v-if="openedDialogs.showInviteReset"
       :show="showInviteReset"
       :provider="inviteResetAcc"
       @close="closeInviteResetModal"
       @updated="enterAutoRefreshSilentWindow"
     />
     <ScheduledTestsPanel
+      v-if="openedDialogs.showSchedulePanel"
       :show="showSchedulePanel"
       :provider-id="scheduleAcc?.id ?? null"
       :model-options="scheduleModelOptions"
@@ -687,16 +700,19 @@
       @delete="handleDelete"
     />
     <SyncFromCrsModal
+      v-if="openedDialogs.showSync"
       :show="showSync"
       @close="showSync = false"
       @synced="handleExternalProvidersChanged"
     />
     <ImportDataModal
+      v-if="openedDialogs.showImportData"
       :show="showImportData"
       @close="showImportData = false"
       @imported="handleDataImported"
     />
     <BulkEditProviderModal
+      v-if="openedDialogs.showBulkEdit"
       :show="showBulkEdit"
       :provider-ids="selIds"
       :selected-platforms="selPlatforms"
@@ -708,6 +724,7 @@
       @updated="handleBulkUpdated"
     />
     <TempUnschedStatusModal
+      v-if="openedDialogs.showTempUnsched"
       :show="showTempUnsched"
       :provider="tempUnschedAcc"
       @close="showTempUnsched = false"
@@ -749,14 +766,17 @@
       </label>
     </ConfirmDialog>
     <ErrorPassthroughRulesModal
+      v-if="openedDialogs.showErrorPassthrough"
       :show="showErrorPassthrough"
       @close="showErrorPassthrough = false"
     />
     <TLSFingerprintProfilesModal
+      v-if="openedDialogs.showTLSFingerprintProfiles"
       :show="showTLSFingerprintProfiles"
       @close="showTLSFingerprintProfiles = false"
     />
     <TLSFingerprintRoutersModal
+      v-if="openedDialogs.showTLSFingerprintRouters"
       :show="showTLSFingerprintRouters"
       @close="showTLSFingerprintRouters = false"
     />
@@ -772,7 +792,16 @@ import { useProviderUsage } from './useProviderUsage'
 import { useProviderSelection, type ProviderBulkEditTarget } from './useProviderSelection'
 
 import MotionTransition from '@/components/common/MotionTransition.vue'
-import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import {
+  defineAsyncComponent,
+  watch,
+  ref,
+  reactive,
+  computed,
+  nextTick,
+  onMounted,
+  onUnmounted,
+} from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
@@ -792,35 +821,19 @@ import Toggle from '@/components/common/Toggle.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import CreateProviderModal from './create/CreateProviderModal.vue'
-import EditProviderModal from './edit/EditProviderModal.vue'
-import BulkEditProviderModal from './operations/BulkEditProviderModal.vue'
-import SyncFromCrsModal from './operations/SyncFromCrsModal.vue'
-import TempUnschedStatusModal from './operations/TempUnschedStatusModal.vue'
 import ProviderTableActions from '@/views/admin/providers/table/ProviderTableActions.vue'
 import ProviderTableFilters from '@/views/admin/providers/table/ProviderTableFilters.vue'
 import ProviderBulkActionsBar from '@/views/admin/providers/operations/ProviderBulkActionsBar.vue'
 import ProviderActionMenu from '@/views/admin/providers/table/ProviderActionMenu.vue'
-import ImportDataModal from '@/views/admin/providers/operations/ImportDataModal.vue'
-import ReAuthProviderModal from '@/views/admin/providers/operations/ReAuthProviderModal.vue'
-import ProviderTestModal from '@/views/admin/providers/testing/ProviderTestModal.vue'
-import ProviderStatsModal from '@/views/admin/providers/operations/ProviderStatsModal.vue'
-import AdvancedSchedulerScoreModal from '@/views/admin/providers/operations/AdvancedSchedulerScoreModal.vue'
-import CodexInviteResetModal from '@/views/admin/providers/operations/CodexInviteResetModal.vue'
-import ScheduledTestsPanel from '@/views/admin/providers/testing/ScheduledTestsPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
 import ProviderStatusIndicator from '@/views/admin/providers/table/ProviderStatusIndicator.vue'
 import ProviderUsageCell from '@/views/admin/providers/table/ProviderUsageCell.vue'
 import ProviderTodayStatsCell from '@/views/admin/providers/table/ProviderTodayStatsCell.vue'
 import ProviderGroupsCell from '@/views/admin/providers/table/ProviderGroupsCell.vue'
 import ProviderPriorityCell from '@/views/admin/providers/operations/ProviderPriorityCell.vue'
-import ProviderSortDialog from '@/components/provider/ProviderSortDialog.vue'
 import ProviderCapacityCell from '@/views/admin/providers/table/ProviderCapacityCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
-import ErrorPassthroughRulesModal from '@/views/admin/providers/operations/ErrorPassthroughRulesModal.vue'
-import TLSFingerprintProfilesModal from '@/views/admin/providers/operations/TLSFingerprintProfilesModal.vue'
-import TLSFingerprintRoutersModal from '@/views/admin/providers/operations/TLSFingerprintRoutersModal.vue'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { sanitizeUrl } from '@/utils/url'
@@ -832,7 +845,7 @@ import type {
   ProviderSchedulerGroupScore,
 } from '@/api/admin/providers.types'
 import type { Proxy as ProviderProxy } from '@/api/admin/proxies.types'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import type { ClaudeModel } from '@/api/models.types'
 
 // ProvidersView.vue assembles the administrator provider table, its dialogs,
@@ -848,6 +861,51 @@ import type { ClaudeModel } from '@/api/models.types'
 // step-up authorization, and bulk actions retain failed selections when the
 // server supplies enough detail for another attempt.
 
+// Dialog component loaders start when their retained first-open container mounts.
+// Vue reuses each resolved module while hidden instances keep their editor state.
+const ProviderSortDialog = defineAsyncComponent(
+  () => import('@/components/provider/ProviderSortDialog.vue'),
+)
+const CreateProviderModal = defineAsyncComponent(() => import('./create/CreateProviderModal.vue'))
+const EditProviderModal = defineAsyncComponent(() => import('./edit/EditProviderModal.vue'))
+const BulkEditProviderModal = defineAsyncComponent(
+  () => import('./operations/BulkEditProviderModal.vue'),
+)
+const SyncFromCrsModal = defineAsyncComponent(() => import('./operations/SyncFromCrsModal.vue'))
+const TempUnschedStatusModal = defineAsyncComponent(
+  () => import('./operations/TempUnschedStatusModal.vue'),
+)
+const ImportDataModal = defineAsyncComponent(
+  () => import('@/views/admin/providers/operations/ImportDataModal.vue'),
+)
+const ReAuthProviderModal = defineAsyncComponent(
+  () => import('@/views/admin/providers/operations/ReAuthProviderModal.vue'),
+)
+const ProviderTestModal = defineAsyncComponent(
+  () => import('@/views/admin/providers/testing/ProviderTestModal.vue'),
+)
+const ProviderStatsModal = defineAsyncComponent(
+  () => import('@/views/admin/providers/operations/ProviderStatsModal.vue'),
+)
+const AdvancedSchedulerScoreModal = defineAsyncComponent(
+  () => import('@/views/admin/providers/operations/AdvancedSchedulerScoreModal.vue'),
+)
+const CodexInviteResetModal = defineAsyncComponent(
+  () => import('@/views/admin/providers/operations/CodexInviteResetModal.vue'),
+)
+const ScheduledTestsPanel = defineAsyncComponent(
+  () => import('@/views/admin/providers/testing/ScheduledTestsPanel.vue'),
+)
+const ErrorPassthroughRulesModal = defineAsyncComponent(
+  () => import('@/views/admin/providers/operations/ErrorPassthroughRulesModal.vue'),
+)
+const TLSFingerprintProfilesModal = defineAsyncComponent(
+  () => import('@/views/admin/providers/operations/TLSFingerprintProfilesModal.vue'),
+)
+const TLSFingerprintRoutersModal = defineAsyncComponent(
+  () => import('@/views/admin/providers/operations/TLSFingerprintRoutersModal.vue'),
+)
+
 // The translator and application store supply labels and notifications for page
 // actions, while domain controllers retain their own request state.
 const { t } = useI18n()
@@ -856,7 +914,7 @@ const appStore = useAppStore()
 // proxies and groups supply modal choices loaded independently after the first
 // list request starts, allowing either metadata source to fail separately.
 const proxies = ref<ProviderProxy[]>([])
-const groups = ref<AdminGroup[]>([])
+const groups = ref<AdminGroupSummary[]>([])
 // providerTableRef and dataTableRef connect swipe selection to the rendered
 // table and its virtualized row order.
 const providerTableRef = ref<HTMLElement | null>(null)
@@ -2657,7 +2715,7 @@ onMounted(async () => {
   load()
   const [proxiesResult, groupsResult] = await Promise.allSettled([
     adminAPI.proxies.getAll(),
-    adminAPI.groups.getAllIncludingInactive(),
+    adminAPI.groups.getOptions(true),
   ])
   if (proxiesResult.status === 'fulfilled') {
     proxies.value = proxiesResult.value
@@ -2688,6 +2746,36 @@ onUnmounted(() => {
   window.removeEventListener('resize', handleViewportResize)
   document.removeEventListener('click', handleClickOutside)
 })
+
+// openedDialogs records first use independently of current visibility. Retaining each
+// visited subtree keeps its draft and cleanup watchers available across later openings.
+const openedDialogs = reactive<Record<string, boolean>>({})
+watch(
+  () => ({
+    showDisplayOrder: showDisplayOrder.value,
+    showCreate: showCreate.value,
+    showEdit: showEdit.value,
+    showBulkEdit: showBulkEdit.value,
+    showSync: showSync.value,
+    showTempUnsched: showTempUnsched.value,
+    showImportData: showImportData.value,
+    showReAuth: showReAuth.value,
+    showTest: showTest.value,
+    showStats: showStats.value,
+    showAdvancedSchedulerScore: showAdvancedSchedulerScore.value,
+    showInviteReset: showInviteReset.value,
+    showSchedulePanel: showSchedulePanel.value,
+    showErrorPassthrough: showErrorPassthrough.value,
+    showTLSFingerprintProfiles: showTLSFingerprintProfiles.value,
+    showTLSFingerprintRouters: showTLSFingerprintRouters.value,
+  }),
+  (states) => {
+    for (const [name, open] of Object.entries(states)) {
+      if (open) openedDialogs[name] = true
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <style scoped>

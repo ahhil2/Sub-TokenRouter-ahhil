@@ -1527,7 +1527,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { COPY_FEEDBACK_MS } from '@/constants/ui'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
+import { keysAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/table/DataTable.vue'
@@ -2614,7 +2614,7 @@ const loadUserGroupRates = async () => {
 // current defaults in place.
 const loadPublicSettings = async () => {
   try {
-    publicSettings.value = await authAPI.getPublicSettings()
+    publicSettings.value = await appStore.fetchPublicSettings()
     if (!teamFeatureEnabled.value && scope.value === 'team') scope.value = 'personal'
   } catch (error) {
     // Leave settings and derived visibility defaults in place when retrieval
@@ -3350,7 +3350,7 @@ onMounted(async () => {
   resetTimer = setInterval(() => {
     now.value = new Date()
   }, 60000)
-  await loadPublicSettings()
+  void loadPublicSettings()
   await Promise.all([
     loadApiKeys(),
     loadGroups(),

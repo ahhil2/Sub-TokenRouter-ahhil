@@ -155,6 +155,7 @@ vi.mock('@/api', () => ({
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
+    fetchPublicSettings: getPublicSettings,
     showError,
     showSuccess,
   }),
@@ -491,13 +492,14 @@ describe('user KeysView column settings', () => {
     wrapper.unmount()
   })
 
-  // Initial public settings remain pending before the first key request can begin. The test
-  // protects the table loading state until setup and list retrieval produce real rows.
+  // Public settings stay pending while the independent key request begins. The table
+  // retains its loading display until key data arrives, then shows rows immediately.
   it('keeps the table loading until the first API key request completes', async () => {
-    let resolvePublicSettings!: (settings: Record<string, never>) => void
-    getPublicSettings.mockReturnValueOnce(
+    let resolveKeys!: (result: unknown) => void
+    getPublicSettings.mockReturnValueOnce(new Promise(() => {}))
+    listKeys.mockReturnValueOnce(
       new Promise((resolve) => {
-        resolvePublicSettings = resolve
+        resolveKeys = resolve
       }),
     )
 
@@ -506,9 +508,9 @@ describe('user KeysView column settings', () => {
 
     expect(wrapper.find('[data-test="table-loading"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="table-empty"]').exists()).toBe(false)
-    expect(listKeys).not.toHaveBeenCalled()
+    expect(listKeys).toHaveBeenCalledOnce()
 
-    resolvePublicSettings({})
+    resolveKeys({ items: [createApiKey()], total: 1, pages: 1 })
     await flushPromises()
     await nextTick()
 

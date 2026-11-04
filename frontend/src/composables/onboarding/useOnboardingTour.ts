@@ -1,6 +1,5 @@
 import { onMounted, onUnmounted, nextTick } from 'vue'
-import { driver, type Driver, type DriveStep } from 'driver.js'
-import 'driver.js/dist/driver.css'
+import type { Driver, DriveStep } from 'driver.js'
 import { useAuthStore as useUserStore } from '@/stores/auth'
 import { useOnboardingStore, type TeamGuideOptions } from '@/stores/onboarding'
 import { useI18n } from 'vue-i18n'
@@ -92,6 +91,9 @@ export function useOnboardingTour(options: OnboardingOptions) {
   } | null = null
   let autoStartTimer: ReturnType<typeof setTimeout> | null = null
   let globalKeyboardHandler: ((e: KeyboardEvent) => void) | null = null
+  // tourRequest selects the start allowed to attach a driver after resource imports
+  // or target discovery; unmount advances it before releasing the current tour.
+  let tourRequest = 0
 
   // getStorageKey builds a seen-marker key from the configured prefix, user, role,
   // and tour version. Anonymous sessions use guest identity, and absent role uses
@@ -148,12 +150,23 @@ export function useOnboardingTour(options: OnboardingOptions) {
   // destination page before locating its element, while interactive advancement
   // remembers its bound step across the delay. Completion marks the selected flow
   // as seen before driver destruction removes listeners and clears shared driver
-  // ownership.
+  // ownership. Resource imports and initial target discovery check the latest start
+  // generation before attaching a driver, so replaced or unmounted starts end quietly.
   const startTour = async (
     startIndex = 0,
     flow: 'default' | 'team' = 'default',
     teamOptions?: TeamGuideOptions,
   ) => {
+    const request = ++tourRequest
+    let driver: (typeof import('driver.js'))['driver']
+    try {
+      driver = (await import('driver.js')).driver
+      await import('driver.js/dist/driver.css')
+    } catch (error) {
+      console.error('Failed to load onboarding tour:', error)
+      return
+    }
+    if (request !== tourRequest) return
     // Resolve current role and membership when starting so the tour uses the
     // controls available to this user now.
     const isAdmin = userStore.user?.role === 'admin'
@@ -176,6 +189,9 @@ export function useOnboardingTour(options: OnboardingOptions) {
     if (currentStep?.element && typeof currentStep.element === 'string') {
       await ensureElement(currentStep.element, TIMING.ELEMENT_TIMEOUT_MS)
     }
+    // A newer tour or unmount invalidates work still waiting for resources or target
+    // elements; only the latest start may replace the attached driver instance.
+    if (request !== tourRequest) return
 
     // Destroy the previous driver before publishing its replacement so its target
     // and keyboard listeners are released through the existing destruction callback.
@@ -614,6 +630,7 @@ export function useOnboardingTour(options: OnboardingOptions) {
   })
 
   onUnmounted(() => {
+    tourRequest += 1
     if (autoStartTimer) {
       clearTimeout(autoStartTimer)
       autoStartTimer = null

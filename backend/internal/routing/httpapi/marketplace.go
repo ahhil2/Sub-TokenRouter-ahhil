@@ -44,16 +44,33 @@ func NewMarketplaceHandler(marketplace *routing.Marketplace, stats MarketplaceSt
 // ListPublic returns publicly visible model groups and their display data.
 // include_capacity defaults to true; false skips capacity aggregation, and an
 // invalid boolean returns INVALID_INCLUDE_CAPACITY before reading marketplace
-// groups.
+// groups. view=options returns group labels and model identifiers and disables
+// capacity aggregation after validating the boolean parameter.
 func (h *MarketplaceHandler) ListPublic(c *gin.Context) {
 	includeCapacity, err := strconv.ParseBool(c.DefaultQuery("include_capacity", "true"))
 	if err != nil {
 		httpx.ErrorFrom(c, apperror.BadRequest("INVALID_INCLUDE_CAPACITY", "include_capacity must be a boolean"))
 		return
 	}
+	optionsOnly := c.Query("view") == "options"
+	if optionsOnly {
+		includeCapacity = false
+	}
 	groups, err := h.marketplace.ListPublic(c.Request.Context(), routing.MarketplaceListOptions{IncludeCapacity: includeCapacity})
 	if err != nil {
 		httpx.ErrorFrom(c, err)
+		return
+	}
+	if optionsOnly {
+		options := make([]dto.ModelMarketplaceOptions, 0, len(groups))
+		for _, group := range groups {
+			item := dto.ModelMarketplaceOptions{ID: group.ID, Name: group.Name, Models: make([]dto.ModelMarketplaceOption, 0, len(group.Models))}
+			for _, model := range group.Models {
+				item.Models = append(item.Models, dto.ModelMarketplaceOption{ID: model.ID})
+			}
+			options = append(options, item)
+		}
+		httpx.Success(c, options)
 		return
 	}
 	httpx.Success(c, dto.ModelMarketplaceGroupsFromRouting(groups))

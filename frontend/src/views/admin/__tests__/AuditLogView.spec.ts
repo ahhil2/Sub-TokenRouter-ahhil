@@ -67,6 +67,7 @@ describe('audit route filters', () => {
     expect(select.get('option[value="mcp_token"]').text()).toBe('admin.mcp.authMethod')
     expect(api.list).toHaveBeenLastCalledWith(
       expect.objectContaining({ q: 'tr_mcp_first', auth_method: 'mcp_token' }),
+      expect.any(AbortSignal),
     )
     route.query = { q: 'tr_mcp_second', auth_method: 'jwt' }
     await flushPromises()
@@ -76,6 +77,7 @@ describe('audit route filters', () => {
     ).toBe('tr_mcp_second')
     expect(api.list).toHaveBeenLastCalledWith(
       expect.objectContaining({ q: 'tr_mcp_second', auth_method: 'jwt' }),
+      expect.any(AbortSignal),
     )
     route.query = {}
     await flushPromises()

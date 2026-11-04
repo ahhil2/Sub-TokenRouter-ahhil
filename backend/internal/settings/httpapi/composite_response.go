@@ -6,6 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 	"github.com/TokenFlux/TokenRouter/internal/settings/composite"
 	settingsdto "github.com/TokenFlux/TokenRouter/internal/settings/httpapi/dto"
+	"github.com/TokenFlux/TokenRouter/internal/site"
 	sitedto "github.com/TokenFlux/TokenRouter/internal/site/httpapi/dto"
 )
 
@@ -144,7 +145,7 @@ func buildSystemSettingsResponse(
 		SiteTexts:                                        settings.SiteTexts,
 		DefaultLocale:                                    settings.DefaultLocale,
 		SiteName:                                         settings.SiteName,
-		SiteLogo:                                         settings.SiteLogo,
+		SiteLogo:                                         site.LogoURL(settings.SiteLogo),
 		SiteSubtitle:                                     settings.SiteSubtitle,
 		APIBaseURL:                                       settings.APIBaseURL,
 		ContactInfo:                                      settings.ContactInfo,

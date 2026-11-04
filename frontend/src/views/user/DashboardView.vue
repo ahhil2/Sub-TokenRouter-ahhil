@@ -17,7 +17,9 @@
     >
       <UserDashboardUsageChart ref="usageChartRef" />
       <div class="dash-rise-item" :style="{ '--rise-i': 2 }">
-        <UserDashboardHeatmap ref="heatmapRef" @select-day="revealChart" />
+        <LazySection
+          ><UserDashboardHeatmap ref="heatmapRef" @select-day="revealChart"
+        /></LazySection>
       </div>
       <div
         class="dash-rise-item grid grid-cols-1 gap-4 lg:grid-cols-3"
@@ -33,7 +35,7 @@
 
 <script setup lang="ts">
 import { useLocaleRefresh } from '@/composables/useLocaleRefresh'
-import { onMounted, ref } from 'vue'
+import { defineAsyncComponent, onMounted, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAnnouncementStore } from '@/stores/announcements'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -42,7 +44,7 @@ import UserDashboardUsageToolbar from '@/components/user/dashboard/UserDashboard
 import UserDashboardLiveStats from '@/components/user/dashboard/UserDashboardLiveStats.vue'
 import { provideUsageChartState } from '@/components/user/dashboard/usageChartState'
 import { dashboardMotionVars } from '@/components/user/dashboard/dashboardMotion'
-import UserDashboardHeatmap from '@/components/user/dashboard/UserDashboardHeatmap.vue'
+import LazySection from '@/components/common/LazySection.vue'
 import UserDashboardAnnouncements from '@/components/user/dashboard/UserDashboardAnnouncements.vue'
 import UserDashboardQuickActions from '@/components/user/dashboard/UserDashboardQuickActions.vue'
 
@@ -57,6 +59,12 @@ import UserDashboardQuickActions from '@/components/user/dashboard/UserDashboard
 // keyboard navigation reach account tasks first. The desktop grid places the
 // announcements beside those actions, and initial section animations share the
 // timing variables supplied by the page root.
+
+// UserDashboardHeatmap loads its rendering module when the lower dashboard section
+// reaches its lazy mount threshold, keeping initial metrics independent of that panel.
+const UserDashboardHeatmap = defineAsyncComponent(
+  () => import('@/components/user/dashboard/UserDashboardHeatmap.vue'),
+)
 
 // Account and announcement stores support the page-wide refresh while each dashboard visual
 // section owns its displayed result state.

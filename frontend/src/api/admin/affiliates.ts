@@ -128,13 +128,16 @@ function recordParams(params: ListAffiliateRecordsParams = {}) {
  * listInviteRecords retrieves referral invitations using the shared record
  * filters. Omitted parameters select page one with twenty records, and empty
  * date, sorting or timezone filters are omitted by recordParams.
+ * An optional caller-owned signal cancels this HTTP request; rejection remains with
+ * the caller, which decides whether the requested data is still current.
  */
 export async function listInviteRecords(
   params: ListAffiliateRecordsParams = {},
+  signal?: AbortSignal,
 ): Promise<PaginatedResponse<AffiliateInviteRecord>> {
   const { data } = await apiClient.get<PaginatedResponse<AffiliateInviteRecord>>(
     '/admin/affiliates/invites',
-    { params: recordParams(params) },
+    { params: recordParams(params), signal },
   )
   return data
 }
@@ -143,13 +146,16 @@ export async function listInviteRecords(
  * listRebateRecords retrieves rebate ledger records using the shared query
  * normalization. Page and size default to one and twenty; empty date or ordering
  * values stay absent from the outgoing query.
+ * An optional caller-owned signal cancels this HTTP request; rejection remains with
+ * the caller, which decides whether the requested data is still current.
  */
 export async function listRebateRecords(
   params: ListAffiliateRecordsParams = {},
+  signal?: AbortSignal,
 ): Promise<PaginatedResponse<AffiliateRebateRecord>> {
   const { data } = await apiClient.get<PaginatedResponse<AffiliateRebateRecord>>(
     '/admin/affiliates/rebates',
-    { params: recordParams(params) },
+    { params: recordParams(params), signal },
   )
   return data
 }
@@ -158,13 +164,16 @@ export async function listRebateRecords(
  * listTransferRecords retrieves referral-credit transfers with the shared list
  * filters. Omitted parameters request the first twenty records, and recordParams
  * removes empty dates, sorting fields and timezone values before dispatch.
+ * An optional caller-owned signal cancels this HTTP request; rejection remains with
+ * the caller, which decides whether the requested data is still current.
  */
 export async function listTransferRecords(
   params: ListAffiliateRecordsParams = {},
+  signal?: AbortSignal,
 ): Promise<PaginatedResponse<AffiliateTransferRecord>> {
   const { data } = await apiClient.get<PaginatedResponse<AffiliateTransferRecord>>(
     '/admin/affiliates/transfers',
-    { params: recordParams(params) },
+    { params: recordParams(params), signal },
   )
   return data
 }

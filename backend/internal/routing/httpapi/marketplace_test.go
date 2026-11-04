@@ -53,6 +53,7 @@ func TestMarketplaceCapacityQuery(t *testing.T) {
 		{"", 200, 1},
 		{"?include_capacity=true", 200, 1},
 		{"?include_capacity=false", 200, 0},
+		{"?view=options", 200, 0},
 		{"?include_capacity=invalid", 400, 0},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
@@ -68,6 +69,9 @@ func TestMarketplaceCapacityQuery(t *testing.T) {
 				require.Contains(t, response.Body.String(), `"capacity":`)
 			} else {
 				require.NotContains(t, response.Body.String(), `"capacity":`)
+			}
+			if tc.query == "?view=options" {
+				require.NotContains(t, response.Body.String(), `"pricing"`)
 			}
 			if tc.status == 200 {
 				require.Contains(t, response.Body.String(), `"id":"model"`)

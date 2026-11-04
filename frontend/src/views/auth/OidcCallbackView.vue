@@ -261,7 +261,6 @@ import {
   completeOIDCOAuthRegistration,
   exchangePendingOAuthCompletion,
   getOAuthCompletionKind,
-  getPublicSettings,
   isOAuthLoginCompletion,
   login2FA,
   persistOAuthTokenContext,
@@ -489,7 +488,8 @@ useLocaleRefresh(loadProviderName)
 // refresh and callback processing to proceed independently.
 async function loadProviderName() {
   try {
-    const settings = await getPublicSettings()
+    const settings = await appStore.fetchPublicSettings()
+    if (!settings) return
     const name = settings.oidc_oauth_provider_name?.trim()
     if (name) {
       providerName.value = name

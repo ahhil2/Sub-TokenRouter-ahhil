@@ -40,7 +40,10 @@ const {
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     groups: {
-      list: listGroups,
+      getOptions: getAll,
+
+      listSummaries: listGroups,
+      getById: vi.fn(async () => structuredClone(sourceGroup)),
       duplicate: duplicateGroup,
       getModelsListCandidates,
       getUsageSummary,

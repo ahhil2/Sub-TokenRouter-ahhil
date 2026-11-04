@@ -891,3 +891,8 @@ func (s *authCacheInvalidatorStub) InvalidateAuthCacheByKey(_ context.Context, k
 // int64Ptr allocates an independent identifier pointer for administrative
 // binding inputs.
 func int64Ptr(value int64) *int64 { return &value }
+
+// HasBatchImageKey rejects unexpected capability reads in this unrelated service fixture.
+func (s *apiKeyRepoStubForGroupUpdate) HasBatchImageKey(context.Context, int64) (bool, error) {
+	panic("unexpected HasBatchImageKey call")
+}

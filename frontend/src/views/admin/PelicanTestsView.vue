@@ -241,14 +241,14 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import PelicanPreview from '@/components/pelican/PelicanPreview.vue'
-import { getAll, getModelsListCandidates } from '@/api/admin/groups'
+import { getOptions, getModelsListCandidates } from '@/api/admin/groups'
 import {
   pelicanApi,
   type PelicanTask,
   type PelicanResult,
   type PelicanTaskInput,
 } from '@/api/pelican'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 
 /**
  * PelicanTestsView.vue manages scheduled model drawing tasks and inspects their
@@ -259,7 +259,7 @@ import type { AdminGroup } from '@/api/groups.types'
 
 const { t } = useI18n()
 const tasks = ref<PelicanTask[]>([])
-const groups = ref<AdminGroup[]>([])
+const groups = ref<AdminGroupSummary[]>([])
 const models = ref<string[]>([])
 const results = ref<PelicanResult[]>([])
 const prompt = ref('')
@@ -429,7 +429,7 @@ async function detail(item: PelicanResult) {
 onMounted(async () => {
   void refresh()
   try {
-    groups.value = await getAll()
+    groups.value = await getOptions()
   } catch (value) {
     error.value = message(value)
   }

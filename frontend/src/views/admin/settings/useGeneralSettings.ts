@@ -4,9 +4,8 @@ import { newContentID, originalContent, resolveContent } from '@/i18n/content'
 import { getLocale } from '@/i18n'
 import { useI18n } from 'vue-i18n'
 import type { UsageRankingSortBy } from '@/api/admin/settings'
-import type { MarketplaceGroup } from '@/api/marketplace.types'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-import { getMarketplaceModels } from '@/api/marketplace'
+import { getMarketplaceModelOptions } from '@/api/marketplace'
 import type { SettingsForm } from './settingsState'
 import { tablePageSizeMin, tablePageSizeMax } from './settingsDefaults'
 
@@ -348,7 +347,7 @@ export function useGeneralSettings(form: GeneralSettingsForm) {
    */
   async function loadHomeFeaturedModelOptions() {
     try {
-      const groups: MarketplaceGroup[] = await getMarketplaceModels()
+      const groups = await getMarketplaceModelOptions()
       // value and label carry each choice; kind and disabled mark synthetic
       // group headers, which separate model choices while preventing header selection.
       const options: Array<{

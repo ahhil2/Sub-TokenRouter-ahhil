@@ -454,7 +454,7 @@ import {
   type ResolvedAttributes,
 } from '@/api/admin/modelAttributes'
 import { adminAPI } from '@/api/admin'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import { attributeCapabilities, type ModelAttributes } from '@/api/modelAttributes.types'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
@@ -516,7 +516,7 @@ const error = ref(''),
 const configs = ref<AttributeConfig[]>([]),
   defaults = ref<DefaultAttributes[]>([]),
   providers = ref<string[]>([])
-const groups = ref<AdminGroup[]>([])
+const groups = ref<AdminGroupSummary[]>([])
 // detail selects a catalog row for inspection, while deleting identifies the configuration
 // awaiting removal through the confirmation dialog.
 const detail = ref<DefaultAttributes | null>(null),
@@ -672,7 +672,7 @@ async function edit(config?: AttributeConfig) {
   for (const rule of form.value.rules) void loadRuleDefaults(rule)
   groupsLoading.value = true
   try {
-    groups.value = await adminAPI.groups.getAll()
+    groups.value = await adminAPI.groups.getOptions()
   } catch (cause) {
     formError.value = extractApiErrorMessage(cause, t('common.error'))
   } finally {

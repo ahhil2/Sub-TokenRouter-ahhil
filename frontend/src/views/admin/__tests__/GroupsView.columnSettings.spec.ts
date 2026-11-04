@@ -60,7 +60,9 @@ const messages: Record<string, string> = {
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     groups: {
-      list: listGroups,
+      getOptions: getAllGroups,
+
+      listSummaries: listGroups,
       getAll: getAllGroups,
       getModelsListCandidates,
       getUsageSummary,

@@ -416,6 +416,7 @@
 </template>
 
 <script setup lang="ts">
+import { useLatestRequest } from '@/composables/useLatestRequest'
 import RechargeBreakdown from '@/components/payment/RechargeBreakdown.vue'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -469,9 +470,9 @@ const appStore = useAppStore()
 // gateway amounts retain their own currency.
 const { formatBalanceAmount } = useBalanceDisplay()
 
-// ordersLoading reflects list request progress and is cleared when the active invocation
-// finishes its success or error handling.
-const ordersLoading = ref(false)
+// The latest read owns loading and publication; replacement or page disposal cancels
+// earlier requests so late responses and errors cannot replace the current display.
+const { loading: ordersLoading, run: runLatest } = useLatestRequest()
 // orders holds the latest successful list response; request failures retain these rows
 // while displaying an error message.
 const orders = ref<PaymentOrder[]>([])
@@ -559,22 +560,25 @@ function debounceLoadOrders() {
 // administrator API. Success replaces rows and total, while failure displays an error and
 // retains the previous list.
 async function loadOrders() {
-  ordersLoading.value = true
   try {
-    const res = await adminPaymentAPI.getOrders({
-      page: orderPagination.page,
-      page_size: orderPagination.page_size,
-      keyword: orderSearch.value || undefined,
-      status: orderFilters.status || undefined,
-      payment_type: orderFilters.payment_type || undefined,
-      order_type: orderFilters.order_type || undefined,
-    })
+    const res = await runLatest((signal) =>
+      adminPaymentAPI.getOrders(
+        {
+          page: orderPagination.page,
+          page_size: orderPagination.page_size,
+          keyword: orderSearch.value || undefined,
+          status: orderFilters.status || undefined,
+          payment_type: orderFilters.payment_type || undefined,
+          order_type: orderFilters.order_type || undefined,
+        },
+        signal,
+      ),
+    )
+    if (!res) return
     orders.value = res.data.items || []
     orderPagination.total = res.data.total || 0
   } catch (err: unknown) {
     appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
-  } finally {
-    ordersLoading.value = false
   }
 }
 

@@ -53,6 +53,9 @@ import { computed, onMounted } from 'vue'
 import AuthBackground from '@/components/auth/AuthBackground.vue'
 import { useAppStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
+import { useLightTheme } from '@/composables/useTheme'
+
+useLightTheme()
 
 // AuthLayout.vue frames authentication forms with site branding, a background, and
 // footer slots. Public settings determine the displayed name, sanitized logo, and

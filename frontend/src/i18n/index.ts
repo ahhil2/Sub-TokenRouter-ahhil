@@ -33,6 +33,13 @@ const catalogModules = import.meta.glob<{ default: LocaleMessages }>('./locales/
 const localeLoaders = Object.fromEntries(
   availableLocales.map((item) => [item.code, catalogModules[`./locales/${item.catalog}/index.ts`]]),
 )
+const authCatalogModules = import.meta.glob<{ default: LocaleMessages }>('./locales/*/auth.ts')
+const authLocaleLoaders = Object.fromEntries(
+  availableLocales.map((item) => [
+    item.code,
+    authCatalogModules[`./locales/${item.catalog}/auth.ts`],
+  ]),
+)
 
 // getLocaleStorage returns browser localStorage when access is available, or
 // null otherwise. Missing window objects and storage access exceptions permit
@@ -101,31 +108,83 @@ export const i18n = createI18n({
 // loadedLocales records catalogs already installed on i18n so later completed
 // language loads can reuse their messages.
 const loadedLocales = new Set<LocaleCode>()
+const loadedAuthLocales = new Set<LocaleCode>()
+const pendingMessages = new Map<string, Promise<void>>()
 
-// loadLocaleMessages installs the selected catalog unless it has already
-// finished loading. Missing loaders and failed imports reject the promise;
-// simultaneous initial calls may load the same catalog before either completes.
-export async function loadLocaleMessages(locale: LocaleCode): Promise<void> {
-  if (loadedLocales.has(locale)) {
+/**
+ * loadMessages installs one locale catalog and shares its pending import by scope.
+ * Completed full catalogs also satisfy authentication requests. Failed imports release
+ * pending state so later navigation can retry. Concurrent authentication and complete
+ * catalogs merge their keys, preventing a smaller late import from replacing already
+ * available console translations. The completed sets are updated only after installation,
+ * so readiness describes the messages actually registered with vue-i18n.
+ */
+async function loadMessages(locale: LocaleCode, scope: 'auth' | 'full'): Promise<void> {
+  if (loadedLocales.has(locale) || (scope === 'auth' && loadedAuthLocales.has(locale))) {
     return
   }
 
-  const loader = localeLoaders[locale]
+  const key = `${scope}:${locale}`
+  const pending = pendingMessages.get(key)
+  if (pending) return pending
+
+  const loader = (scope === 'auth' ? authLocaleLoaders : localeLoaders)[locale]
   if (!loader) throw new Error(`Missing language catalog: ${locale}`)
-  const module = await loader()
-  // Mark a catalog loaded only after its messages are installed, allowing failed
-  // imports to be retried by a later request.
-  i18n.global.setLocaleMessage(locale, module.default)
-  loadedLocales.add(locale)
+  const request = loader()
+    .then((module) => {
+      // Merge the smaller catalog into any concurrently completed full catalog so a
+      // late authentication load cannot remove console labels already available to navigation.
+      i18n.global.mergeLocaleMessage(locale, module.default)
+      loadedAuthLocales.add(locale)
+      if (scope === 'full') loadedLocales.add(locale)
+    })
+    .finally(() => {
+      pendingMessages.delete(key)
+    })
+  pendingMessages.set(key, request)
+  return request
+}
+/**
+ * loadLocaleMessages installs the complete locale catalog and returns its shared
+ * completion.
+ */
+export function loadLocaleMessages(locale: LocaleCode): Promise<void> {
+  return loadMessages(locale, 'full')
+}
+// AUTH_PATHS selects the smaller catalog before authentication page mounting; other
+// console routes require the complete catalog through the same shared loader.
+const AUTH_PATHS = new Set([
+  '/login',
+  '/register',
+  '/email-verify',
+  '/forgot-password',
+  '/reset-password',
+])
+
+/**
+ * loadRouteLocaleMessages prepares active and default-language messages before mounting.
+ * Authentication and legal routes use their smaller catalog. If the language changes
+ * while imports are pending, repeat preparation for the newly selected locale before
+ * allowing navigation to render translated content.
+ */
+export async function loadRouteLocaleMessages(path: string): Promise<void> {
+  const scope =
+    AUTH_PATHS.has(path) || path.startsWith('/auth/') || path.startsWith('/legal/')
+      ? 'auth'
+      : 'full'
+  let current: LocaleCode
+  do {
+    current = getLocale()
+    await Promise.all([loadMessages(DEFAULT_LOCALE, scope), loadMessages(current, scope)])
+  } while (current !== getLocale())
 }
 
 // initI18n loads the current and default catalogs before applying document
 // language metadata. Call it in a browser before rendering translated content;
 // catalog failures reject initialization and leave document metadata unapplied.
 export async function initI18n(): Promise<void> {
-  const current = getLocale()
-  await Promise.all([loadLocaleMessages(DEFAULT_LOCALE), loadLocaleMessages(current)])
-  applyDocumentLocale(current)
+  await loadRouteLocaleMessages(window.location.pathname)
+  applyDocumentLocale(getLocale())
 }
 
 // switchGeneration identifies the latest requested language switch and excludes
@@ -169,7 +228,8 @@ export async function setLocale(value: string, persistAccount = true): Promise<v
   // Advance ownership before loading catalogs so a slower earlier request cannot
   // publish after a newer requested language takes ownership.
   const generation = ++switchGeneration
-  await Promise.all([loadLocaleMessages(DEFAULT_LOCALE), loadLocaleMessages(locale)])
+  const scope = loadedLocales.size > 0 ? 'full' : 'auth'
+  await Promise.all([loadMessages(DEFAULT_LOCALE, scope), loadMessages(locale, scope)])
   if (generation !== switchGeneration) return
   i18n.global.locale.value = locale
   // Persist the browser preference before page metadata and refresh events so

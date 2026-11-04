@@ -93,7 +93,11 @@ func PrepareAdminSettings(settings *AdminSettings) (map[string]string, error) {
 	updates[SettingKeyLoginAgreementUpdatedAt] = settings.LoginAgreementUpdatedAt
 	updates[SettingKeyLoginAgreementDocuments] = loginAgreementDocumentsJSON
 	updates[SettingKeySiteName] = settings.SiteName
-	updates[SettingKeySiteLogo] = settings.SiteLogo
+	// Responses expose a version reference while storage retains inline image bytes.
+	// Omit that field on unchanged submissions so saving other settings keeps the image.
+	if !IsLogoReference(settings.SiteLogo) {
+		updates[SettingKeySiteLogo] = settings.SiteLogo
+	}
 	updates[SettingKeySiteSubtitle] = settings.SiteSubtitle
 	updates[SettingKeyAPIBaseURL] = settings.APIBaseURL
 	updates[SettingKeyContactInfo] = settings.ContactInfo

@@ -133,7 +133,7 @@ internal/ops internal/routing/provider internal/testutil/assertion internal/test
 internal/config internal/idempotency/httpapi internal/identity internal/identity/contact
 internal/identity/httpapi/authctx internal/infra/postgres/... internal/infra/telemetry/... internal/pkg/ internal/protocol
 internal/routing internal/routing/accessview internal/routing/capability internal/routing/modelmap
-internal/server/httpx internal/team internal/usage/postgres/query`, Tests: `internal/creative internal/routing/httpapi/dto internal/scheduler internal/testutil/rediscontainer
+internal/server/httpx internal/team internal/usage/postgres/query`, Tests: `internal/creative internal/routing/httpapi/dto internal/scheduler internal/testutil/rediscontainer internal/testutil/postgrescontainer
 migrations`},
 		"internal/audit": {Production: `internal/server/adminapi internal/audit/... internal/identity/httpapi internal/identity/httpapi/authctx
 internal/infra/postgres/... internal/infra/telemetry/... internal/pkg/ internal/server/httpx
@@ -430,6 +430,7 @@ internal/upstream/zhipu/...`, Tests: ""},
 		{Scope: "internal/provider", Imports: "internal/provider/provider", Files: "admin_edit_external_test.go helpers_external_test.go shadow_external_test.go"},
 		{Scope: "internal/apikey", Imports: "internal/apikey/postgres", Files: "admin_external_test.go"},
 		{Scope: "internal/apikey/postgres", Imports: "internal/billing/postgres internal/usage/postgres/query", Files: "key_store.go"},
+		{Scope: "internal/apikey/postgres", Imports: "internal/testutil/postgrescontainer", Files: "key_store_integration_test.go"},
 		{Scope: "internal/backup", Imports: "internal/backup/provider internal/infra/postgres", Files: "backup_external_test.go"},
 		{Scope: "internal/batchimage", Imports: "internal/batchimage/provider", Files: "cleanup_test.go helpers_test.go job_lifecycle_scenario_test.go processor_test.go public_test.go settlement_test.go"},
 		{Scope: "internal/batchimage", Imports: "internal/billing/provider", Files: "public_test.go"},

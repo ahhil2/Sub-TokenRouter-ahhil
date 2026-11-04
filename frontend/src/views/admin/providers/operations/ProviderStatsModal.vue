@@ -707,19 +707,6 @@ const lineChartOptions = computed(() => ({
   },
 }))
 
-// Opening fetches statistics for the selected provider; hiding clears the display while the
-// request itself follows its normal completion path.
-watch(
-  () => props.show,
-  async (newVal) => {
-    if (newVal && props.provider) {
-      await loadStats()
-    } else {
-      stats.value = null
-    }
-  },
-)
-
 /**
  * loadStats fetches thirty days of statistics for the selected provider. Failure clears the
  * previous response and logs the error; loading state clears after either successful or failed
@@ -803,4 +790,18 @@ const formatDuration = (ms: number): string => {
   }
   return `${Math.round(ms)}ms`
 }
+
+// Fetch statistics on first visible mount and later openings. Hiding clears displayed
+// values while an already dispatched statistics request follows its completion path.
+watch(
+  () => props.show,
+  async (newVal) => {
+    if (newVal && props.provider) {
+      await loadStats()
+    } else {
+      stats.value = null
+    }
+  },
+  { immediate: true },
+)
 </script>

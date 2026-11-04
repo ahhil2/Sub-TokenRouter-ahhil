@@ -82,7 +82,7 @@ vi.mock('@/api/admin', () => ({
       searchUsers: (...args: any[]) => mockSearchUsers(...args),
       searchApiKeys: (...args: any[]) => mockSearchApiKeys(...args),
     },
-    groups: { list: (...args: any[]) => mockGroupsList(...args) },
+    groups: { listSummaries: (...args: any[]) => mockGroupsList(...args) },
     teams: { list: (...args: any[]) => mockTeamsList(...args) },
     dashboard: { getModelStats: (...args: any[]) => mockGetModelStats(...args) },
     providers: { list: (...args: any[]) => mockProvidersList(...args) },

@@ -822,8 +822,7 @@ function openReadStatus(row: Announcement) {
 // Load plan choices before the initial announcement page so targeting controls have
 // their available options after initialization completes.
 onMounted(async () => {
-  await loadSubscriptionPlans()
-  await loadAnnouncements()
+  await Promise.all([loadSubscriptionPlans(), loadAnnouncements()])
 })
 
 // Cancel delayed searching and abort the active list request so page teardown cannot

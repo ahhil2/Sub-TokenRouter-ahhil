@@ -1,5 +1,6 @@
 <template>
   <SettingsCard
+    v-if="visitedGatewaySections.has('anthropic')"
     v-show="activeGatewaySection === 'anthropic'"
     v-content-reveal="activeGatewaySection === 'anthropic'"
     data-testid="gateway-card-claude-code"
@@ -42,6 +43,7 @@
 
   <!-- Ollama Cloud polling and usage refresh controls. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('ollamaCloud')"
     v-show="activeGatewaySection === 'ollamaCloud'"
     v-content-reveal="activeGatewaySection === 'ollamaCloud'"
     data-testid="ollama-cloud-usage-global-settings"
@@ -102,6 +104,7 @@
 
   <!-- General scheduling and latency measurement controls. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('general')"
     v-show="activeGatewaySection === 'general'"
     v-content-reveal="activeGatewaySection === 'general'"
     data-testid="gateway-card-scheduling"
@@ -369,6 +372,7 @@
 
   <!-- OpenAI quota exhaustion thresholds. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('openai')"
     v-show="activeGatewaySection === 'openai'"
     v-content-reveal="activeGatewaySection === 'openai'"
     data-testid="gateway-card-openai-scheduling"
@@ -419,6 +423,7 @@
 
   <!-- Grok default model and endpoint controls. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('grok')"
     v-show="activeGatewaySection === 'grok'"
     v-content-reveal="activeGatewaySection === 'grok'"
     data-testid="gateway-forwarding-grok"
@@ -467,6 +472,7 @@
 
   <!-- Anthropic forwarding and prompt injection controls. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('anthropic')"
     v-show="activeGatewaySection === 'anthropic'"
     v-content-reveal="activeGatewaySection === 'anthropic'"
     data-testid="gateway-forwarding-anthropic"
@@ -552,6 +558,7 @@
 
   <!-- Antigravity client identity controls. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('antigravity')"
     v-show="activeGatewaySection === 'antigravity'"
     v-content-reveal="activeGatewaySection === 'antigravity'"
     data-testid="gateway-forwarding-antigravity"
@@ -580,11 +587,13 @@
   </SettingsCard>
 
   <ResponsesWSSettings
+    v-if="visitedGatewaySections.has('openai')"
     v-show="activeGatewaySection === 'openai'"
     v-content-reveal="activeGatewaySection === 'openai'"
   />
   <!-- OpenAI and Codex client forwarding controls. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('openai')"
     v-show="activeGatewaySection === 'openai'"
     v-content-reveal="activeGatewaySection === 'openai'"
     data-testid="gateway-forwarding-openai"
@@ -619,6 +628,7 @@
 
   <!-- User prompt replacement rules shared across platforms. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('general')"
     v-show="activeGatewaySection === 'general'"
     v-content-reveal="activeGatewaySection === 'general'"
     data-testid="gateway-card-user-prompt-replacement"
@@ -747,10 +757,15 @@
   </SettingsCard>
 
   <!-- The global save sequence submits search emulation through its dedicated endpoint. -->
-  <WebSearchSettings :controller="webSearch" :active-gateway-section="activeGatewaySection" />
+  <WebSearchSettings
+    v-if="visitedGatewaySections.has('anthropic')"
+    :controller="webSearch"
+    :active-gateway-section="activeGatewaySection"
+  />
 
   <!-- Usage record visibility for users. -->
   <SettingsCard
+    v-if="visitedGatewaySections.has('general')"
     v-show="activeGatewaySection === 'general'"
     v-content-reveal="activeGatewaySection === 'general'"
     data-testid="gateway-card-usage-records"
@@ -769,8 +784,8 @@
 </template>
 
 <script setup lang="ts">
+import { defineAsyncComponent } from 'vue'
 import { vContentReveal } from '@/directives/contentReveal'
-import ResponsesWSSettings from '@/views/admin/settings/ResponsesWSSettings.vue'
 import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
 import Collapse from '@/components/common/Collapse.vue'
 import SettingRow from '@/components/common/settings/SettingRow.vue'
@@ -799,11 +814,19 @@ import type { useWebSearchSettings } from './useWebSearchSettings'
  */
 // controller and form refer to the page-owned gateway actions and bulk draft, while
 // webSearch holds the separate search draft. activeGatewaySection changes visibility;
-// all nested editors remain mounted so their save registration and local state survive.
+// visited editors remain mounted so their save registration and local state survive.
+// ResponsesWSSettings defers its separate settings editor until the owning panel mounts.
+const ResponsesWSSettings = defineAsyncComponent(
+  () => import('@/views/admin/settings/ResponsesWSSettings.vue'),
+)
+
 const props = defineProps<{
   controller: ReturnType<typeof useGatewaySettings> // Page-owned gateway actions and state.
   form: GatewaySettingsForm // Shared editable gateway field references.
   activeGatewaySection: GatewaySection // Current visible gateway category.
+  // Membership persists across navigation so a visited editor retains its unsaved
+  // state and save registration while another gateway section is visible.
+  visitedGatewaySections: ReadonlySet<GatewaySection> // Previously opened gateway sections.
   webSearch: ReturnType<typeof useWebSearchSettings> // Search draft and dedicated endpoint actions.
 }>()
 // Template bindings retain the controller refs, so edits participate in the page save snapshots.

@@ -46,12 +46,13 @@ func FlattenResponsesNamespaces(req map[string]any) (map[string]ResponsesNamespa
 //
 // Names are checked against top-level function/custom tools and other
 // namespace identities before mutation, because one flat function name cannot
-// restore two different calls. flattenNamespaceToolName shortens oversized
-// joined names with a hash suffix, so restoration uses the returned identity
-// pairs. Emitted children are shallow copies, while direct input calls and
-// tool choice are rewritten in place. A removed namespace-group choice becomes
-// auto; callers validate malformed declarations before relying on complete
-// reverse mapping.
+// restore two different calls. Matching declarations may differ in tool-level
+// description; the direct declaration wins, otherwise the first child wins.
+// flattenNamespaceToolName shortens oversized joined names with a hash suffix,
+// so restoration uses the returned identity pairs. Emitted children are shallow
+// copies. Direct input calls and tool choice are rewritten in place. A removed
+// namespace-group choice becomes auto; callers validate malformed declarations
+// before relying on complete reverse mapping.
 func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]bool) (map[string]ResponsesNamespaceName, bool, error) {
 	if req == nil {
 		return nil, false, nil
@@ -70,7 +71,7 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 		typ := strings.TrimSpace(stringValue(tool["type"]))
 		name := strings.TrimSpace(stringValue(tool["name"]))
 		if (typ == "function" || typ == "custom") && name != "" {
-			topLevel[name] = tool
+			topLevel[name] = responsesToolDeclarationForComparison(tool)
 		}
 	}
 
@@ -96,20 +97,24 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 			}
 			flat := flattenNamespaceToolName(namespace, name)
 			entry := ResponsesNamespaceName{Namespace: namespace, Name: name}
+			// Default functions and top-level tools share one client identity, so their
+			// restored calls omit the redundant namespace even when declarations repeat.
 			if entry.Namespace == responsesDefaultToolNamespace {
 				entry.Namespace = ""
 			}
+			declaration := responsesToolDeclarationForComparison(child)
 			// Check conflicts before publishing new declarations or changing history.
 			// Equivalent default-scoped declarations share the direct identity. Different
-			// kinds or definitions must fail before one name can select the wrong tool.
-			if direct, exists := topLevel[flat]; exists && (entry.Namespace != "" || !reflect.DeepEqual(direct, child)) {
+			// execution fields fail before one name can select the wrong tool; descriptions
+			// can vary between repeated declarations of that same executable.
+			if direct, exists := topLevel[flat]; exists && (entry.Namespace != "" || !reflect.DeepEqual(direct, declaration)) {
 				return nil, false, fmt.Errorf("namespace tool %q/%q flattens to %q which conflicts with a top-level tool of the same name; this upstream cannot disambiguate them, rename one of the tools", namespace, name, flat)
 			}
-			if prev, exists := names[flat]; exists && (prev != entry || !reflect.DeepEqual(declarations[flat], child)) {
+			if prev, exists := names[flat]; exists && (prev != entry || !reflect.DeepEqual(declarations[flat], declaration)) {
 				return nil, false, fmt.Errorf("namespace tools %q/%q and %q/%q both flatten to %q; this upstream cannot disambiguate them, rename one of the tools", prev.Namespace, prev.Name, namespace, name, flat)
 			}
 			names[flat] = entry
-			declarations[flat] = child
+			declarations[flat] = declaration
 		}
 	}
 	if len(names) == 0 {
@@ -118,6 +123,8 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 
 	flattened := make([]any, 0, len(tools)+len(names))
 	seen := make(map[string]bool)
+	// Reserve direct names before emitting children so a default namespace group
+	// appearing earlier cannot replace the selected top-level declaration or its help text.
 	for name := range topLevel {
 		seen[name] = true
 	}
@@ -164,6 +171,19 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 		}
 	}
 	return names, true, nil
+}
+
+// responsesToolDeclarationForComparison copies the fields used to compare
+// repeated executable declarations. Tool-level descriptions can differ between
+// static declarations and history, so they are excluded from comparison.
+// Other fields, including nested schema descriptions, remain significant.
+// Nested values share storage and callers leave them unchanged.
+func responsesToolDeclarationForComparison(tool map[string]any) map[string]any {
+	comparison := copyClientTool(tool)
+	// Remove help text from this comparison copy so the selected declaration
+	// retains its supplied description when it is later sent upstream.
+	delete(comparison, "description")
+	return comparison
 }
 
 // RestoreResponsesNamespaceCalls restores mapped function and custom call names

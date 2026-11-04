@@ -1103,6 +1103,118 @@ func TestAdaptResponsesNamespaceCustomDeclarations(t *testing.T) {
 	}
 }
 
+// TestResponsesToolDescriptionDuplicates repeats executable declarations with
+// different help text across static and historical sources. Responses and Chat
+// conversion must emit one executable and retain its choice, replay, and reply identity.
+func TestResponsesToolDescriptionDuplicates(t *testing.T) {
+	for _, kind := range []string{"function", "custom"} {
+		for _, source := range []string{"same_group", "repeated_group", "top_level_first", "top_level_last", "additional_tools", "tool_search", "missing_description"} {
+			t.Run(kind+"/"+source, func(t *testing.T) {
+				current := map[string]any{"type": kind, "name": "exec", "description": "Current help"}
+				callType := "function_call"
+				if kind == "custom" {
+					callType = "custom_tool_call"
+				}
+				call := map[string]any{"type": callType, "name": "exec", "namespace": "functions", "call_id": "old"}
+				arguments := `{"command":"pwd"}`
+				if kind == "function" {
+					current["parameters"] = map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}}}
+					call["arguments"] = arguments
+				} else {
+					current["format"] = map[string]any{"type": "text"}
+					call["input"] = "pwd"
+					arguments = `{"input":"pwd"}`
+				}
+				duplicate := copyClientTool(current)
+				duplicate["description"] = "Earlier help"
+				group := map[string]any{"type": "namespace", "name": "functions", "tools": []any{current}}
+				repeated := map[string]any{"type": "namespace", "name": "functions", "children": []any{duplicate}}
+				declarations := []any{group}
+				input := []any{}
+				switch source {
+				case "same_group":
+					group["tools"] = []any{current, duplicate}
+				case "repeated_group":
+					declarations = append(declarations, repeated)
+				case "top_level_first":
+					declarations = []any{current, repeated}
+				case "top_level_last":
+					declarations = []any{repeated, current}
+				case "additional_tools":
+					input = append(input, map[string]any{"type": "additional_tools", "tools": []any{repeated}})
+				case "tool_search":
+					declarations = append(declarations, map[string]any{"type": "tool_search"})
+					input = append(input,
+						map[string]any{"type": "tool_search_call", "call_id": "search", "arguments": map[string]any{}},
+						map[string]any{"type": "tool_search_output", "call_id": "search", "status": "completed", "tools": []any{repeated}},
+					)
+				case "missing_description":
+					delete(duplicate, "description")
+					declarations = append(declarations, repeated)
+				}
+				input = append(input, call, map[string]any{"type": callType + "_output", "call_id": "old", "output": "/work"})
+				body, err := json.Marshal(map[string]any{
+					"model": "test-model", "tools": declarations, "input": input,
+					"tool_choice": map[string]any{"type": kind, "namespace": "functions", "name": "exec"},
+				})
+				require.NoError(t, err)
+
+				converted, mapping, err := AdaptOpenAIResponsesClientToolsWithMapping(body, ResponsesClientToolMapping{})
+				require.NoError(t, err)
+				executables := gjson.GetBytes(converted, `tools.#(name=="exec")#`).Array()
+				require.Len(t, executables, 1)
+				require.Equal(t, "Current help", executables[0].Get("description").String())
+				require.Equal(t, "exec", gjson.GetBytes(converted, "tool_choice.name").String())
+				require.False(t, gjson.GetBytes(converted, "tool_choice.namespace").Exists())
+				replayed := gjson.GetBytes(converted, `input.#(call_id=="old")`)
+				require.Equal(t, "exec", replayed.Get("name").String())
+				require.False(t, replayed.Get("namespace").Exists())
+				require.JSONEq(t, arguments, replayed.Get("arguments").String())
+				reply, err := json.Marshal(map[string]any{"output": []any{map[string]any{
+					"type": "function_call", "name": "exec", "call_id": "next", "arguments": arguments,
+				}}})
+				require.NoError(t, err)
+				restored, _, err := RestoreResponsesClientToolPayload(reply, mapping)
+				require.NoError(t, err)
+				require.Equal(t, callType, gjson.GetBytes(restored, "output.0.type").String())
+				require.Equal(t, "exec", gjson.GetBytes(restored, "output.0.name").String())
+				require.Equal(t, "next", gjson.GetBytes(restored, "output.0.call_id").String())
+				require.False(t, gjson.GetBytes(restored, "output.0.namespace").Exists())
+				if kind == "custom" {
+					require.Equal(t, "pwd", gjson.GetBytes(restored, "output.0.input").String())
+				}
+
+				var request ResponsesRequest
+				require.NoError(t, json.Unmarshal(body, &request))
+				chat, chatMapping, err := ResponsesToChatCompletionsRequestWithMapping(&request, nil)
+				require.NoError(t, err)
+				count := 0
+				for _, tool := range chat.Tools {
+					if tool.Function != nil && tool.Function.Name == "exec" {
+						count++
+						require.Equal(t, "Current help", tool.Function.Description)
+					}
+				}
+				require.Equal(t, 1, count)
+				require.JSONEq(t, `{"type":"function","function":{"name":"exec"}}`, string(chat.ToolChoice))
+				found := false
+				for _, message := range chat.Messages {
+					for _, replayed := range message.ToolCalls {
+						if replayed.ID == "old" {
+							found = true
+							require.Equal(t, "exec", replayed.Function.Name)
+							require.JSONEq(t, arguments, replayed.Function.Arguments)
+						}
+					}
+				}
+				require.True(t, found)
+				require.Equal(t, mapping.NamespaceTools["exec"], chatMapping.NamespaceTools["exec"])
+				require.Equal(t, mapping.CustomTools["exec"], chatMapping.CustomTools["exec"])
+			})
+		}
+	}
+}
+
 // TestAdaptResponsesDefaultNamespaceDuplicates admits equivalent default declarations once.
 // Different schemas and colliding explicit namespaces must still fail before conversion can select an ambiguous executable identity.
 func TestAdaptResponsesDefaultNamespaceDuplicates(t *testing.T) {

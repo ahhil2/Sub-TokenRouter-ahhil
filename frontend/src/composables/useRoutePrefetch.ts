@@ -1,10 +1,13 @@
 import { ref, readonly } from 'vue'
+import { hasPendingRequests } from '@/api/client'
 import type { RouteLocationNormalized, Router } from 'vue-router'
 
 // useRoutePrefetch.ts schedules adjacent route component imports during browser idle time.
 // Its adjacency table contains route paths, and import functions are resolved from the
-// supplied router when work actually runs. A new trigger replaces the pending idle
-// callback while already dispatched imports continue independently.
+// supplied router when work actually runs. A one-second delay lets page requests
+// register before idle admission, which waits again while API requests are pending.
+// Hidden pages and restricted connections skip speculative work. A new trigger
+// replaces pending scheduling while dispatched imports continue independently.
 //
 // Completed import batches mark the originating route as processed, including batches
 // whose individual import failures were caught. That set suppresses later scheduling for
@@ -31,35 +34,18 @@ const PREFETCH_ADJACENCY: Record<string, string[]> = {
   '/profile': ['/dashboard', '/keys'],
 }
 
-// IdleCallbackHandle holds either a native idle callback or timer handle.
-type IdleCallbackHandle = number | ReturnType<typeof setTimeout>
-
-// scheduleIdleCallback schedules browser-idle work and returns its cancellation handle.
-// Browsers without requestIdleCallback use a one-second timer and a synthetic deadline;
-// native options apply only to the browser API path.
-const scheduleIdleCallback = (
-  callback: IdleRequestCallback,
-  options?: IdleRequestOptions,
-): IdleCallbackHandle => {
+/**
+ * scheduleIdleCallback returns cancellation for an idle callback or delayed timer.
+ * Browsers without idle scheduling wait one second; the owner must invoke the returned
+ * function when queued work becomes obsolete.
+ */
+function scheduleIdleCallback(callback: () => void): () => void {
   if (typeof window.requestIdleCallback === 'function') {
-    return window.requestIdleCallback(callback, options)
+    const handle = window.requestIdleCallback(callback)
+    return () => window.cancelIdleCallback(handle)
   }
-  // Browsers without idle scheduling defer imports through a timer; the synthetic deadline
-  // satisfies the callback interface without measuring idle time.
-  return setTimeout(() => {
-    callback({ didTimeout: false, timeRemaining: () => 50 })
-  }, 1000)
-}
-
-// cancelScheduledCallback cancels an idle callback or timer using the available browser
-// API. It assumes the browser capabilities remain compatible with those used when the
-// handle was created.
-const cancelScheduledCallback = (handle: IdleCallbackHandle): void => {
-  if (typeof window.cancelIdleCallback === 'function' && typeof handle === 'number') {
-    window.cancelIdleCallback(handle)
-  } else {
-    clearTimeout(handle)
-  }
+  const handle = setTimeout(callback, 1000)
+  return () => clearTimeout(handle)
 }
 
 // useRoutePrefetch returns a route-prefetch scheduler using the optional router's lazy
@@ -71,10 +57,9 @@ const cancelScheduledCallback = (handle: IdleCallbackHandle): void => {
 // fail. Reset clears completed origins but cannot stop active imports from recording
 // completion later, so its effects concern currently retained scheduler state.
 export function useRoutePrefetch(router?: Router) {
-  // pendingPrefetchHandle owns queued idle work, while prefetchedRoutes records completed
-  // originating routes; already dispatched imports can update that set after cancellation
-  // or reset.
-  const pendingPrefetchHandle = ref<IdleCallbackHandle | null>(null)
+  // The cancellation handle follows the currently scheduled delay or idle callback.
+  // Replacing navigation cancels that phase before admitting another prefetch request.
+  let cancelScheduledPrefetch: (() => void) | undefined
 
   const prefetchedRoutes = ref<Set<string>>(new Set())
 
@@ -123,10 +108,8 @@ export function useRoutePrefetch(router?: Router) {
   // handle. It is safe when nothing is scheduled and has no effect on imports already
   // dispatched.
   const cancelPendingPrefetch = (): void => {
-    if (pendingPrefetchHandle.value !== null) {
-      cancelScheduledCallback(pendingPrefetchHandle.value)
-      pendingPrefetchHandle.value = null
-    }
+    cancelScheduledPrefetch?.()
+    cancelScheduledPrefetch = undefined
   }
 
   // triggerPrefetch replaces pending idle work with imports adjacent to the supplied
@@ -146,29 +129,53 @@ export function useRoutePrefetch(router?: Router) {
     const prefetchPaths = getPrefetchPaths(route)
     if (prefetchPaths.length === 0) return
 
-    pendingPrefetchHandle.value = scheduleIdleCallback(
-      () => {
-        pendingPrefetchHandle.value = null
-
-        const routePath = route.path
-        if (prefetchedRoutes.value.has(routePath)) return
-
-        const importFns: ComponentImportFn[] = []
-        for (const path of prefetchPaths) {
-          const importFn = getComponentImporter(path)
-          if (importFn) {
-            importFns.push(importFn)
-          }
+    const connection = (
+      navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }
+    ).connection
+    if (connection?.saveData || ['slow-2g', '2g', '3g'].includes(connection?.effectiveType ?? ''))
+      return
+    // schedule admits this route's imports after an idle check. Hidden pages and
+    // changed routes stop the attempt; active API requests defer another admission.
+    // Completed import wrappers record the origin even when an individual import
+    // fails, preventing repeated speculative attempts until scheduler reset.
+    //
+    // The cancellation handle follows the current timer or idle callback. Imports
+    // already dispatched remain outside that cancellation scope and may finish
+    // after reset, so their completion can record the originating route again.
+    const schedule = () => {
+      cancelScheduledPrefetch = scheduleIdleCallback(() => {
+        cancelScheduledPrefetch = undefined
+        if (
+          document.visibilityState === 'hidden' ||
+          (router && router.currentRoute.value.path !== route.path)
+        )
+          return
+        if (hasPendingRequests()) {
+          delaySchedule()
+          return
         }
+        if (prefetchedRoutes.value.has(route.path)) return
 
+        const importFns = prefetchPaths
+          .map(getComponentImporter)
+          .filter((fn): fn is ComponentImportFn => fn !== null)
         if (importFns.length > 0) {
-          Promise.all(importFns.map(prefetchComponent)).then(() => {
-            prefetchedRoutes.value.add(routePath)
+          void Promise.all(importFns.map(prefetchComponent)).then(() => {
+            prefetchedRoutes.value.add(route.path)
           })
         }
-      },
-      { timeout: 2000 },
-    )
+      })
+    }
+    // delaySchedule waits one second before requesting idle admission. It replaces
+    // the cancellation handle with the new timer so navigation or disposal can stop
+    // work before any component import begins.
+    const delaySchedule = () => {
+      const handle = setTimeout(schedule, 1000)
+      cancelScheduledPrefetch = () => clearTimeout(handle)
+    }
+    // Page queries begin after successful navigation, so delay admission until mounting
+    // can register those requests before the idle callback checks network activity.
+    delaySchedule()
   }
 
   // resetPrefetchState cancels scheduled idle work and clears recorded origin paths.

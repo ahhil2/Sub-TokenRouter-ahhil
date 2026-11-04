@@ -111,10 +111,13 @@ describe('AdminPaymentDashboardView', () => {
     const start = new Date()
     start.setDate(start.getDate() - 29)
 
-    expect(mockGetDashboard).toHaveBeenCalledWith({
-      start_date: formatLocalDate(start),
-      end_date: formatLocalDate(now),
-    })
+    expect(mockGetDashboard).toHaveBeenCalledWith(
+      {
+        start_date: formatLocalDate(start),
+        end_date: formatLocalDate(now),
+      },
+      expect.any(AbortSignal),
+    )
   })
 
   // The date picker emits a new concrete start and end date. The dashboard must reload
@@ -126,9 +129,12 @@ describe('AdminPaymentDashboardView', () => {
     await wrapper.find('.date-range-picker').trigger('click')
     await flushPromises()
 
-    expect(mockGetDashboard).toHaveBeenLastCalledWith({
-      start_date: '2026-05-01',
-      end_date: '2026-05-09',
-    })
+    expect(mockGetDashboard).toHaveBeenLastCalledWith(
+      {
+        start_date: '2026-05-01',
+        end_date: '2026-05-09',
+      },
+      expect.any(AbortSignal),
+    )
   })
 })

@@ -114,14 +114,14 @@
       </div>
 
       <!-- Alert Events -->
-      <OpsAlertEventsCard v-if="opsEnabled && showAlertEvents && !(loading && !hasLoadedOnce)" />
+      <LazySection v-if="opsEnabled && showAlertEvents && !(loading && !hasLoadedOnce)">
+        <OpsAlertEventsCard />
+      </LazySection>
 
       <!-- System Logs -->
-      <OpsSystemLogTable
-        v-if="opsEnabled && !(loading && !hasLoadedOnce)"
-        :platform-filter="platform"
-        :refresh-token="dashboardRefreshToken"
-      />
+      <LazySection v-if="opsEnabled && !(loading && !hasLoadedOnce)">
+        <OpsSystemLogTable :platform-filter="platform" :refresh-token="dashboardRefreshToken" />
+      </LazySection>
 
       <!-- Settings Dialog (hidden in fullscreen mode) -->
       <template v-if="!isFullscreen">
@@ -184,6 +184,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import LazySection from '@/components/common/LazySection.vue'
 import { adminAPI } from '@/api'
 import {
   opsAPI,
@@ -653,7 +654,7 @@ async function loadDashboardAdvancedSettings() {
 // currently selected filter value untouched.
 async function loadGroups() {
   try {
-    const list = await adminAPI.groups.getAll()
+    const list = await adminAPI.groups.getOptions()
     groups.value = list.map((group) => ({ id: group.id, name: group.name }))
   } catch (err) {
     // Clear unavailable group choices after a failed lookup while retaining
@@ -1240,14 +1241,16 @@ onMounted(async () => {
   // Load thresholds configuration
   loadThresholds()
 
-  // Group choices and presentation settings are independent reads; both settle
-  // before the initial dashboard request uses their state.
-  await Promise.all([loadDashboardAdvancedSettings(), loadGroups()])
+  // Group choices and display preferences settle independently of dashboard measurements,
+  // allowing primary metrics to appear while optional selector metadata is still loading.
+  void loadGroups()
+  const settingsRequest = loadDashboardAdvancedSettings()
 
   if (opsEnabled.value) {
     await fetchData()
   }
 
+  await settingsRequest
   // Start auto refresh if enabled
   if (autoRefreshEnabled.value) {
     resumeCountdown()

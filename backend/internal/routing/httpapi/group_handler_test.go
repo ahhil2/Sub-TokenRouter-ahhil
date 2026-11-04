@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,11 +31,10 @@ type groupAdminFixture struct {
 	// GroupAdministration provides promoted methods that this fixture does not
 	// implement; the embedded interface remains nil, so those methods cannot be
 	// called.
-	GroupAdministration // unused embedded administration methods
-	// groups is returned directly by fixture list methods; readers share its
-	// backing storage and keep it unchanged during these endpoint tests.
-	groups        []routing.Group // shared fixture group records
-	getGroupCalls int             // observed group-detail read count
+	GroupAdministration  // unused embedded administration methods
+	groups               []routing.Group
+	getGroupCalls        int
+	includeInactiveCalls int
 }
 
 // duplicateGroupAdminServiceStub records duplication identity and exposes a
@@ -406,6 +406,7 @@ func (s *groupAdminFixture) GetAllGroupsByPlatform(ctx context.Context, platform
 // the administrative query. It shares the same storage as ordinary fixture
 // list reads and performs no independent status selection.
 func (s *groupAdminFixture) GetAllGroupsIncludingInactive(ctx context.Context) ([]routing.Group, error) {
+	s.includeInactiveCalls++
 	return s.groups, nil
 }
 
@@ -413,6 +414,11 @@ func (s *groupAdminFixture) GetAllGroupsIncludingInactive(ctx context.Context) (
 // requested ID.
 func (s *groupAdminFixture) GetGroup(ctx context.Context, id int64) (*routing.Group, error) {
 	s.getGroupCalls++
+	for _, group := range s.groups {
+		if group.ID == id {
+			return &group, nil
+		}
+	}
 	group := routing.Group{ID: id, Name: "group", Status: billing.StatusActive}
 	return &group, nil
 }
@@ -547,4 +553,46 @@ func bindGroupPlatformJSON(t *testing.T, target any, body string) error {
 	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	return httpx.BindJSONStrict(c, target)
+}
+
+// TestGroupSummaryRetainsListFieldsAndDetailRetainsConfiguration supplies large routing
+// configuration alongside administrative display fields. It verifies summaries retain
+// selector data and inactive status while detail responses keep the complete editable
+// configuration.
+func TestGroupSummaryRetainsListFieldsAndDetailRetainsConfiguration(t *testing.T) {
+	router, source := setupGroupAdminContractRouter()
+	group := &source.groups[0]
+	group.Status = "inactive"
+	group.ModelRouting = map[string][]int64{strings.Repeat("model-", 2000): {1, 2, 3}}
+	group.ModelsListConfig = routing.GroupModelsListConfig{Enabled: true, Models: []string{"gpt-test"}}
+	group.ProviderCount = 3
+	group.SortOrder = 10
+	group.ClaudeCodeOnly = true
+	fallbackID := int64(9)
+	group.FallbackGroupIDOnInvalidRequest = &fallbackID
+
+	get := func(path string) string {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		return rec.Body.String()
+	}
+	full := get("/api/v1/admin/groups")
+	summary := get("/api/v1/admin/groups?view=summary")
+	for _, body := range []string{summary, get("/api/v1/admin/groups/all?view=summary&include_inactive=true")} {
+		require.Contains(t, body, `"status":"inactive"`)
+		require.Contains(t, body, `"provider_count":3`)
+		require.Contains(t, body, `"sort_order":10`)
+		require.Contains(t, body, `"claude_code_only":true`)
+		require.Contains(t, body, `"fallback_group_id_on_invalid_request":9`)
+		require.NotContains(t, body, `"model_routing"`)
+		require.NotContains(t, body, `"models_list_config"`)
+		require.Less(t, len(body), 1500)
+	}
+	require.Equal(t, 1, source.includeInactiveCalls)
+	require.Greater(t, len(full), 12000)
+	for _, body := range []string{full, get("/api/v1/admin/groups/2")} {
+		require.Contains(t, body, `"models_list_config":{"enabled":true,"models":["gpt-test"]}`)
+		require.Contains(t, body, strings.Repeat("model-", 2000))
+	}
 }

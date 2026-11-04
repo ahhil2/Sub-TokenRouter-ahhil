@@ -1,3 +1,4 @@
+import { createCachedRequest } from '../readCache'
 import { apiClient } from '../client'
 import type {
   UserAttributeDefinition,
@@ -15,24 +16,28 @@ import type {
  */
 
 /**
- * listDefinitions retrieves all attribute definitions and returns the server
- * result.
+ * listDefinitions returns independently editable attribute definitions from the shared
+ * thirty-second reader. Passing true refreshes its pending and cached ownership;
+ * successful API writes invalidate ordinary cached reads.
  */
-export async function listDefinitions(): Promise<UserAttributeDefinition[]> {
+export const listDefinitions = createCachedRequest(async (): Promise<UserAttributeDefinition[]> => {
   const { data } = await apiClient.get<UserAttributeDefinition[]>('/admin/user-attributes')
   return data
-}
+})
 
 /**
- * listEnabledDefinitions retrieves enabled attribute definitions only and
- * returns the server result.
+ * listEnabledDefinitions returns cached enabled definitions for administrator forms.
+ * The reader shares pending requests within a credential and language scope and
+ * returns independent copies; passing true forces another read.
  */
-export async function listEnabledDefinitions(): Promise<UserAttributeDefinition[]> {
-  const { data } = await apiClient.get<UserAttributeDefinition[]>('/admin/user-attributes', {
-    params: { enabled: true },
-  })
-  return data
-}
+export const listEnabledDefinitions = createCachedRequest(
+  async (): Promise<UserAttributeDefinition[]> => {
+    const { data } = await apiClient.get<UserAttributeDefinition[]>('/admin/user-attributes', {
+      params: { enabled: true },
+    })
+    return data
+  },
+)
 
 /**
  * createDefinition creates a new attribute definition and returns the server

@@ -565,7 +565,15 @@ import RuleListEditor from '@/components/common/RuleListEditor.vue'
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import { vContentReveal } from '@/directives/contentReveal'
 
-import { nextTick, ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import {
+  defineAsyncComponent,
+  nextTick,
+  ref,
+  reactive,
+  computed,
+  onMounted,
+  onUnmounted,
+} from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -589,7 +597,7 @@ import {
   hasExplicitPricing,
   toNullableNumber,
 } from '@/components/admin/pricing/types'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 import type { Column } from '@/components/common/table/types'
 import { platformTextClass } from '@/utils/platformColors'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -609,7 +617,6 @@ import {
   billingSettingsToAPI,
   validateBillingSettings,
 } from '@/components/admin/pricing/billingSettings'
-import DefaultPricingPanel from '@/components/admin/pricing/DefaultPricingPanel.vue'
 import PricingEntryCard from '@/components/admin/pricing/PricingEntryCard.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useKeyedDebouncedSearch } from '@/composables/useKeyedDebouncedSearch'
@@ -624,6 +631,12 @@ import { useKeyedDebouncedSearch } from '@/composables/useKeyedDebouncedSearch'
 // before shifted indexes can reuse them. Pricing card updates preserve entry objects to retain
 // their local collapse and input state. Group conflict lookup uses a separate configuration
 // list from the paginated table.
+
+// Deferred panels load their component modules when rendered, allowing the primary
+// table or revenue cards to initialize before those optional views are mounted.
+const DefaultPricingPanel = defineAsyncComponent(
+  () => import('@/components/admin/pricing/DefaultPricingPanel.vue'),
+)
 
 // t resolves the current locale messages used by labels, validation, and action notifications.
 const { t } = useI18n()
@@ -757,7 +770,7 @@ function onDialogTabKeydown(event: KeyboardEvent, key: string) {
 
 // allGroups and groupsLoading supply association choices independently of the price table,
 // while the conflict list tracks assignments in other configurations.
-const allGroups = ref<AdminGroup[]>([])
+const allGroups = ref<AdminGroupSummary[]>([])
 const groupsLoading = ref(false)
 
 // Group association checks use a separate configuration list so the current table page does not
@@ -1178,7 +1191,7 @@ async function loadPricingConfigs() {
 async function loadGroups() {
   groupsLoading.value = true
   try {
-    allGroups.value = await adminAPI.groups.getAll()
+    allGroups.value = await adminAPI.groups.getOptions()
   } catch (error) {
     console.error('Error loading groups:', error)
   } finally {

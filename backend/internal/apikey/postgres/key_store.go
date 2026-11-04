@@ -1442,3 +1442,17 @@ func isUniqueConstraintViolation(err error) bool {
 func scanSingleRow(ctx context.Context, q SQLExecutor, query string, args []any, dest ...any) error {
 	return postgresinfra.ScanSingleRow(ctx, q, query, args, dest...)
 }
+
+// HasBatchImageKey reports whether the user has an active visible key whose undeleted
+// group allows image batches. The EXISTS query excludes managed and deleted keys; request
+// execution still applies gateway authorization independently.
+func (r *KeyStore) HasBatchImageKey(ctx context.Context, userID int64) (bool, error) {
+	var allowed bool
+	err := scanSingleRow(ctx, r.sql, `SELECT EXISTS (
+        SELECT 1 FROM api_keys k JOIN groups g ON g.id = k.group_id
+        WHERE k.user_id = $1 AND k.deleted_at IS NULL AND k.managed_by IS NULL
+          AND k.status = 'active' AND g.deleted_at IS NULL
+          AND g.allowed_protocols @> '["image_batches"]'::jsonb
+    )`, []any{userID}, &allowed)
+	return allowed, err
+}

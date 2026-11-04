@@ -298,6 +298,48 @@ describe('ModelMarketplaceView', () => {
     expect(wrapper.findAll('[data-testid="marketplace-group-section"]')).toHaveLength(4)
   })
 
+  it('按模型条目跨分组分页，并在全部结果中搜索', async () => {
+    getMarketplaceModels.mockResolvedValue(
+      [1, 2].map((group) =>
+        marketplaceGroup(
+          group,
+          `Group ${group}`,
+          Array.from({ length: 15 }, (_, index) => {
+            const id = `group-${group}-model-${String(index + 1).padStart(2, '0')}`
+            return marketplaceModel(id, id, tokenPricing)
+          }),
+        ),
+      ),
+    )
+    const wrapper = await mountMarketplace()
+    expect(wrapper.get('[data-testid="marketplace-result-count"]').text()).toBe(
+      '2 groups · 30 model entries',
+    )
+    expect(
+      wrapper
+        .findAll('[data-testid="marketplace-group-section"]')
+        .map((section) => section.findAll('article').length),
+    ).toEqual([15, 5])
+
+    wrapper.getComponent({ name: 'Pagination' }).vm.$emit('update:page', 2)
+    await nextTick()
+    expect(wrapper.findAll('article')).toHaveLength(10)
+    expect(wrapper.get('article').text()).toContain('group-2-model-06')
+
+    await wrapper.get('[data-testid="marketplace-search"]').setValue('group-1-model-02')
+    expect(wrapper.findAll('article')).toHaveLength(1)
+    expect(wrapper.get('article').text()).toContain('group-1-model-02')
+    expect(wrapper.get('[data-testid="marketplace-result-count"]').text()).toBe(
+      '1 groups · 1 model entries',
+    )
+
+    await wrapper.get('[data-testid="marketplace-search"]').setValue('')
+    wrapper.getComponent({ name: 'Pagination' }).vm.$emit('update:page-size', 50)
+    await nextTick()
+    expect(wrapper.findAll('article')).toHaveLength(30)
+    wrapper.unmount()
+  })
+
   it('shows provider counts, normalizes brand aliases and retains custom brands', async () => {
     const fixture = [
       {

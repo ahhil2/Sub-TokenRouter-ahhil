@@ -31,7 +31,7 @@ A generic data table component with sorting, loading states, and custom cell ren
   :columns="[
     { key: 'name', label: 'Name', sortable: true },
     { key: 'email', label: 'Email' },
-    { key: 'status', label: 'Status', formatter: (val) => val.toUpperCase() }
+    { key: 'status', label: 'Status', formatter: (val) => val.toUpperCase() },
   ]"
   :data="users"
   :loading="isLoading"
@@ -167,12 +167,12 @@ appStore.addToast({
   type: 'success',
   title: 'Success!',
   message: 'User created successfully',
-  duration: 3000
+  duration: 3000,
 })
 
 appStore.addToast({
   type: 'error',
-  message: 'Failed to delete user'
+  message: 'Failed to delete user',
 })
 ```
 

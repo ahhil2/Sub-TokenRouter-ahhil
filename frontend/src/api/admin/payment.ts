@@ -123,7 +123,8 @@ export const adminPaymentAPI = {
   /**
    * getDashboard retrieves payment aggregates using a day count or a date-range
    * query. Numeric input becomes the days parameter, while query objects pass
-   * through; callers read the Axios response data property.
+   * through; callers read the Axios response data property. A caller-owned signal
+   * cancels the HTTP request, with rejection left to the requesting view.
    */
   getDashboard(
     params?:
@@ -133,29 +134,38 @@ export const adminPaymentAPI = {
           end_date?: string // Requested end date.
           days?: number // Requested interval days.
         },
+    signal?: AbortSignal,
   ) {
     const queryParams = typeof params === 'number' ? { days: params } : params
     return apiClient.get<DashboardStats>('/admin/payment/dashboard', {
       params: queryParams,
+      signal,
     })
   },
 
   /**
-   * getOrders retrieves filtered payment order pages in the shared client
-   * response object.
+   * getOrders retrieves a filtered order page in the shared client response object.
+   * The optional caller-owned signal cancels this read; errors propagate so the page
+   * can distinguish active failures from superseded requests.
    */
-  getOrders(params?: {
-    page?: number // Requested page number.
-    page_size?: number // Requested page size.
-    status?: string // Current server-reported status.
-    payment_type?: string // Recorded payment type.
-    user_id?: number // Owning user identifier.
-    keyword?: string // Search input text.
-    start_date?: string // Requested start date.
-    end_date?: string // Requested end date.
-    order_type?: string // Recorded order type.
-  }) {
-    return apiClient.get<BasePaginationResponse<PaymentOrder>>('/admin/payment/orders', { params })
+  getOrders(
+    params?: {
+      page?: number // Requested page number.
+      page_size?: number // Requested page size.
+      status?: string // Requested order status.
+      payment_type?: string // Requested payment method.
+      user_id?: number // Owning user identifier.
+      keyword?: string // Order search text.
+      start_date?: string // Requested start date.
+      end_date?: string // Requested end date.
+      order_type?: string // Requested order type.
+    },
+    signal?: AbortSignal,
+  ) {
+    return apiClient.get<BasePaginationResponse<PaymentOrder>>('/admin/payment/orders', {
+      params,
+      signal,
+    })
   },
 
   /**

@@ -1,107 +1,97 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { keysAPI } from '@/api/keys'
 import { useAuthStore } from '@/stores/auth'
-import type { ApiKey } from '@/api/keys.types'
 
-// useBatchImageAccess.ts checks whether an active API key belongs to a group allowing
-// image batches. The cached result and pending promise are shared across all composable
-// consumers. Ordinary refresh calls reuse cached results or an unfinished scan, while
-// forced calls can start overlapping scans against the same state. Authentication is
-// checked before either reuse path.
-//
-// Each scan requests pages in creation order and stops at the first eligible key or the
-// end of the list. Failures become a cached denial. Completion updates shared state
-// directly, so forced scans and identity changes have no generation guard against older
-// completions.
-
-// loaded, loading, hasAllowedBatchImageKey, and pendingLoad share one module-wide access
-// scan across consumers; pageSize bounds each request.
+/**
+ * useBatchImageAccess.ts shares the batch-image menu capability across authenticated
+ * consumers. The server answers one existence query for visible active keys, and
+ * successful results remain available until refresh or identity change. Failed
+ * reads leave readiness false so a later call can retry.
+ *
+ * One generation owns publication across ordinary shared requests and forced
+ * refreshes. Identity changes clear cached permission before starting another read;
+ * late results also check the current authenticated user before publishing. Vue
+ * consumers expose values only when their current user owns the cache. Scope-owned
+ * identity watchers end with their consumers, while the module retains shared state
+ * for other mounted navigation components.
+ */
+// Shared flags and ownership retain one capability observation across menu consumers;
+// the generation rejects obsolete completions after identity changes or forced reads.
 const loaded = ref(false)
 const loading = ref(false)
-const hasAllowedBatchImageKey = ref(false)
-// pendingLoad is reused by ordinary calls until completion, while a forced call replaces
-// the shared promise reference.
-let pendingLoad: Promise<boolean> | null = null
-const pageSize = 100
+const allowed = ref(false)
+const owner = ref<number | undefined>()
+let generation = 0
+let pending: Promise<boolean> | null = null
 
-// keyAllowsBatchImage checks active status and the group image-batch protocol flag.
-function keyAllowsBatchImage(key: ApiKey): boolean {
-  return key.status === 'active' && key.group?.allowed_protocols?.includes('image_batches') === true
-}
-
-// loadBatchImageAccess scans active keys and returns whether one permits image batches. A
-// normal call reuses a loaded result before checking pending work; force bypasses both
-// reuse paths. Unauthenticated calls publish denial immediately.
-//
-// The scan updates module state as each terminal result arrives, and request errors become
-// cached false results. Callers that force concurrent scans receive separate promises
-// whose completions can overwrite shared access and loading flags.
+/**
+ * loadBatchImageAccess returns the current user's batch-image capability.
+ * Ordinary calls share pending work or a successful cached result; force starts a
+ * new generation. Unauthenticated calls reset shared state and return false.
+ *
+ * A completion publishes only when its generation and owner still match the
+ * current user. Older promises still resolve to their caller but cannot replace
+ * the displayed permission. Failure returns false while keeping readiness unset,
+ * allowing retry, and only the owning pending request can clear the loading flag.
+ */
 async function loadBatchImageAccess(force = false): Promise<boolean> {
-  const authStore = useAuthStore()
-  if (!authStore.isAuthenticated) {
-    loaded.value = true
-    hasAllowedBatchImageKey.value = false
-    return false
+  const auth = useAuthStore()
+  const userID = auth.isAuthenticated ? auth.user?.id : undefined
+  if (owner.value !== userID || !auth.isAuthenticated) {
+    // Reset permission before starting another identity's request so mounted navigation
+    // cannot display the previous user's capability while the new result is pending.
+    owner.value = userID
+    generation++
+    pending = null
+    loaded.value = false
+    loading.value = false
+    allowed.value = false
   }
-
-  if (loaded.value && !force) {
-    return hasAllowedBatchImageKey.value
-  }
-
-  if (pendingLoad && !force) {
-    return pendingLoad
-  }
-
+  if (!auth.isAuthenticated) return false
+  if (pending && !force) return pending
+  if (loaded.value && !force) return allowed.value
+  const current = ++generation
+  loaded.value = false
   loading.value = true
-  pendingLoad = (async () => {
-    let page = 1
-    while (true) {
-      const response = await keysAPI.list(page, pageSize, {
-        status: 'active',
-        sort_by: 'created_at',
-        sort_order: 'desc',
-      })
-
-      if ((response.items || []).some(keyAllowsBatchImage)) {
-        hasAllowedBatchImageKey.value = true
+  const request = keysAPI
+    .getCapabilities()
+    .then((capabilities) => {
+      if (current === generation && owner.value === userID && auth.user?.id === userID) {
+        allowed.value = capabilities.batch_images
         loaded.value = true
-        return true
       }
-
-      if (page >= response.pages || (response.items || []).length === 0) {
-        hasAllowedBatchImageKey.value = false
-        loaded.value = true
-        return false
-      }
-
-      page += 1
-    }
-  })()
-    // A failed key listing denies access and marks the result loaded, so subsequent
-    // ordinary calls reuse denial until forced refresh.
-    .catch(() => {
-      hasAllowedBatchImageKey.value = false
-      loaded.value = true
-      return false
+      return capabilities.batch_images
     })
+    // Keep readiness unset after failure so another consumer can retry; suppress the
+    // request error because this optional navigation hint must not block the page.
+    .catch(() => false)
     .finally(() => {
-      loading.value = false
-      pendingLoad = null
+      if (pending === request) {
+        loading.value = false
+        pending = null
+      }
     })
-
-  return pendingLoad
+  pending = request
+  return request
 }
 
 // useBatchImageAccess exposes shared access flags and the refresh operation. Creating a
-// consumer does not start a scan; callers request loading and decide when a forced refresh
-// is needed.
+// consumer observes identity changes; callers explicitly request the initial read and
+// choose when a forced refresh is needed.
 export function useBatchImageAccess() {
-  const canUseBatchImage = computed(() => hasAllowedBatchImageKey.value)
-
+  const auth = useAuthStore()
+  watch(
+    [() => auth.isAuthenticated, () => auth.user?.id],
+    () => {
+      if (!auth.isAuthenticated || owner.value !== auth.user?.id) void loadBatchImageAccess()
+    },
+    { flush: 'sync' },
+  )
+  const isOwner = computed(() => auth.isAuthenticated && owner.value === auth.user?.id)
   return {
-    canUseBatchImage,
-    batchImageAccessLoaded: computed(() => loaded.value),
-    batchImageAccessLoading: computed(() => loading.value),
+    canUseBatchImage: computed(() => isOwner.value && allowed.value),
+    batchImageAccessLoaded: computed(() => isOwner.value && loaded.value),
+    batchImageAccessLoading: computed(() => isOwner.value && loading.value),
     refreshBatchImageAccess: loadBatchImageAccess,
   }
 }

@@ -128,7 +128,7 @@ import { AuthLayout } from '@/components/layout'
 import Icon from '@/components/icons/Icon.vue'
 import TurnstileWidget from '@/components/auth/CaptchaChallenge.vue'
 import { useAppStore } from '@/stores'
-import { getPublicSettings, forgotPassword } from '@/api/auth'
+import { forgotPassword } from '@/api/auth'
 
 // ForgotPasswordView.vue requests a password-reset email using the configured
 // captcha provider. It validates the address before acquiring action proof,
@@ -211,7 +211,8 @@ watch(validationToastMessage, (value, previousValue) => {
 // that request fails.
 onMounted(async () => {
   try {
-    const settings = await getPublicSettings()
+    const settings = await appStore.fetchPublicSettings()
+    if (!settings) return
     turnstileEnabled.value = settings.turnstile_enabled
     turnstileSiteKey.value = settings.turnstile_site_key || ''
     tencentCaptchaEnabled.value = settings.tencent_captcha_enabled === true

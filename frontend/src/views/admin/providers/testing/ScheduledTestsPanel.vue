@@ -584,24 +584,6 @@ const resetNewPlan = () => {
   newPlan.auto_recover = false
 }
 
-// Hiding the panel clears the visible list and expansion state; outstanding requests still
-// settle through their normal handlers.
-watch(
-  () => props.show,
-  async (visible) => {
-    if (visible && props.providerId) {
-      await loadPlans()
-    } else {
-      plans.value = []
-      results.value = []
-      expandedPlanId.value = null
-      expandedResultIds.clear()
-      showAddForm.value = false
-      showDeleteConfirm.value = false
-    }
-  },
-)
-
 /**
  * loadPlans fetches schedules for the current provider when an identifier is available. It
  * retains displayed plans on failure and reports the request error through the application
@@ -789,4 +771,23 @@ const toggleResultDetail = (resultId: number) => {
     expandedResultIds.add(resultId)
   }
 }
+
+// Load plans on first visible mount and later openings. Hiding clears the list and
+// expansion state while outstanding requests continue through their existing handlers.
+watch(
+  () => props.show,
+  async (visible) => {
+    if (visible && props.providerId) {
+      await loadPlans()
+    } else {
+      plans.value = []
+      results.value = []
+      expandedPlanId.value = null
+      expandedResultIds.clear()
+      showAddForm.value = false
+      showDeleteConfirm.value = false
+    }
+  },
+  { immediate: true },
+)
 </script>

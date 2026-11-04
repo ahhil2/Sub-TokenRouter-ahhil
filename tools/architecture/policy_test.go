@@ -61,6 +61,8 @@ func TestDependencyBoundaries(t *testing.T) {
 		{"internal/apikey/postgres/key_store.go", modulePath + "/internal/billing/postgres", true},
 		{"internal/apikey/postgres/key_store.go", modulePath + "/internal/billing/postgres/extra", false},
 		{"internal/apikey/postgres/new.go", modulePath + "/internal/billing/postgres", false},
+		{"internal/apikey/postgres/key_store_integration_test.go", modulePath + "/internal/testutil/postgrescontainer", true},
+		{"internal/apikey/postgres/new_test.go", modulePath + "/internal/testutil/postgrescontainer", false},
 		{"internal/apikey/postgres/helpers/new_test.go", modulePath + "/internal/billing/postgres", false},
 		{"internal/provider/health_spark.go", "net/http", true},
 		{"internal/provider/health_spark.go", "net/http/httptest", false},

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
@@ -88,7 +90,7 @@ func (h *PublicHandler) GetPublicSettings(c *gin.Context) {
 		DefaultLocale:                       settings.DefaultLocale,
 		SiteTitle:                           settings.SiteTitle,
 		SiteName:                            settings.SiteName,
-		SiteLogo:                            settings.SiteLogo,
+		SiteLogo:                            site.LogoURL(settings.SiteLogo),
 		SiteSubtitle:                        settings.SiteSubtitle,
 		APIBaseURL:                          settings.APIBaseURL,
 		ContactInfo:                         settings.ContactInfo,
@@ -157,4 +159,38 @@ func (h *PublicHandler) GetLegalDocument(c *gin.Context) {
 	}
 	c.Header("Vary", "Accept-Language")
 	response.Success(c, doc)
+}
+
+// GetLogo serves the currently configured inline logo at its content-versioned URL.
+// Missing or outdated versions return not found. Successful responses carry a year-long
+// immutable cache policy and a matching entity tag; an exact conditional match returns not
+// modified. SVG responses use a restrictive sandbox policy so the image endpoint cannot
+// execute embedded script as a document. The source settings remain responsible for the
+// stored data URL.
+func (h *PublicHandler) GetLogo(c *gin.Context) {
+	settings, err := h.settingService.GetPublicSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	reference := site.LogoURL(settings.SiteLogo)
+	if !site.IsLogoReference(reference) || reference != "/api/v1/settings/logo/"+c.Param("version") {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	data, media, ok := site.DecodeLogo(settings.SiteLogo)
+	if !ok {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	etag := `"` + c.Param("version") + `"`
+	c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	c.Header("ETag", etag)
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Content-Security-Policy", "default-src 'none'; sandbox")
+	if c.GetHeader("If-None-Match") == etag {
+		c.Status(http.StatusNotModified)
+		return
+	}
+	c.Data(http.StatusOK, media, data)
 }

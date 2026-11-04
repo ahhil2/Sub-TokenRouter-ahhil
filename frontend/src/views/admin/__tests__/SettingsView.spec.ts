@@ -54,7 +54,7 @@ const {
   adminSettingsFetch,
   showError,
   showSuccess,
-  getMarketplaceModels,
+  getMarketplaceModelOptions,
   getMarketplaceStats,
 } = vi.hoisted(() => ({
   getSettings: vi.fn(),
@@ -113,7 +113,7 @@ const {
   adminSettingsFetch: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
-  getMarketplaceModels: vi.fn().mockResolvedValue([]),
+  getMarketplaceModelOptions: vi.fn().mockResolvedValue([]),
   getMarketplaceStats: vi.fn().mockResolvedValue({
     today_tokens: 0,
     total_tokens: 0,
@@ -173,7 +173,7 @@ vi.mock('@/api', () => ({
 }))
 
 vi.mock('@/api/marketplace', () => ({
-  getMarketplaceModels,
+  getMarketplaceModelOptions,
   getMarketplaceStats,
 }))
 
@@ -1039,6 +1039,8 @@ describe('admin SettingsView payment visible method controls', () => {
     await wrapper.get('[data-testid="panel-rate-limit-user-rpm"]').setValue(120)
     await openGatewayTab(wrapper)
     await wrapper.get('input#rate-limit-429-cooldown-seconds').setValue(9)
+    await openGatewaySection(wrapper, 'anthropic')
+    await wrapper.get('#web-search-emulation-enabled').setValue(true)
     await openSecurityTab(wrapper)
     await wrapper.get('[data-testid="user-email-change-setting"] input').setValue(true)
     updatePanelRateLimitSettings.mockClear()
@@ -1083,7 +1085,7 @@ describe('admin SettingsView payment visible method controls', () => {
     expect(fetchPublicSettings).not.toHaveBeenCalled()
     expect(adminSettingsFetch).not.toHaveBeenCalled()
 
-    finishSearch({ enabled: false, providers: [] })
+    finishSearch({ enabled: true, providers: [] })
     await flushPromises()
     expect(fetchPublicSettings).toHaveBeenCalledWith(true)
     expect(adminSettingsFetch).not.toHaveBeenCalled()
@@ -1191,7 +1193,8 @@ describe('admin SettingsView payment visible method controls', () => {
   })
 
   // Pressing Enter can submit a settings form whose snapshots are already clean.
-  // That submission still persists bulk and search settings and refreshes both stores.
+  // That submission persists bulk settings and refreshes both stores while leaving
+  // the unvisited search configuration untouched.
   it('saves bulk settings for a clean form submission', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -1200,7 +1203,7 @@ describe('admin SettingsView payment visible method controls', () => {
     await wrapper.get('form').trigger('submit.prevent')
     await flushPromises()
     expect(updateSettings).toHaveBeenCalledTimes(1)
-    expect(updateWebSearchEmulationConfig).toHaveBeenCalledTimes(1)
+    expect(updateWebSearchEmulationConfig).not.toHaveBeenCalled()
     expect(fetchPublicSettings).toHaveBeenCalledWith(true)
     expect(adminSettingsFetch).toHaveBeenCalledWith(true)
     expect(updatePanelRateLimitSettings).not.toHaveBeenCalled()
@@ -1316,7 +1319,7 @@ describe('admin SettingsView payment visible method controls', () => {
     expect(createProvider).toHaveBeenCalledWith(payload)
     expect(getProviders).toHaveBeenCalledTimes(1)
     expect(updateSettings).toHaveBeenCalledTimes(1)
-    expect(updateWebSearchEmulationConfig).toHaveBeenCalledTimes(1)
+    expect(updateWebSearchEmulationConfig).not.toHaveBeenCalled()
     expect(createProvider.mock.invocationCallOrder[0]).toBeLessThan(
       getProviders.mock.invocationCallOrder[0]!,
     )
@@ -1424,6 +1427,29 @@ describe('admin SettingsView payment visible method controls', () => {
     }
   })
 
+  // The initial general tab leaves independent editor endpoints unloaded. First visits
+  // load the owning data once, and returning to a tab retains its unsaved draft.
+  it('基础设置显示后，辅助请求随首次访问加载并保留草稿', async () => {
+    getPanelRateLimitSettings.mockClear()
+    const wrapper = mountView()
+    await flushPromises()
+    expect(getProviders).not.toHaveBeenCalled()
+    expect(getWebSearchEmulationConfig).not.toHaveBeenCalled()
+    expect(getPanelRateLimitSettings).not.toHaveBeenCalled()
+    expect(getCreativeModelCandidates).not.toHaveBeenCalled()
+    await openSecurityTab(wrapper)
+    const field = wrapper.get('[data-testid="panel-rate-limit-user-rpm"]')
+    await field.setValue('123')
+    await wrapper.get('#settings-tab-general').trigger('click')
+    await openSecurityTab(wrapper)
+    expect(getPanelRateLimitSettings).toHaveBeenCalledTimes(1)
+    expect((field.element as HTMLInputElement).value).toBe('123')
+    expect(getProviders).not.toHaveBeenCalled()
+    await openPaymentTab(wrapper)
+    expect(getProviders).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
   // An administrator edits the independent panel rate limit form. Saving submits
   // its configured limits through the dedicated endpoint and reports successful
   // completion through the page.
@@ -1441,6 +1467,7 @@ describe('admin SettingsView payment visible method controls', () => {
 
     const wrapper = mountView()
     await flushPromises()
+    await openSecurityTab(wrapper)
 
     expect(getPanelRateLimitSettings).toHaveBeenCalled()
     expect(wrapper.text()).toContain('admin.settings.panelRateLimit.title')
@@ -1515,6 +1542,7 @@ describe('admin SettingsView payment visible method controls', () => {
 
     const wrapper = mountView()
     await flushPromises()
+    await openSecurityTab(wrapper)
 
     expect(wrapper.text()).toContain('Google One Tap')
     expect(wrapper.text()).toContain(window.location.origin)
@@ -1995,6 +2023,8 @@ describe('admin SettingsView payment visible method controls', () => {
     const wrapper = mountView()
 
     await flushPromises()
+    await openGatewayTab(wrapper)
+    await openGatewaySection(wrapper, 'openai')
 
     expect(wrapper.text()).toContain('OpenAI 提供商配额自动暂停')
     const fiveHourInput = wrapper.get('[data-testid="settings-openai-quota-auto-pause-5h"]')
@@ -2136,6 +2166,7 @@ describe('admin SettingsView payment visible method controls', () => {
 
     await flushPromises()
     await openGatewayTab(wrapper)
+    await openGatewaySection(wrapper, 'openai')
 
     const summary = wrapper.get('[data-testid="openai-fast-policy-summary-0"]')
     expect(summary.text()).toContain('目标模型')
@@ -2172,7 +2203,6 @@ describe('admin SettingsView payment visible method controls', () => {
     getProviders.mockReset()
     getProviders.mockResolvedValue({ data: [provider] })
 
-    let receivedProviders: Array<Record<string, unknown>> = []
     // PaymentProviderListCapture records the normalized list supplied by the page
     // so the response normalization can be checked at the component input.
     const PaymentProviderListCapture = defineComponent({
@@ -2183,9 +2213,7 @@ describe('admin SettingsView payment visible method controls', () => {
           default: () => [],
         },
       },
-      // setup captures the normalized providers passed to the mounted list component.
-      setup(props) {
-        receivedProviders = props.providers as Array<Record<string, unknown>>
+      setup() {
         return () => h('div', { class: 'provider-list-capture' })
       },
     })
@@ -2214,6 +2242,9 @@ describe('admin SettingsView payment visible method controls', () => {
     await flushPromises()
     await openPaymentTab(wrapper)
 
+    const receivedProviders = wrapper
+      .findComponent(PaymentProviderListCapture)
+      .props('providers') as Array<Record<string, unknown>>
     expect(receivedProviders).toHaveLength(1)
     expect(Array.isArray(receivedProviders[0].supported_types)).toBe(true)
     expect(receivedProviders[0].supported_types).toEqual([])
@@ -2396,10 +2427,8 @@ describe('admin SettingsView payment visible method controls', () => {
     expect(wrapper.get('[data-testid="gateway-card-user-prompt-replacement"]').isVisible()).toBe(
       true,
     )
-    expect(wrapper.get('[data-testid="gateway-card-openai-403-cooldown"]').isVisible()).toBe(false)
-    expect(wrapper.get('[data-testid="ollama-cloud-usage-global-settings"]').isVisible()).toBe(
-      false,
-    )
+    expect(wrapper.find('[data-testid="gateway-card-openai-403-cooldown"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ollama-cloud-usage-global-settings"]').exists()).toBe(false)
 
     const providerBrands = [
       ['anthropic', 'Anthropic'],
@@ -2435,7 +2464,7 @@ describe('admin SettingsView payment visible method controls', () => {
     expect(wrapper.get('[data-testid="gateway-card-web-search-emulation"]').isVisible()).toBe(true)
 
     await openGatewaySection(wrapper, 'openai')
-    expect(wrapper.get('[data-testid="gateway-card-openai-403-cooldown"]').isVisible()).toBe(true)
+    expect(wrapper.find('[data-testid="gateway-card-openai-403-cooldown"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="gateway-card-openai-oauth-defaults"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="gateway-card-openai-scheduling"]').isVisible()).toBe(true)
     expect(wrapper.get('[data-testid="gateway-card-scheduling"]').isVisible()).toBe(false)
@@ -2459,7 +2488,7 @@ describe('admin SettingsView payment visible method controls', () => {
     ).toContain('display: none')
 
     await openGatewaySection(wrapper, 'ollamaCloud')
-    expect(wrapper.get('[data-testid="ollama-cloud-usage-global-settings"]').isVisible()).toBe(true)
+    expect(wrapper.find('[data-testid="ollama-cloud-usage-global-settings"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="gateway-card-overload-cooldown"]').isVisible()).toBe(false)
   })
 
@@ -2670,6 +2699,9 @@ describe('admin SettingsView payment visible method controls', () => {
     ])
 
     const wrapper = mountView()
+    await flushPromises()
+    expect(getCreativeModelCandidates).not.toHaveBeenCalled()
+    await wrapper.get('#settings-tab-features').trigger('click')
     await flushPromises()
     expect(getCreativeModelCandidates).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('admin.settings.features.creative.modelSettings.title')

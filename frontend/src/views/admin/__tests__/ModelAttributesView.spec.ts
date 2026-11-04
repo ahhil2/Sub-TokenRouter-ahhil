@@ -24,7 +24,12 @@ vi.mock('@/api/admin/modelAttributes', () => ({
   },
 }))
 vi.mock('@/api/admin', () => ({
-  adminAPI: { groups: { getAll: vi.fn().mockResolvedValue([{ id: 7, name: 'Group' }]) } },
+  adminAPI: {
+    groups: {
+      getOptions: vi.fn().mockResolvedValue([{ id: 7, name: 'Group' }]),
+      getAll: vi.fn().mockResolvedValue([{ id: 7, name: 'Group' }]),
+    },
+  },
 }))
 vi.mock('vue-i18n', async () => ({
   ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),

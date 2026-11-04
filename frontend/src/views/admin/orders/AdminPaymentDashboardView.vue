@@ -62,7 +62,9 @@
       <template v-else-if="stats">
         <OrderStatsCards :stats="stats" />
         <DailyRevenueChart :data="stats.daily_series || []" :loading="loading" />
-        <PurchaseDistributionChart :items="stats.purchase_distribution || []" />
+        <LazySection
+          ><PurchaseDistributionChart :items="stats.purchase_distribution || []"
+        /></LazySection>
         <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div class="card p-4">
             <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
@@ -149,10 +151,11 @@
 </template>
 
 <script setup lang="ts">
+import { useLatestRequest } from '@/composables/useLatestRequest'
 import ChartSkeleton from '@/components/common/ChartSkeleton.vue'
 import Skeleton from '@/components/common/Skeleton.vue'
 import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
-import { ref, onMounted } from 'vue'
+import { defineAsyncComponent, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminPaymentAPI } from '@/api/admin/payment'
@@ -163,12 +166,18 @@ import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Icon from '@/components/icons/Icon.vue'
 import OrderStatsCards from '@/components/admin/payment/OrderStatsCards.vue'
 import DailyRevenueChart from '@/components/admin/payment/DailyRevenueChart.vue'
-import PurchaseDistributionChart from '@/components/admin/payment/PurchaseDistributionChart.vue'
+import LazySection from '@/components/common/LazySection.vue'
 
 // AdminPaymentDashboardView.vue loads payment analytics for a local calendar date range
 // and passes results to revenue, totals, and distribution panels. Currency amounts and
 // payer rankings remain grouped by currency, and the initial range includes today and the
 // preceding twenty-nine days.
+
+// Deferred panels load their component modules when rendered, allowing the primary
+// table or revenue cards to initialize before those optional views are mounted.
+const PurchaseDistributionChart = defineAsyncComponent(
+  () => import('@/components/admin/payment/PurchaseDistributionChart.vue'),
+)
 
 // t resolves the locale labels used by payment controls, validation messages, and
 // displayed order information.
@@ -177,9 +186,9 @@ const { t } = useI18n()
 // handlers retain their local view state.
 const appStore = useAppStore()
 
-// loading tracks dashboard request progress for loading presentation and clears after the
-// request success or error handling finishes.
-const loading = ref(false)
+// The latest read owns loading and publication; replacement or page disposal cancels
+// earlier requests so late responses and errors cannot replace the current display.
+const { loading, run: runLatest } = useLatestRequest()
 // stats holds the latest successful dashboard response; null represents the period before
 // any response has populated the page.
 const stats = ref<DashboardStats | null>(null)
@@ -270,17 +279,20 @@ function formatMoney(currency: string, amount: number): string {
 // replaces the statistics, while failure displays an error and retains the previous
 // results for the page.
 async function loadDashboard() {
-  loading.value = true
   try {
-    const res = await adminPaymentAPI.getDashboard({
-      start_date: startDate.value,
-      end_date: endDate.value,
-    })
+    const res = await runLatest((signal) =>
+      adminPaymentAPI.getDashboard(
+        {
+          start_date: startDate.value,
+          end_date: endDate.value,
+        },
+        signal,
+      ),
+    )
+    if (!res) return
     stats.value = res.data
   } catch (err: unknown) {
     appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
-  } finally {
-    loading.value = false
   }
 }
 

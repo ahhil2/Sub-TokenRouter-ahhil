@@ -60,6 +60,7 @@ vi.mock('@/stores', () => ({
     showWarning: mocks.warning,
     showSuccess: vi.fn(),
     publicSettingsLoaded: true,
+    fetchPublicSettings: mocks.settings,
   }),
 }))
 vi.mock('@/api/auth', async (importOriginal) => ({

@@ -355,3 +355,8 @@ func newAPIKeyTestService(d apiKeyTestDependencies) *apikey.APIKeyService {
 	}
 	return s
 }
+
+// HasBatchImageKey rejects unexpected capability reads in this unrelated service fixture.
+func (s *authRepoStub) HasBatchImageKey(context.Context, int64) (bool, error) {
+	panic("unexpected HasBatchImageKey call")
+}

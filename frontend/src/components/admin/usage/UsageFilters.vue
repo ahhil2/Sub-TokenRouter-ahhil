@@ -778,7 +778,7 @@ onMounted(async () => {
   // Team and group choices load independently so a failure in either source leaves the
   // other filters usable.
   await Promise.allSettled([
-    adminAPI.groups.list(1, 1000).then((gs) => {
+    adminAPI.groups.listSummaries(1, 1000).then((gs) => {
       groupOptions.value.push(...gs.items.map((g: any) => ({ value: g.id, label: g.name })))
     }),
     adminAPI.teams.list().then((teams) => {

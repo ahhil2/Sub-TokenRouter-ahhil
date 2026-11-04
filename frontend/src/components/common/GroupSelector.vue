@@ -73,7 +73,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GroupBadge from './GroupBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { AdminGroup } from '@/api/groups.types'
+import type { AdminGroupSummary } from '@/api/groups.types'
 
 /**
  * GroupSelector.vue edits a parent owned list of group identifiers through checkboxes.
@@ -97,7 +97,7 @@ interface Props {
    * rather than mutating the supplied selection.
    */
   modelValue: number[]
-  groups: AdminGroup[] /* available group records */
+  groups: AdminGroupSummary[] /* available group records */
   /**
    * searchable accepts a boolean override or auto mode, which enables the search input
    * only when more than five groups exist.
@@ -144,7 +144,7 @@ const isSearchable = computed(() => {
  * enabled, retaining the supplied group order.
  */
 const filteredGroups = computed(() => {
-  let result: AdminGroup[] = props.groups
+  let result: AdminGroupSummary[] = props.groups
   if (isSearchable.value && searchText.value) {
     const q = searchText.value.toLowerCase()
     result = result.filter(
