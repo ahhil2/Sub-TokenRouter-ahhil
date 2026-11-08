@@ -69,7 +69,9 @@ type Usage struct {
 
 	Timings *timing.Performance `json:"timings,omitempty"` // usage-owned performance snapshot
 	TTFTMs  *int                `json:"ttft_ms"`           // selected upstream latency milliseconds
-	TPS     *float64            `json:"tps"`               // estimated useful-output throughput
+	// TPS uses the usage row's complete upstream duration, including its first-output
+	// wait. Ineligible media or incomplete observations produce JSON null.
+	TPS *float64 `json:"tps"` // average output tokens per second
 
 	ID           int64   `json:"id"`            // retained usage row ID
 	Model        string  `json:"model"`         // requested model or stored model

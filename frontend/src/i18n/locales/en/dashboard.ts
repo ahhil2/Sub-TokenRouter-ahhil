@@ -520,10 +520,10 @@ export default {
     latencyFirstEvent: 'First event',
     ttftMode: 'Timing mode',
     latencyDuration: 'Total',
-    tps: 'TPS',
-    tpsExport: 'TPS (tok/s)',
+    tps: 'Avg. output TPS',
+    tpsExport: 'Avg. output TPS (tok/s)',
     tpsHint:
-      'TPS = output tokens divided by the interval from first to last useful upstream content, in seconds. Chunking, network delays, downstream backpressure and hidden reasoning affect this estimate. Single-chunk or incomplete usage shows -; the first-event setting does not change TPS.',
+      "Average output TPS = output tokens divided by this upstream request's total duration in seconds, including the wait for first output. Streaming, single-chunk and buffered text responses are supported. Incomplete responses or usage, invalid durations, image/video generation and Live sessions show -; the first-event setting does not change the calculation.",
     detailedTiming: 'Detailed Timing',
     timingRequestSize: 'Request size',
     timingAttempts: 'Attempts',

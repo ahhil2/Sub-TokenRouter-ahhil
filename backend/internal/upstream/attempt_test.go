@@ -28,11 +28,41 @@ func TestFinishRetainsCompletedDisconnectDrain(t *testing.T) {
 			p.Values["upstream_first_output_ms"] = 100
 			p.Values["upstream_last_output_ms"] = 600
 			p.Values["upstream_output_event_count"] = 2
+			p.Values["upstream_finished_ms"] = 1000
 			ctx := timing.WithPerformance(t.Context(), p)
 			result := AttemptResult{ClientDisconnect: tc.disconnected}
 			result.Finish(ctx, context.Canceled)
 			require.Equal(t, tc.expectTPS, result.Timings.TPS(10) != nil)
 			require.True(t, p.UsageComplete)
+		})
+	}
+}
+
+// TestFinishCalculatesBufferedTPS completes nonstreaming requests with different
+// usage and failure outcomes. Successful final usage supports an average rate
+// even though the observer has no streamed content timestamps.
+func TestFinishCalculatesBufferedTPS(t *testing.T) {
+	for _, tc := range []struct {
+		name     string // buffered completion scenario label
+		hasUsage bool   // final usage availability flag
+		failure  error  // completion failure when present
+	}{
+		{"completed", true, nil},
+		{"missing_usage", false, nil},
+		{"failed", true, io.ErrUnexpectedEOF},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := timing.NewPerformance(timing.FirstOutput, 100)
+			p.Values["upstream_finished_ms"] = 1100
+			ctx := timing.WithPerformance(t.Context(), p)
+			result := AttemptResult{HasUsage: tc.hasUsage}
+			result.Finish(ctx, tc.failure)
+			require.Nil(t, result.Timings.TTFTMs())
+			if tc.hasUsage && tc.failure == nil {
+				require.Equal(t, 20.0, *result.Timings.TPS(20))
+			} else {
+				require.Nil(t, result.Timings.TPS(20))
+			}
 		})
 	}
 }

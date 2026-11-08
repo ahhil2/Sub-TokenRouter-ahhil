@@ -20,7 +20,8 @@ import (
 // those flags, while special execution categories retain recorded transport
 // information. Token totals combine the four general counters; image and
 // cache-TTL detail counters remain separately available for display and
-// pricing analysis.
+// pricing analysis. Average output TPS uses the completed upstream exchange;
+// generated media and Live sessions are excluded from text-performance samples.
 
 // UsageLog is the completed-request analysis row with attribution, measured
 // usage, cost and loaded display relations.
@@ -188,6 +189,28 @@ type UsageLog struct {
 // image-specific token fields stay outside this general token total.
 func (u *UsageLog) TotalTokens() int {
 	return u.InputTokens + u.OutputTokens + u.CacheCreationTokens + u.CacheReadTokens
+}
+
+// TPS returns average output tokens per second for a completed text exchange.
+// Nil records, generated images or videos, and Live sessions have no text rate.
+// Image input alone remains eligible because a text answer can consume images.
+//
+// Output counters and media or billing categories independently identify generated
+// media, including token-priced generations. Timing eligibility and rounding belong
+// to Performance.TPS, which requires complete usage and the duration of this
+// upstream attempt. Historical rows without that snapshot remain unmeasured.
+// @project-doc docs/interfaces/http_api.md#response_errors
+func (u *UsageLog) TPS() *float64 {
+	if u == nil || u.ImageCount > 0 || u.ImageOutputTokens > 0 || u.VideoCount > 0 || u.EffectiveRequestType() == RequestTypeLive {
+		return nil
+	}
+	if u.BillingMode != nil && (*u.BillingMode == "image" || *u.BillingMode == "video") {
+		return nil
+	}
+	if u.MediaType != nil && (*u.MediaType == "image" || *u.MediaType == "video") {
+		return nil
+	}
+	return u.Timings.TPS(u.OutputTokens)
 }
 
 // EffectiveRequestType returns the record's supported execution category, or

@@ -102,10 +102,15 @@ golang.org/x/net/html golang.org/x/sync/errgroup`, Tests: `github.com/stretchr/t
 github.com/stretchr/testify/suite`},
 	}
 
+	// moduleDependencies permits reviewed business imports for each module.
+	// Test paths extend production permissions while role rules still restrict
+	// framework and storage access within those modules.
 	moduleDependencies = map[string]dependencySet{
 		"internal/mcp": {Production: `internal/mcp/... internal/identity internal/identity/httpapi internal/identity/httpapi/authctx
 internal/audit internal/server/adminapi internal/server/httpx`, Tests: `internal/infra/crypto internal/testutil/postgrescontainer migrations`},
-		"internal/requestlog": {Production: `internal/requestlog/... internal/infra/telemetry/... internal/identity/httpapi/authctx internal/server/httpx`, Tests: `internal/testutil/postgrescontainer migrations`},
+		// Request diagnostics delegate rate eligibility to the usage domain so
+		// generated media exclusions match usage list responses from that record.
+		"internal/requestlog": {Production: `internal/requestlog/... internal/infra/telemetry/... internal/identity/httpapi/authctx internal/server/httpx internal/usage`, Tests: `internal/testutil/postgrescontainer migrations`},
 		"internal/modelcatalog": {Production: `internal/pkg/locale internal/modelcatalog internal/modelcatalog/provider internal/billing/pricing
 internal/egress internal/infra/httpclient/... internal/infra/telemetry/...`, Tests: `internal/billing internal/billing/provider
 internal/gateway/media internal/gateway/provider/modelidentity internal/routing/capability
@@ -208,7 +213,7 @@ internal/identity/httpapi/authctx internal/infra/httpclient/... internal/infra/p
 internal/infra/telemetry/... internal/notification/contract internal/ops/... internal/pkg/
 internal/scheduler internal/server/httpx internal/server/middleware internal/settings
 internal/settings/preaggregation`, Tests: `internal/testutil/rediscontainer ent/... internal/notification internal/notification/smtp internal/notification/testkit
-internal/routing/capability internal/testutil/assertion migrations`},
+internal/routing/capability internal/testutil/assertion internal/usage migrations`},
 		"internal/payment": {Production: `internal/server/adminapi ent/... internal/billing internal/billing/httpapi internal/billing/postgres internal/identity
 internal/identity/httpapi internal/identity/httpapi/authctx internal/payment/... internal/pkg/
 internal/promotion internal/server/httpx internal/settings`, Tests: "internal/testutil/assertion internal/testutil/sqlite"},

@@ -501,10 +501,10 @@ export default {
     latencyFirstEvent: '首包',
     ttftMode: '统计口径',
     latencyDuration: '总耗时',
-    tps: 'TPS',
-    tpsExport: 'TPS (tok/s)',
+    tps: '平均输出 TPS',
+    tpsExport: '平均输出 TPS (tok/s)',
     tpsHint:
-      'TPS = 输出 Token 数 ÷ 首个至最后有效内容的时间（秒）。按数据块估算，受网络、合并发送、下游背压和不可见思考影响。单块输出或 usage 不完整时显示 -；首字／首包设置不影响 TPS。',
+      '平均输出 TPS = 输出 Token 数 ÷ 本次上游请求总耗时（秒），包含等待首字的时间。支持流式、单块和非流式文本响应。上游或用量不完整、耗时无效、图片/视频生成和 Live 请求显示 -；首字／首包设置不影响计算。',
     detailedTiming: '详细耗时',
     timingRequestSize: '请求体',
     timingAttempts: '尝试次数',

@@ -22,8 +22,8 @@ import (
 // Completion owns a cloned snapshot until its acknowledged analytical write
 // finishes. Only usage storage persists this complete value; request records
 // retain lifecycle and failure diagnostics separately. TTFT follows the mode
-// captured for the request, whereas TPS always uses the first and last useful
-// upstream content and requires complete usage from a completed stream.
+// captured for the request, whereas TPS uses the complete upstream execution
+// duration and requires final usage from a successfully completed exchange.
 // Socket execution registers its attempt here; HTTP bridges take their ordinal
 // from transport while using the same request clock and event calculations.
 
@@ -167,22 +167,25 @@ func (p *Performance) DurationMs() *int {
 	return p.elapsed("upstream_started_ms", "upstream_finished_ms")
 }
 
-// TPS estimates useful-content throughput from complete output usage and arrival times.
-// Single-chunk output, incomplete usage and a nonpositive interval have no estimate.
-// Packet coalescing and hidden reasoning remain limitations of this gateway measure.
+// TPS returns average output tokens per second over the completed upstream attempt.
+// The caller supplies final output tokens from that same attempt and handles
+// request-category eligibility. Incomplete usage, unsuccessful completion, missing
+// endpoints and nonpositive tokens or duration produce no estimate.
 //
-// The count comes from final provider usage, while the interval excludes metadata,
-// repeated terminal snapshots and waiting before the first useful event. It is an
-// arrival-based estimate, not an observation of the model's internal decode clock.
-// Rounding happens here so the API, CSV and spreadsheet consumers use one value.
+// Duration includes waiting for the first output and receiving the final response.
+// Using the complete exchange supports buffered and single-chunk responses and
+// prevents closely spaced content arrivals from defining the denominator. Earlier
+// attempts and admission queues stay outside this exchange. Provider token counts
+// can include reasoning; the result describes observed request performance.
 func (p *Performance) TPS(tokens int) *float64 {
-	if p == nil || !p.Stream || !p.Complete || !p.UsageComplete || tokens <= 0 || p.Values["upstream_output_event_count"] < 2 {
+	if p == nil || !p.Complete || !p.UsageComplete || tokens <= 0 {
 		return nil
 	}
-	duration := p.elapsed("upstream_first_output_ms", "upstream_last_output_ms")
+	duration := p.DurationMs()
 	if duration == nil || *duration <= 0 {
 		return nil
 	}
+	// Convert milliseconds to seconds and round once for API and export consumers.
 	value := math.Round(float64(tokens)*10000/float64(*duration)) / 10
 	return &value
 }

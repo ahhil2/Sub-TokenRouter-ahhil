@@ -60,9 +60,11 @@ export interface UsageLog {
   stream: boolean // Client streaming request flag.
   openai_ws_mode?: boolean // OpenAI WebSocket transport flag.
   native_compaction_v2?: boolean // Native compaction activation.
-  duration_ms: number | null // Request duration milliseconds.
+  duration_ms: number | null // Upstream attempt duration milliseconds.
   ttft_ms: number | null // First-token latency milliseconds.
-  tps?: number | null // Output tokens per second.
+  // Average output TPS includes the first-output wait; ineligible or unmeasured
+  // exchanges have no numeric rate.
+  tps?: number | null // Average output tokens per second.
   ttft_mode?: string // First-token measurement method.
 
   // Image generation usage observations.

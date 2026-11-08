@@ -26,7 +26,8 @@ import (
 // before deriving the legacy stream and WebSocket flags.
 //
 // These choices let client-facing names and older transport fields remain
-// useful together. Billing allocations are copied by
+// useful together. The usage record supplies average output TPS with its media
+// eligibility rules. Billing allocations are copied by
 // cloneBillingAllocationsDTO; other optional pointers and ImageSizeBreakdown
 // remain shared with l. Administrator additions are supplied later by
 // FromUsageAdmin.
@@ -78,7 +79,7 @@ func usageLogFromServiceUser(l *usage.UsageLog, language ...string) UsageLog {
 		NativeCompactionV2:        l.NativeCompactionV2,
 		DurationMs:                l.DurationMs,
 		TTFTMs:                    l.Timings.TTFTMs(),
-		TPS:                       l.Timings.TPS(l.OutputTokens),
+		TPS:                       l.TPS(),
 		TTFTMode:                  recordedTimingMode(l),
 		ImageCount:                l.ImageCount,
 		ImageSize:                 l.ImageSize,

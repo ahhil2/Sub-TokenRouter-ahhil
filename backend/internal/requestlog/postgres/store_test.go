@@ -142,9 +142,9 @@ func TestFindStopsWhenLookupIsCanceled(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestFindUsagePerformanceUsesOneBatch reads two logical requests through one usage
-// query. Each row keeps its own attempt, selected latency and throughput while the
-// enclosing request lifecycle remains unchanged and receives no performance copy.
+// TestFindUsagePerformanceUsesOneBatch reads text and image records through one
+// usage query. Each text row keeps its attempt, selected latency and average
+// output rate; generated images remain ineligible for text performance.
 func TestFindUsagePerformanceUsesOneBatch(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -155,6 +155,7 @@ func TestFindUsagePerformanceUsesOneBatch(t *testing.T) {
 	p.Values["upstream_first_output_ms"] = 300
 	p.Values["upstream_last_output_ms"] = 800
 	p.Values["upstream_output_event_count"] = 2
+	p.Values["upstream_finished_ms"] = 1100
 	p.Values["attempt_number"] = 2
 	first, err := json.Marshal(p)
 	require.NoError(t, err)
@@ -163,9 +164,10 @@ func TestFindUsagePerformanceUsesOneBatch(t *testing.T) {
 	second, err := json.Marshal(p)
 	require.NoError(t, err)
 	ids := []string{"first", "second"}
-	rows := sqlmock.NewRows([]string{"id", "request_id", "created_at", "user_id", "team_id", "api_key_id", "model", "input_tokens", "output_tokens", "actual_cost", "duration_ms", "timings"}).
-		AddRow(1, "first", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, first).
-		AddRow(2, "second", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, second)
+	rows := sqlmock.NewRows([]string{"id", "request_id", "created_at", "user_id", "team_id", "api_key_id", "model", "input_tokens", "output_tokens", "actual_cost", "duration_ms", "timings", "image_count", "image_output_tokens", "video_count", "billing_mode", "media_type", "request_type"}).
+		AddRow(1, "first", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, first, 0, 0, 0, nil, nil, 2).
+		AddRow(2, "second", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, second, 0, 0, 0, nil, nil, 2).
+		AddRow(3, "second", time.Now(), 101, 0, 201, "image-model", 20, 10, 0.5, 1000, second, 1, 0, 0, "image", "image", 1)
 	mock.ExpectQuery("SELECT id,COALESCE\\(request_id").WithArgs(pq.Array(ids), int64(101), true, "first", true).WillReturnRows(rows)
 	result := []requestlog.Detail{
 		{RequestRecord: telemetry.RequestRecord{RequestID: "first", DurationMs: 3000}},
@@ -175,7 +177,9 @@ func TestFindUsagePerformanceUsesOneBatch(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 	require.Equal(t, 50, *result[0].Usage[0].TTFTMs)
 	require.Equal(t, 200, *result[1].Usage[0].TTFTMs)
-	require.Equal(t, 20.0, *result[0].Usage[0].TPS)
+	require.Equal(t, 10.0, *result[0].Usage[0].TPS)
+	require.Equal(t, 10.0, *result[1].Usage[0].TPS)
+	require.Nil(t, result[1].Usage[1].TPS)
 	require.Equal(t, int64(2), result[0].Usage[0].Timings.Values["attempt_number"])
 	require.Equal(t, int64(1000), *result[0].Usage[0].DurationMs)
 	require.Equal(t, int64(3000), result[0].DurationMs)

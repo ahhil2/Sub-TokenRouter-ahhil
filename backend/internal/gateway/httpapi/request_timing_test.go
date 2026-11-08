@@ -425,7 +425,8 @@ func TestTimingLocalFailureDoesNotFlushUpstream(t *testing.T) {
 
 // TestTextRequestTimingFinalUsageAndToolInput exercises the upstream body observer
 // with separately arriving SSE frames. Both accepted Chat completion and newly
-// arrived tool arguments must retain complete usage and the actual content interval.
+// arrived tool arguments must retain complete usage and average TPS across the
+// entire upstream exchange, including the first frame's waiting time.
 func TestTextRequestTimingFinalUsageAndToolInput(t *testing.T) {
 	for name, frames := range map[string][]string{
 		"chat_without_done": {
@@ -471,7 +472,8 @@ func TestTextRequestTimingFinalUsageAndToolInput(t *testing.T) {
 				require.True(t, observed.Complete)
 				require.True(t, observed.UsageComplete)
 				require.Equal(t, int64(2), observed.Values["upstream_output_event_count"])
-				require.Equal(t, 200.0, *observed.TPS(20))
+				require.Equal(t, 300, *observed.DurationMs())
+				require.Equal(t, 66.7, *observed.TPS(20))
 			})
 		})
 	}

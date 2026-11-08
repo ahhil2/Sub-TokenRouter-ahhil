@@ -26,6 +26,8 @@ Ops 同时接收请求错误、单独的上游 attempt 错误、入口准入拒�
 
 管理员的 Ops API 提供：concurrency、user concurrency、provider availability、realtime traffic、错误、上游错误和请求详情、入口拒绝、系统日志，以及 dashboard 的 snapshot、trend、histogram 和 token stats。概览、错误列表和请求明细弹窗，共用当前的时间范围；自定义范围使用同一组 `start_time` 和 `end_time` 半开区间，请求明细的窗口标签显示对应的起止日期和时间；已经选了自定义模式时，再修改起止时间也会刷新数据。
 
+模型 token stats 的 `avg_tokens_per_sec` 对合格 usage 的平均输出 TPS 取算术平均。每条记录先用输出 token 除以本次上游总耗时并保留一位小数，再按模型求平均并保留两位小数；资格规则与[用量接口](../interfaces/http_api.md#response_errors)一致，未测得速率的记录仍计入请求数和 token 总量。实时流量和吞吐趋势的 TPS 使用窗口内消耗 token 总量除以窗口秒数，表示系统处理量。
+
 错误详情按错误摘要、请求信息、上游尝试、原始响应排列。摘要优先使用已记录的上游消息，HTML 和没有可提取消息的 JSON 显示响应格式，不作为根因结论。原始响应默认折叠；相同内容合并展示并保留全部来源标签，复制使用保存的原文。关联上游错误按时间升序分页加载，加载失败提供局部重试；部分记录无法读取详情时，显示实际读取数量。
 
 起止时间缺任何一个时，回退到 `1h`，字面量 `custom` 不会传给后端。QPS WebSocket 用于短窗口的实时展示，同样需要管理员鉴权，它不是长期的审计数据源。Ops 持有按需的采样、连接计数和三十秒空闲停止；HTTP 适配层负责 Origin 和可信代理的判断、管理员认证、帧、关闭码和写超时。连接断开不代表停止等待已经完成。

@@ -21,9 +21,10 @@ import (
 // and retains SQL absence as nil pointers. Those observations can describe
 // different database snapshots from each other and from the count queries.
 // Continuous percentiles are rounded to integer milliseconds, averages to one
-// decimal place, and maximums use native integers. NewMetricsQueries borrows
-// the SQL pool and shares it with its advisory-lock adapter; these methods
-// allocate no collector result cache.
+// decimal place, and maximums use native integers. Per-request output rates use
+// the completed upstream duration and exclude generated media and Live sessions.
+// NewMetricsQueries borrows the SQL pool and shares it with its advisory-lock
+// adapter; these methods allocate no collector result cache.
 
 // MetricsQueries reads request observations and supplies advisory leadership
 // locking to metric collection.
@@ -260,15 +261,28 @@ func usageTTFTSQL(alias string) string {
 	return "(CASE WHEN " + column + "->>'upstream_stream'='true' AND " + end + ">=" + start + " THEN " + end + "-" + start + " END)"
 }
 
-// usageTPSSQL estimates throughput from the same complete content interval as usage DTOs.
-// A lone chunk, incomplete usage, or invalid interval produces SQL NULL and therefore
-// cannot silently enter averages as a zero-speed observation.
+// usageTPSSQL derives the same nullable average output rate as usage.UsageLog.TPS.
+// Alias is a code-owned table alias. Complete usage, successful completion and a
+// positive upstream duration qualify both streaming and buffered text responses.
+//
+// Media counters and billing categories exclude image and video generations, while
+// the recorded Live category (request_type=5) excludes session-duration usage.
+// Unknown historical categories resolve to text transports in
+// UsageLog.EffectiveRequestType.
+// Ineligible rows yield SQL NULL so model averages use the same samples as usage
+// responses, including historical rows with complete timing snapshots.
 func usageTPSSQL(alias string) string {
 	prefix := ""
 	if alias != "" {
 		prefix = alias + "."
 	}
 	column := prefix + "timings"
-	elapsed := "((" + column + "->'values'->>'upstream_last_output_ms')::bigint-(" + column + "->'values'->>'upstream_first_output_ms')::bigint)"
-	return "(CASE WHEN " + column + "->>'upstream_stream'='true' AND " + column + "->>'upstream_complete'='true' AND " + column + "->>'usage_complete'='true' AND (" + column + "->'values'->>'upstream_output_event_count')::bigint>=2 AND " + prefix + "output_tokens>0 AND " + elapsed + ">0 THEN ROUND(" + prefix + "output_tokens*1000.0/" + elapsed + ",1) END)"
+	elapsed := "((" + column + "->'values'->>'upstream_finished_ms')::bigint-(" + column + "->'values'->>'upstream_started_ms')::bigint)"
+	// Use decimal seconds and one-place rounding to match the usage API's rate.
+	return "(CASE WHEN " + column + "->>'upstream_complete'='true' AND " +
+		column + "->>'usage_complete'='true' AND " + prefix + "output_tokens>0 AND " +
+		"COALESCE(" + prefix + "image_count,0)<=0 AND COALESCE(" + prefix + "image_output_tokens,0)<=0 AND " +
+		"COALESCE(" + prefix + "video_count,0)<=0 AND COALESCE(" + prefix + "billing_mode,'') NOT IN ('image','video') AND " +
+		"COALESCE(" + prefix + "media_type,'') NOT IN ('image','video') AND COALESCE(" + prefix + "request_type,0)<>5 AND " +
+		elapsed + ">0 THEN ROUND(" + prefix + "output_tokens*1000.0/" + elapsed + ",1) END)"
 }

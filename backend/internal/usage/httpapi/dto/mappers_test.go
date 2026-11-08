@@ -54,6 +54,30 @@ func TestUsageLogTimingFromService_MapsStages(t *testing.T) {
 	require.True(t, *got.UpstreamConnectionReused)
 }
 
+// TestUsageLogFromServiceSharesAverageTPS exercises both usage response roles
+// with complete buffered output and generated images. Their JSON exposes the
+// same rounded average or null selected by the usage record.
+func TestUsageLogFromServiceSharesAverageTPS(t *testing.T) {
+	row := &usage.UsageLog{OutputTokens: 334}
+	require.NoError(t, json.Unmarshal([]byte(`{"Timings":{"upstream_complete":true,"usage_complete":true,"values":{"upstream_started_ms":1614,"upstream_finished_ms":11761}}}`), row))
+	for _, imageCount := range []int{0, 1} {
+		row.ImageCount = imageCount
+		for _, response := range []any{FromUsage(row), FromUsageAdmin(row)} {
+			encoded, err := json.Marshal(response)
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal(encoded, &fields))
+			require.Contains(t, fields, "tps")
+			if imageCount == 0 {
+				require.Equal(t, 32.9, fields["tps"])
+			} else {
+				require.Nil(t, fields["tps"])
+			}
+			require.Nil(t, fields["ttft_ms"])
+		}
+	}
+}
+
 // TestUsageLogFromService_PrefersRequestTypeForLegacyFields supplies explicit
 // WS v2 beside false legacy flags. It requires both DTO forms to show ws_v2
 // and true transport booleans.

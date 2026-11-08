@@ -84,14 +84,16 @@ type UsageLog struct {
 	// RequestType, Stream and OpenAIWSMode are resolved together by the mapper
 	// from the effective category. Special execution categories retain their
 	// source flags to keep recorded transport information available.
-	RequestType        string   `json:"request_type"`         // effective request category label
-	Stream             bool     `json:"stream"`               // resolved stream transport flag
-	OpenAIWSMode       bool     `json:"openai_ws_mode"`       // resolved WebSocket transport flag
-	NativeCompactionV2 bool     `json:"native_compaction_v2"` // remote compaction v2 flag
-	DurationMs         *int     `json:"duration_ms"`          // optional upstream duration milliseconds
-	TTFTMs             *int     `json:"ttft_ms"`              // selected upstream delay milliseconds
-	TPS                *float64 `json:"tps"`                  // estimated output tokens per second
-	TTFTMode           string   `json:"ttft_mode,omitempty"`  // captured request timing mode
+	RequestType        string `json:"request_type"`         // effective request category label
+	Stream             bool   `json:"stream"`               // resolved stream transport flag
+	OpenAIWSMode       bool   `json:"openai_ws_mode"`       // resolved WebSocket transport flag
+	NativeCompactionV2 bool   `json:"native_compaction_v2"` // remote compaction v2 flag
+	DurationMs         *int   `json:"duration_ms"`          // optional upstream duration milliseconds
+	TTFTMs             *int   `json:"ttft_ms"`              // selected upstream delay milliseconds
+	// TPS includes the first-output wait in the upstream duration. Ineligible
+	// media or incomplete timing observations produce JSON null.
+	TPS      *float64 `json:"tps"`                 // average output tokens per second
+	TTFTMode string   `json:"ttft_mode,omitempty"` // captured request timing mode
 
 	ImageCount        int     `json:"image_count"`         // recorded generated image count
 	ImageSize         *string `json:"image_size"`          // optional image billing size tier
