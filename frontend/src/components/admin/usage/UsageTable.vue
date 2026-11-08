@@ -282,6 +282,22 @@
           </div>
         </template>
 
+        <template #cell-cache_rate="{ row }">
+          <span
+            class="cursor-help whitespace-nowrap text-sm font-medium tabular-nums"
+            :class="
+              calculateUsageCacheRate(row) === null
+                ? 'text-gray-400 dark:text-gray-500'
+                : row.cache_read_tokens > 0
+                  ? 'text-sky-600 dark:text-sky-400'
+                  : 'text-gray-900 dark:text-white'
+            "
+            :title="t('usage.cacheRateHint')"
+          >
+            {{ formatUsageCacheRate(row) }}
+          </span>
+        </template>
+
         <template #cell-cost="{ row }">
           <div class="text-sm">
             <div class="flex items-center gap-1.5">
@@ -1055,7 +1071,7 @@
 import RequestTimingDetails from '@/components/requests/RequestTimingDetails.vue'
 import RequestIdLink from '@/components/common/RequestIdLink.vue'
 import MotionTransition from '@/components/common/MotionTransition.vue'
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { useClipboard } from '@/composables/useClipboard'
@@ -1106,16 +1122,77 @@ import { fetchBatch, getEntry } from '@/utils/ipGeoLookup'
 import type { AdminUsageLog } from '@/api/usage.types'
 import type { Column } from '@/components/common/table/types'
 
-// UsageTable.vue renders usage rows with request identity, billing, tokens, and optional
-// diagnostics for administrator and user pages. Parent-selected columns and visibility
-// flags determine which details are exposed; user billing and provider charges use their
-// own amount formatters.
+// UsageTable.vue renders usage rows with request identity, billing, tokens, cache
+// rates, and optional diagnostics for administrator and user pages. Parent-selected
+// columns and visibility flags determine which details are exposed; user billing
+// and provider charges use their own amount formatters.
 //
 // Floating cost, token, and timing panels render outside table cells to escape
 // scrolling-container clipping. Their row identities are checked after Vue updates before
 // positioning, so a superseded opening cannot position another row's panel. Timing
 // additionally supports pinned inspection on touch screens. Viewport measurements choose a
 // side placement when space permits and clamp overlays when neither side fits.
+//
+// Cache rates use normalized input buckets and mark exact cache extremes before
+// rounding. Saved column layouts receive the cache-rate position before DataTable
+// loads its browser preference.
+
+// calculateUsageCacheRate returns the percentage of recorded input tokens read from
+// cache, or null when a count is missing, negative, nonfinite, or total input is zero.
+// Callers supply normalized usage rows whose ordinary input, cache creation, and cache
+// read counts are separate buckets. Cache creation contributes to total input but does
+// not represent a cache hit; output tokens and cache creation duration breakdowns do
+// not add to that total. Billing mode and request type do not replace these recorded
+// observations. The returned percentage remains unrounded.
+// @project-doc docs/domains/routing_and_billing.md#usage_cache_rate
+function calculateUsageCacheRate(row: AdminUsageLog): number | null {
+  const counts = [row.input_tokens, row.cache_creation_tokens, row.cache_read_tokens]
+  if (counts.some((value) => typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
+    return null
+  }
+  const totalInput = row.input_tokens + row.cache_creation_tokens + row.cache_read_tokens
+  if (!Number.isFinite(totalInput) || totalInput === 0) return null
+  // Express the input share as a percentage for the usage column.
+  return (row.cache_read_tokens / totalInput) * 100
+}
+
+// formatUsageCacheRate displays one fractional digit and marks exact cache extremes.
+// Unavailable rates use a dash; the original token counts determine the emoji so
+// rounding a partial hit to zero or one hundred does not mark it as an exact extreme.
+function formatUsageCacheRate(row: AdminUsageLog): string {
+  const rate = calculateUsageCacheRate(row)
+  if (rate === null) return '—'
+  // Match the usage table's one-decimal numeric precision.
+  const label = `${rate.toFixed(1)}%`
+  if (row.cache_read_tokens === 0) return `${label} 🤡`
+  if (row.input_tokens === 0 && row.cache_creation_tokens === 0) return `${label} 👑`
+  return label
+}
+
+// migrateCacheRateColumnOrder inserts the cache rate into an older usage preference.
+// Run before DataTable reads the storage key. Existing cache-rate positions remain
+// user-owned; otherwise insertion follows Token, or precedes Cost when Token is absent.
+function migrateCacheRateColumnOrder(storageKey: string | undefined): void {
+  if (!storageKey) return
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(storageKey) || 'null')
+    if (
+      !Array.isArray(stored) ||
+      stored.some((key) => typeof key !== 'string') ||
+      stored.includes('cache_rate')
+    ) {
+      return
+    }
+    const tokensIndex = stored.indexOf('tokens')
+    const insertIndex = tokensIndex >= 0 ? tokensIndex + 1 : stored.indexOf('cost')
+    if (insertIndex < 0) return
+    stored.splice(insertIndex, 0, 'cache_rate')
+    localStorage.setItem(storageKey, JSON.stringify(stored))
+  } catch {
+    // Leave inaccessible or malformed preferences to DataTable's existing recovery so a
+    // browser storage failure cannot prevent usage records from rendering.
+  }
+}
 
 // providerBilled multiplies the provider statistics cost by the provider rate. A missing
 // statistics cost uses total cost, a missing multiplier uses one, and NaN produces zero for
@@ -1180,6 +1257,14 @@ const props = withDefaults(defineProps<Props>(), {
   flat: false,
   showIpGeoToolbar: true,
 })
+
+// Update the usage preference before the child table initializes or switches storage
+// keys, so its first column merge observes the requested cache-rate position.
+watch(() => props.columnOrderStorageKey, migrateCacheRateColumnOrder, {
+  immediate: true,
+  flush: 'sync',
+})
+
 // emit publishes user navigation, server sorting, and batch IP lookup failures to the
 // owning usage page.
 const emit = defineEmits<{

@@ -513,6 +513,9 @@ export default {
     type: 'Type',
     tokens: 'Tokens',
     cost: 'Cost',
+    cacheRate: 'Cache rate',
+    cacheRateHint:
+      'Cache read tokens ÷ (ordinary input + cache read + cache creation tokens) × 100%, excluding output. No input or missing or invalid counts show —. 🤡 marks no cache hits; 👑 marks fully cached input. Emoji use the actual token counts.',
     firstToken: 'First output / event (ms)',
     duration: 'Duration',
     latency: 'Latency',

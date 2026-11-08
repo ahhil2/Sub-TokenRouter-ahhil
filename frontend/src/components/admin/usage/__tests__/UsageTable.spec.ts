@@ -27,13 +27,13 @@ vi.mock('@/composables/useBalanceDisplay', () => ({
   }),
 }))
 
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
 import UsageTable from '../UsageTable.vue'
 
-// UsageTable.spec.ts tests billing, identity, tooltip positioning, and IP lookup
+// UsageTable.spec.ts tests billing, cache rates, identity, tooltip positioning, and IP lookup
 // behavior in usage rows. Table-slot stubs expose actual cell content, while clipboard
 // and location substitutes record effects for assertions against representative
 // historical and current records.
@@ -116,6 +116,7 @@ const DataTableStub = {
         <slot name="cell-model" :row="row" :value="row.model" />
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
+        <div class="cache-rate-cell"><slot name="cell-cache_rate" :row="row" /></div>
         <slot name="cell-cost" :row="row" />
         <slot name="cell-latency" :row="row" />
         <div class="tps-cell"><slot name="cell-tps" :row="row" /></div>
@@ -278,6 +279,178 @@ describe('使用记录 TPS 列', () => {
       '1.2 tok/s',
     ])
     expect(wrapper.get('.tps-cell span').attributes('title')).toBe('usage.tpsHint')
+    wrapper.unmount()
+  })
+})
+
+describe('使用记录缓存率列', () => {
+  // tokenRow provides disjoint input buckets with no generated images so individual
+  // cases can vary cache observations independently of billing and output presentation.
+  const tokenRow = { ...baseImageRow, billing_mode: 'token', image_count: 0, input_tokens: 4096 }
+
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    localStorage.clear()
+  })
+
+  // Recorded input buckets include partial hits, new cache writes, and exact extremes.
+  // Rendered rates must exclude output and duration breakdowns, and rounded partial hits
+  // must not receive an emoji reserved for a true zero or full hit.
+  it.each([
+    { name: '部分命中', row: { cache_read_tokens: 16384 }, expected: '80.0%' },
+    { name: '没有缓存', row: {}, expected: '0.0% 🤡' },
+    { name: '全部命中', row: { input_tokens: 0, cache_read_tokens: 16384 }, expected: '100.0% 👑' },
+    {
+      name: '缓存写入计入分母，输出和写入分档不重复计算',
+      row: {
+        input_tokens: 200,
+        cache_read_tokens: 600,
+        cache_creation_tokens: 200,
+        cache_creation_5m_tokens: 150,
+        cache_creation_1h_tokens: 50,
+        output_tokens: 10000,
+      },
+      expected: '60.0%',
+    },
+    {
+      name: '只有缓存写入也算未命中',
+      row: { input_tokens: 0, cache_creation_tokens: 200 },
+      expected: '0.0% 🤡',
+    },
+    {
+      name: '四舍五入至零不加小丑',
+      row: { input_tokens: 9999, cache_read_tokens: 1 },
+      expected: '0.0%',
+    },
+    {
+      name: '四舍五入至满值不加皇冠',
+      row: { input_tokens: 1, cache_read_tokens: 9999 },
+      expected: '100.0%',
+    },
+    {
+      name: '图片输入生成文本可计算',
+      row: { image_input_tokens: 1024, cache_read_tokens: 16384 },
+      expected: '80.0%',
+    },
+    { name: '输入为零', row: { input_tokens: 0 }, expected: '—' },
+    {
+      name: '缺少输入计数',
+      row: { input_tokens: undefined, cache_read_tokens: 20 },
+      expected: '—',
+    },
+    { name: '缺少缓存读取计数', row: { cache_read_tokens: undefined }, expected: '—' },
+    { name: '缺少缓存写入计数', row: { cache_creation_tokens: undefined }, expected: '—' },
+    { name: '负数计数', row: { cache_creation_tokens: -1 }, expected: '—' },
+    { name: '非有限计数', row: { cache_read_tokens: NaN }, expected: '—' },
+    { name: '计数总和溢出', row: { input_tokens: 1e308, cache_read_tokens: 1e308 }, expected: '—' },
+    {
+      name: '按图片计费且有 Token 记录',
+      row: { billing_mode: 'image', cache_read_tokens: 20 },
+      expected: '0.5%',
+    },
+    { name: '仅记录图片张数', row: { ...baseImageRow }, expected: '—' },
+    {
+      name: '按 Token 计费的图片生成',
+      row: { image_count: 1, cache_read_tokens: 20 },
+      expected: '0.5%',
+    },
+    {
+      name: '视频生成且有 Token 记录',
+      row: { billing_mode: 'video', cache_read_tokens: 20 },
+      expected: '0.5%',
+    },
+    {
+      name: 'Live 会话且有 Token 记录',
+      row: { request_type: 'live' as const, cache_read_tokens: 20 },
+      expected: '0.5%',
+    },
+  ])('$name', ({ row, expected }) => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...tokenRow, ...row }],
+        columns: [{ key: 'cache_rate', label: '缓存率' }],
+      },
+      global: {
+        stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
+      },
+    })
+    expect(wrapper.get('.cache-rate-cell').text()).toBe(expected)
+    expect(wrapper.get('.cache-rate-cell span').attributes('title')).toBe('usage.cacheRateHint')
+    wrapper.unmount()
+  })
+
+  // Saved layouts predate cache-rate reporting or contain a later user-selected position.
+  // The real child table must render migrated headers before its first merge and retain
+  // an existing cache-rate placement across administrator and user storage identities.
+  it.each([
+    {
+      key: 'admin-usage-column-order',
+      stored: ['tokens', 'cost'],
+      expected: ['tokens', 'cache_rate', 'cost'],
+    },
+    {
+      key: 'user-usage-column-order',
+      stored: ['tokens', 'cost'],
+      expected: ['tokens', 'cache_rate', 'cost'],
+    },
+    { key: 'usage-column-order', stored: ['cost'], expected: ['cache_rate', 'cost', 'tokens'] },
+    {
+      key: 'usage-column-order',
+      stored: ['cache_rate', 'tokens', 'cost'],
+      expected: ['cache_rate', 'tokens', 'cost'],
+    },
+  ])('恢复 $key 中的 $stored', ({ key, stored, expected }) => {
+    localStorage.setItem(key, JSON.stringify(stored))
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [tokenRow],
+        columns: [
+          { key: 'tokens', label: 'Token' },
+          { key: 'cache_rate', label: '缓存率' },
+          { key: 'cost', label: '费用' },
+        ],
+        columnOrderStorageKey: key,
+      },
+      global: { stubs: { EmptyState: true, Icon: true, Teleport: true } },
+    })
+    expect(
+      wrapper.findAll('th[data-column-key]').map((cell) => cell.attributes('data-column-key')),
+    ).toEqual(expected)
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual(
+      expected.filter((column) => column === 'cache_rate' || stored.includes(column)),
+    )
+    wrapper.unmount()
+  })
+
+  // Browser storage can reject reads or contain malformed preferences from an older page.
+  // Usage rendering must remain available and use the declared column order in those cases.
+  it.each(['unavailable', 'malformed'])('列偏好 %s 时仍可显示缓存率', (state) => {
+    if (state === 'unavailable') {
+      vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
+        throw new Error('Storage unavailable')
+      })
+    } else {
+      localStorage.setItem('usage-column-order', '{invalid')
+    }
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [tokenRow],
+        columns: [
+          { key: 'tokens', label: 'Token' },
+          { key: 'cache_rate', label: '缓存率' },
+          { key: 'cost', label: '费用' },
+        ],
+      },
+      global: { stubs: { EmptyState: true, Icon: true, Teleport: true } },
+    })
+    expect(
+      wrapper.findAll('th[data-column-key]').map((cell) => cell.attributes('data-column-key')),
+    ).toEqual(['tokens', 'cache_rate', 'cost'])
+    expect(wrapper.text()).toContain('0.0% 🤡')
     wrapper.unmount()
   })
 })

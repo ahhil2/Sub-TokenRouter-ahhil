@@ -55,6 +55,7 @@ vi.mock('file-saver', () => ({ saveAs: exportMocks.save }))
 // controls and compare spreadsheet columns against their headings.
 const messages: Record<string, string> = {
   'usage.tps': 'TPS',
+  'usage.cacheRate': 'Cache rate',
   'usage.tpsExport': 'TPS (tok/s)',
   'admin.dashboard.timeRange': 'Time Range',
   'admin.dashboard.day': 'Day',
@@ -921,10 +922,13 @@ describe('admin UsageView request ID column visibility', () => {
       },
     })
 
-  // Old column preferences precede the TPS column and then explicitly hide it. The test
+  // Old column preferences precede a metric column and then explicitly hide it. The test
   // protects its default placement, unsortable status, and retaining the hidden choice
   // after remount.
-  it('TPS 默认可见，旧偏好补入该列，隐藏后重新挂载仍隐藏', async () => {
+  it.each([
+    { key: 'tps', label: 'TPS', after: 'latency' },
+    { key: 'cache_rate', label: 'Cache rate', after: 'tokens' },
+  ])('$label 默认可见且隐藏后重新挂载仍隐藏', async ({ key, label, after }) => {
     const saved = new Map([['usage-hidden-columns', JSON.stringify(['ip_address'])]])
     vi.mocked(localStorage.getItem).mockImplementation((key) => saved.get(key) ?? null)
     vi.mocked(localStorage.setItem).mockImplementation((key, value) => {
@@ -936,16 +940,21 @@ describe('admin UsageView request ID column visibility', () => {
       key: string // table column identifier
       sortable?: boolean // server sorting availability flag
     }>
-    expect(columns.findIndex((column) => column.key === 'tps')).toBe(
-      columns.findIndex((column) => column.key === 'latency') + 1,
+    expect(columns.findIndex((column) => column.key === key)).toBe(
+      columns.findIndex((column) => column.key === after) + 1,
     )
-    expect(columns.find((column) => column.key === 'tps')?.sortable).toBe(false)
+    if (key === 'cache_rate') {
+      expect(columns.findIndex((column) => column.key === 'cost')).toBe(
+        columns.findIndex((column) => column.key === key) + 1,
+      )
+    }
+    expect(columns.find((column) => column.key === key)?.sortable).toBe(false)
     await wrapper.get('button[title="admin.users.columnSettings"]').trigger('click')
     await wrapper
       .findAll('button')
-      .find((button) => button.text() === 'TPS')!
+      .find((button) => button.text() === label)!
       .trigger('click')
-    expect(JSON.parse(saved.get('usage-hidden-columns')!)).toContain('tps')
+    expect(JSON.parse(saved.get('usage-hidden-columns')!)).toContain(key)
     wrapper.unmount()
     const restored = mountColumnView()
     await flushPromises()
@@ -958,7 +967,7 @@ describe('admin UsageView request ID column visibility', () => {
             key: string // table column identifier
           }) => column.key,
         ),
-    ).not.toContain('tps')
+    ).not.toContain(key)
     restored.unmount()
   })
 

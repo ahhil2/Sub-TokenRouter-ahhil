@@ -494,6 +494,9 @@ export default {
     type: '类型',
     tokens: 'Token',
     cost: '费用',
+    cacheRate: '缓存率',
+    cacheRateHint:
+      '缓存读取 Token ÷（普通输入 + 缓存读取 + 缓存写入 Token）× 100%，不含输出。无输入、数据缺失或无效时显示 —。🤡 表示完全未命中，👑 表示全部输入命中缓存；表情按实际 Token 数判断。',
     firstToken: '首字／首包(ms)',
     duration: '耗时',
     latency: '延迟',

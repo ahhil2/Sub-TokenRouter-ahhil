@@ -67,6 +67,7 @@ const messages: Record<string, string> = {
   'usage.latencyFirstToken': 'First output',
   'usage.duration': 'Duration (ms)',
   'usage.tps': 'TPS',
+  'usage.cacheRate': 'Cache rate',
   'usage.tpsExport': 'TPS (tok/s)',
 
   'admin.dashboard.timeRange': 'Time range',
@@ -634,10 +635,13 @@ describe('user UsageView', () => {
     expect(columns.map((col) => col.key)).not.toContain('user_agent')
   })
 
-  // Old user preferences precede TPS and then explicitly hide it. The test protects default
-  // placement after latency, its unsortable status, and persistence after the page
+  // Old user preferences precede a metric and then explicitly hide it. The test protects
+  // its declared placement, unsortable status, and persistence after the page
   // remounts.
-  it('TPS 默认放在延迟后，旧偏好可见且隐藏后重新挂载仍隐藏', async () => {
+  it.each([
+    { key: 'tps', label: 'TPS', after: 'latency' },
+    { key: 'cache_rate', label: 'Cache rate', after: 'tokens' },
+  ])('$label 默认位置正确且隐藏后重新挂载仍隐藏', async ({ key, label, after }) => {
     localStorage.setItem('user-usage-hidden-columns', JSON.stringify(['ip_address']))
     const wrapper = mountUsageView()
     await flushPromises()
@@ -645,18 +649,23 @@ describe('user UsageView', () => {
       key: string // table column identifier
       sortable?: boolean // server sorting availability flag
     }>
-    expect(columns.findIndex((column) => column.key === 'tps')).toBe(
-      columns.findIndex((column) => column.key === 'latency') + 1,
+    expect(columns.findIndex((column) => column.key === key)).toBe(
+      columns.findIndex((column) => column.key === after) + 1,
     )
-    expect(columns.find((column) => column.key === 'tps')?.sortable).toBe(false)
+    if (key === 'cache_rate') {
+      expect(columns.findIndex((column) => column.key === 'cost')).toBe(
+        columns.findIndex((column) => column.key === key) + 1,
+      )
+    }
+    expect(columns.find((column) => column.key === key)?.sortable).toBe(false)
     await wrapper.get('button[title="Columns"]').trigger('click')
     await wrapper
       .findAll('button')
-      .find((button) => button.text() === 'TPS')!
+      .find((button) => button.text() === label)!
       .trigger('click')
     expect(JSON.parse(localStorage.getItem('user-usage-hidden-columns')!)).toEqual([
       'ip_address',
-      'tps',
+      key,
     ])
     wrapper.unmount()
     const restored = mountUsageView()
@@ -670,7 +679,7 @@ describe('user UsageView', () => {
             key: string // table column identifier
           }) => column.key,
         ),
-    ).not.toContain('tps')
+    ).not.toContain(key)
   })
 
   // CSV export runs with selected user filters and representative usage values. The test
