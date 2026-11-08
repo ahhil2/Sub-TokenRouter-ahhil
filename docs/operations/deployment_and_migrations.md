@@ -45,6 +45,8 @@ Go 构建使用 1.27.3，后端模块、两个开发工具模块和三份源码 
 
 标准发布的归档命名为 `tokenrouter_<版本>_<系统>_<架构>`，包含 `tokenrouter` 可执行文件。CI 将矩阵编译的二进制导入 GoReleaser，所有归档都写进 `checksums.txt`。当前更新器优先使用 `tokenrouter_` 归档，并支持读取历史发布的 `sub2api_` 归档，替换的位置是当前实际的可执行文件路径。只识别 `sub2api_` 归档或包内 `sub2api` 文件的旧更新器需要手动升级。
 
+Linux 发布模式提供 amd64 和 arm64 两个归档及校验文件，归档包含 Web 界面，命名和更新器规则与标准发布一致。该模式的选择方法见[发布流程](development_workflow.md#发布)。
+
 官方价格补充和离线模型目录都内嵌在二进制里，后台在线更新、安装脚本、完整归档和 Docker 使用同一份默认数据。替换或回退二进制时，官方补充随版本切换，不需要额外安装资源文件。安装器不会创建或覆盖外部的价格补充。`pricing.fallback_file` 默认为空，手动配置的自定义文件照常读取，并优先于内嵌补充；旧的打包路径按[配置兼容规则](../interfaces/configuration.md#configuration_sources)处理。不再需要旧文件时，清空这个配置，文件本身由部署者管理。
 
 已有的 Compose 部署保留原来的编排和 `.env`，只升级镜像即可。换用新模板时，先记下实际的应用、PostgreSQL 和 Redis 卷名，分别设置 `TOKENROUTER_DATA_VOLUME`、`TOKENROUTER_POSTGRES_VOLUME`、`TOKENROUTER_REDIS_VOLUME`；同时保留数据库名、用户和密钥，停止旧栈后再启动新模板，不要使用 `down -v`。新变量为空时，按 Compose 项目前缀生成新的卷名。

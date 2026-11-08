@@ -1,0 +1,73 @@
+# .goreleaser.linux.yaml publishes Linux amd64 and arm64 archives with SHA-256
+# checksums. The release workflow supplies compiled binaries and annotated tag
+# notes; local runs can compile the same targets. Installation text refers to
+# the archives included in this release.
+version: 2
+
+project_name: tokenrouter
+
+builds:
+  - id: tokenrouter
+    dir: backend
+    main: ./cmd/server
+    binary: tokenrouter
+    tool: '{{ if .Env.GORELEASER_PREBUILT_DIR }}../tools/goreleaser_prebuilt.sh{{ else }}go{{ end }}'
+    flags:
+      - -tags=embed
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.Commit={{.Commit}}
+      - -X main.Date={{.Date}}
+      - -X main.BuildType=release
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    files:
+      - LICENSE*
+      - README*
+      - deploy/*
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: '{{ .Env.GITHUB_REPO_OWNER }}'
+    name: '{{ .Env.GITHUB_REPO_NAME }}'
+  draft: false
+  prerelease: auto
+  name_template: 'TokenRouter {{.Version}}'
+  header: |
+    {{ .Env.TAG_MESSAGE }}
+  footer: |
+    ## Downloads and installation
+
+    Download the Linux amd64 or Linux arm64 archive and `checksums.txt` from the assets below. Both archives include the web interface.
+
+    Verify the downloaded archive, then extract the package for your architecture. For Linux amd64:
+
+    ```bash
+    sha256sum --ignore-missing -c checksums.txt
+    tar -xzf tokenrouter_{{ .Version }}_linux_amd64.tar.gz
+    ./tokenrouter -version
+    ```
+
+    Keep your PostgreSQL, Redis, and application configuration when replacing the executable. See the deployment guide for installation details.
+
+    ## Documentation
+
+    - [Repository](https://github.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }})
+    - [Deployment guide](https://github.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }}/blob/{{ .Tag }}/docs/guides/deployment/superahhil.md)

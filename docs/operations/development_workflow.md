@@ -429,7 +429,9 @@ DOMPurify 用于 Markdown 页面、公告、支付说明和 SVG 图标的内容�
 
 每个镜像架构只构建一次，同时打上 GHCR 和可选的 DockerHub 标签；没有配置 DockerHub 时，不会创建占位镜像。simple release 跳过二进制矩阵，只构建精简的镜像集合。workflow 从 annotated tag 的 body 读取 release notes，成功后把 `backend/cmd/server/VERSION` 同步回默认分支。
 
-`release` 和 `sync-version-file` 成功后，`notify-discord` 向 Discord 发布英文版本公告，标准发布和 simple release 都会执行。仓库 Actions Secret `DISCORD_RELEASE_WEBHOOK_URL` 保存 `releases` 频道的专用 Webhook URL，地址使用 Discord 生成的完整值。通知步骤从 GitHub Release 读取版本名、更新说明和下载链接，`tools/notify_discord_release.py` 构造消息并附上本次 workflow 链接。草稿发布会被拒绝，长说明会截断并保留完整 Release 链接，消息关闭所有提及通知。
+只发布 Linux 安装包时，手动运行 workflow 并启用 `linux_only`，或在推送版本 tag 前将仓库变量 `LINUX_ONLY_RELEASE` 设为 `true`。该模式优先于 simple release，构建 Linux amd64 和 arm64，并通过 `.goreleaser.linux.yaml` 发布两个包含 Web 界面的归档和 `checksums.txt`；容器镜像及其他系统的构建步骤跳过。仓库变量影响后续 tag 发布，单次发布使用后应恢复之前的值。
+
+`release` 和 `sync-version-file` 成功后，`notify-discord` 向 Discord 发布英文版本公告，三种发布模式都会执行。仓库 Actions Secret `DISCORD_RELEASE_WEBHOOK_URL` 保存 `releases` 频道的专用 Webhook URL，地址使用 Discord 生成的完整值。通知步骤从 GitHub Release 读取版本名、更新说明和下载链接，`tools/notify_discord_release.py` 构造消息并附上本次 workflow 链接。草稿发布会被拒绝，长说明会截断并保留完整 Release 链接，消息关闭所有提及通知。
 
 缺少 Secret 时通知步骤输出警告并跳过。发送失败会显示警告，发布结果仍为成功。脚本等待 Discord 返回消息回执；网络超时后由维护者检查频道，确认消息是否送达。重跑已成功的通知会再发送一条消息。GitHub feed 的提交动态使用仓库 push Webhook，发布公告由 Release workflow 发送。
 

@@ -1,3 +1,7 @@
+# release.yml builds and publishes versioned TokenRouter artifacts from annotated
+# tags. The selected release mode determines the binary matrix and packaging
+# configuration together, so Linux archive releases build their two architectures
+# and publish installation instructions matching those downloadable packages.
 name: Release
 
 on:
@@ -15,11 +19,17 @@ on:
         required: false
         type: boolean
         default: false
+      linux_only:
+        description: 'Publish Linux amd64 and arm64 archives with checksums'
+        required: false
+        type: boolean
+        default: false
 
-# 环境变量：合并 workflow_dispatch 输入和 repository variable
-# tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
+# Release selectors accept manual inputs or repository variables for tag pushes.
+# Metadata resolves their precedence before selecting compilation and packaging.
 env:
   SIMPLE_RELEASE: ${{ github.event.inputs.simple_release == 'true' || vars.SIMPLE_RELEASE == 'true' }}
+  LINUX_ONLY_RELEASE: ${{ github.event.inputs.linux_only == 'true' || vars.LINUX_ONLY_RELEASE == 'true' }}
   DOCKERHUB_ENABLED: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
 
 permissions:
@@ -35,6 +45,7 @@ jobs:
       commit: ${{ steps.release-metadata.outputs.commit }}
       build-date: ${{ steps.release-metadata.outputs.build-date }}
       simple-release: ${{ steps.release-metadata.outputs.simple-release }}
+      linux-only: ${{ steps.release-metadata.outputs.linux-only }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -62,11 +73,18 @@ jobs:
           echo "$VERSION" > backend/cmd/server/VERSION
           echo "Updated VERSION file to: $VERSION"
 
+          # Linux archives take precedence when both selectors are enabled, so
+          # binary compilation and packaging use the same resolved release mode.
+          if [ "$LINUX_ONLY_RELEASE" = 'true' ]; then
+            SIMPLE_RELEASE=false
+          fi
+
           {
             echo "version=$VERSION"
             echo "commit=$COMMIT"
             echo "build-date=$BUILD_DATE"
             echo "simple-release=$SIMPLE_RELEASE"
+            echo "linux-only=$LINUX_ONLY_RELEASE"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload VERSION artifact
@@ -111,7 +129,8 @@ jobs:
           path: backend/internal/web/dist/
           retention-days: 1
 
-  # 标准发布把每个目标放到独立 runner，避免多个 Go 编译任务争抢同一台 4 核机器。
+  # Each selected target compiles on its own runner so parallel Go builds receive
+  # independent memory and CPU budgets while sharing the prepared frontend artifact.
   build-binaries:
     needs: [update-version, build-frontend]
     if: ${{ needs.update-version.outputs.simple-release != 'true' }}
@@ -119,21 +138,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: linux_amd64
-            goos: linux
-            goarch: amd64
-          - target: linux_arm64
-            goos: linux
-            goarch: arm64
-          - target: windows_amd64
-            goos: windows
-            goarch: amd64
-          - target: darwin_amd64
-            goos: darwin
-            goarch: amd64
-          - target: darwin_arm64
-            goos: darwin
+        goos: ${{ fromJSON(needs.update-version.outputs.linux-only == 'true' && '["linux"]' || '["linux","windows","darwin"]') }}
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
             goarch: arm64
     steps:
       - name: Checkout
@@ -160,7 +168,7 @@ jobs:
           check-latest: false
           cache-dependency-path: backend/go.sum
 
-      - name: Build ${{ matrix.target }} binary
+      - name: Build ${{ matrix.goos }}_${{ matrix.goarch }} binary
         working-directory: backend
         env:
           CGO_ENABLED: 0
@@ -170,7 +178,7 @@ jobs:
           GOARM64: v8.0
           RELEASE_COMMIT: ${{ needs.update-version.outputs.commit }}
           RELEASE_DATE: ${{ needs.update-version.outputs.build-date }}
-          OUTPUT_NAME: tokenrouter_${{ matrix.target }}
+          OUTPUT_NAME: tokenrouter_${{ matrix.goos }}_${{ matrix.goarch }}
         run: |
           mkdir -p ../prebuilt
           go build \
@@ -179,11 +187,11 @@ jobs:
             -o "../prebuilt/${OUTPUT_NAME}" \
             ./cmd/server
 
-      - name: Upload ${{ matrix.target }} binary
+      - name: Upload ${{ matrix.goos }}_${{ matrix.goarch }} binary
         uses: actions/upload-artifact@v7
         with:
-          name: release-binary-${{ matrix.target }}
-          path: prebuilt/tokenrouter_${{ matrix.target }}
+          name: release-binary-${{ matrix.goos }}_${{ matrix.goarch }}
+          path: prebuilt/tokenrouter_${{ matrix.goos }}_${{ matrix.goarch }}
           if-no-files-found: error
           retention-days: 1
 
@@ -239,20 +247,22 @@ jobs:
 
       # Docker setup for GoReleaser
       - name: Set up QEMU
-        if: ${{ needs.update-version.outputs.simple-release != 'true' }}
+        if: ${{ needs.update-version.outputs.linux-only != 'true' && needs.update-version.outputs.simple-release != 'true' }}
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        if: ${{ needs.update-version.outputs.linux-only != 'true' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Login to DockerHub
-        if: ${{ needs.update-version.outputs.simple-release != 'true' && env.DOCKERHUB_ENABLED == 'true' }}
+        if: ${{ needs.update-version.outputs.linux-only != 'true' && needs.update-version.outputs.simple-release != 'true' && env.DOCKERHUB_ENABLED == 'true' }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Login to GitHub Container Registry
+        if: ${{ needs.update-version.outputs.linux-only != 'true' }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -287,7 +297,9 @@ jobs:
         uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
-          args: release --clean --skip=validate ${{ needs.update-version.outputs.simple-release == 'true' && '--config=.goreleaser.simple.yaml' || '' }}
+          args: >-
+            release --clean --skip=validate
+            ${{ needs.update-version.outputs.linux-only == 'true' && '--config=.goreleaser.linux.yaml' || needs.update-version.outputs.simple-release == 'true' && '--config=.goreleaser.simple.yaml' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_MESSAGE: ${{ steps.tag_message.outputs.message }}
@@ -299,7 +311,7 @@ jobs:
 
       # Update DockerHub description
       - name: Update DockerHub description
-        if: ${{ env.SIMPLE_RELEASE != 'true' && env.DOCKERHUB_ENABLED == 'true' }}
+        if: ${{ needs.update-version.outputs.linux-only != 'true' && env.SIMPLE_RELEASE != 'true' && env.DOCKERHUB_ENABLED == 'true' }}
         continue-on-error: true
         uses: peter-evans/dockerhub-description@v5
         with:
@@ -311,7 +323,7 @@ jobs:
 
       # Send Telegram notification
       - name: Send Telegram Notification
-        if: ${{ env.SIMPLE_RELEASE != 'true' }}
+        if: ${{ needs.update-version.outputs.linux-only != 'true' && env.SIMPLE_RELEASE != 'true' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
