@@ -3493,6 +3493,13 @@ func (f fakeAPIKeyRepo) RotateCredential(context.Context, *apikey.APIKey, string
 	panic("unexpected RotateCredential call")
 }
 
+// HasBatchImageKey panics when authorization requests menu capability data.
+// These scenarios exercise credential validation and diagnostic touches; a
+// capability lookup here indicates an unexpected dependency in the authorization path.
+func (f fakeAPIKeyRepo) HasBatchImageKey(context.Context, int64) (bool, error) {
+	panic("unexpected HasBatchImageKey call")
+}
+
 // Update rejects key updates with the authentication fixture's
 // unimplemented-operation error.
 func (f fakeAPIKeyRepo) Update(ctx context.Context, key *apikey.APIKey, _ apikey.APIKeyUpdateFields) error {
@@ -3993,6 +4000,13 @@ func (r *stubApiKeyRepo) GetByKeyForAuth(ctx context.Context, key string) (*apik
 // rotation callers require a repository that implements credential mutation.
 func (r *stubApiKeyRepo) RotateCredential(context.Context, *apikey.APIKey, string) error {
 	panic("unexpected RotateCredential call")
+}
+
+// HasBatchImageKey panics if standard authorization queries menu eligibility.
+// Credential validation uses this fixture's configured key lookup, so capability
+// checks require a separate repository configured for that operation.
+func (r *stubApiKeyRepo) HasBatchImageKey(context.Context, int64) (bool, error) {
+	panic("unexpected HasBatchImageKey call")
 }
 
 // Update rejects key updates with the authentication fixture's

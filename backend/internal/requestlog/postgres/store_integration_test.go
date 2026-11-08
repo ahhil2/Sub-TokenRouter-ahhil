@@ -15,8 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/requestlog"
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
+	"github.com/TokenFlux/TokenRouter/internal/usage"
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
@@ -580,6 +582,63 @@ VALUES ('local-first',101,502),('local-second',202,502);`)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.Equal(t, "child", items[0].RequestID)
+}
+
+// TestStoreUsagePerformanceReadsCurrentSchema reads completed text and media usage
+// through the migrated PostgreSQL schema. Request lookup returns average text TPS
+// while generated media and Live sessions retain an unavailable text rate.
+func TestStoreUsagePerformanceReadsCurrentSchema(t *testing.T) {
+	db := postgrescontainer.New(t)
+	ctx := t.Context()
+	_, err := db.ExecContext(ctx, `
+INSERT INTO users(id,email,password_hash) VALUES(101,'performance@requests.test','hash');
+INSERT INTO api_keys(id,user_id,key,name) VALUES(101,101,'performance-key','lookup');
+INSERT INTO providers(id,name,platform,type) VALUES(101,'performance','openai','apikey');`)
+	require.NoError(t, err)
+	p := timing.NewPerformance(timing.FirstOutput, 100)
+	p.Complete, p.UsageComplete = true, true
+	p.Values["upstream_first_output_ms"] = 1090
+	p.Values["upstream_finished_ms"] = 1100
+	timings, err := json.Marshal(p)
+	require.NoError(t, err)
+	store := NewStore(db)
+	for _, test := range []struct {
+		name              string            // request lookup identifier
+		imageCount        int               // generated image count
+		imageOutputTokens int               // generated image tokens
+		videoCount        int               // generated video count
+		billingMode       string            // stored pricing category
+		requestType       usage.RequestType // stored execution category
+		text              bool              // expected text rate availability
+	}{
+		{"text", 0, 0, 0, "token", usage.RequestTypeSync, true},
+		{"image-count", 1, 0, 0, "token", usage.RequestTypeSync, false},
+		{"image-tokens", 0, 1, 0, "token", usage.RequestTypeSync, false},
+		{"video-count", 0, 0, 1, "token", usage.RequestTypeSync, false},
+		{"image-billing", 0, 0, 0, "image", usage.RequestTypeSync, false},
+		{"video-billing", 0, 0, 0, "video", usage.RequestTypeSync, false},
+		{"live", 0, 0, 0, "token", usage.RequestTypeLive, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := db.ExecContext(ctx, `INSERT INTO usage_logs
+(user_id,billing_user_id,api_key_id,provider_id,request_id,model,output_tokens,timings,
+ image_count,image_output_tokens,video_count,billing_mode,request_type)
+VALUES(101,101,101,101,$1,'model',10,$2,$3,$4,$5,$6,$7)`,
+				test.name, string(timings), test.imageCount, test.imageOutputTokens,
+				test.videoCount, test.billingMode, test.requestType)
+			require.NoError(t, err)
+			items, err := store.Find(ctx, test.name, 101, false)
+			require.NoError(t, err)
+			require.Len(t, items, 1)
+			require.Len(t, items[0].Usage, 1)
+			if test.text {
+				require.NotNil(t, items[0].Usage[0].TPS)
+				require.Equal(t, 10.0, *items[0].Usage[0].TPS)
+			} else {
+				require.Nil(t, items[0].Usage[0].TPS)
+			}
+		})
+	}
 }
 
 // TestStoreTimingStagesThroughQueue persists measured zero, stage durations and

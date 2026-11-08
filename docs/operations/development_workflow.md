@@ -367,6 +367,8 @@ Vue I18n 使用 `11.4.14` 或更高的 11.x 版本，消息编译器与运行库
 
 后端 `golang.org/x/net` 的最低版本为 `v0.62.0`，修复 [GO-2026-6860](https://pkg.go.dev/vuln/GO-2026-6860) 中 HTML 文本节点合并的平方级复杂度问题。Ollama 用量解析会调用该 HTML 解析器，依赖升级后需要重新编译后端并运行解析测试与安全扫描。
 
+HTTP 响应解压使用的 `github.com/andybalholm/brotli` 最低版本为 `v1.2.7`，修复 [GO-2026-6888](https://pkg.go.dev/vuln/GO-2026-6888) 中恶意压缩流导致的过量内存分配。请求和响应的 Zstandard 解压使用 `github.com/klauspost/compress`，最低版本为 `v1.20.2`，修复 [GO-2026-6865](https://pkg.go.dev/vuln/GO-2026-6865) 中双块帧导致的 panic。升级这两个库时，运行 `internal/infra/httpclient`、`internal/server/httpx` 的测试及后端安全扫描。
+
 DOMPurify 用于 Markdown 页面、公告、支付说明和 SVG 图标的内容清理。直接依赖和 workspace override 的最低版本均为 `3.4.17`，包含 [GHSA-cg2g-xh64-v4q7](https://github.com/advisories/GHSA-cg2g-xh64-v4q7) 和 [GHSA-mrv2-3pqr-j5jr](https://github.com/advisories/GHSA-mrv2-3pqr-j5jr) 的修复。更新时同步锁文件，并验证 HTML 内容清理、SVG 图形与滤镜保留、前端构建和安全审计。
 
 管理员用量导出通过动态导入 `xlsx` 生成工作簿，调用 `aoa_to_sheet`、`sheet_add_aoa` 和 `write`。依赖固定为 [SheetJS 官方分发](https://docs.sheetjs.com/docs/getting-started/installation/nodejs/)的 `0.20.3` tarball，锁文件记录下载地址和完整性校验值。该版本包含原型污染和 ReDoS 的修复。升级时验证分页数据追加、工作簿序列化、前端生产构建和安全扫描。

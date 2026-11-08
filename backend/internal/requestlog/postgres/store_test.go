@@ -164,10 +164,10 @@ func TestFindUsagePerformanceUsesOneBatch(t *testing.T) {
 	second, err := json.Marshal(p)
 	require.NoError(t, err)
 	ids := []string{"first", "second"}
-	rows := sqlmock.NewRows([]string{"id", "request_id", "created_at", "user_id", "team_id", "api_key_id", "model", "input_tokens", "output_tokens", "actual_cost", "duration_ms", "timings", "image_count", "image_output_tokens", "video_count", "billing_mode", "media_type", "request_type"}).
-		AddRow(1, "first", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, first, 0, 0, 0, nil, nil, 2).
-		AddRow(2, "second", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, second, 0, 0, 0, nil, nil, 2).
-		AddRow(3, "second", time.Now(), 101, 0, 201, "image-model", 20, 10, 0.5, 1000, second, 1, 0, 0, "image", "image", 1)
+	rows := sqlmock.NewRows([]string{"id", "request_id", "created_at", "user_id", "team_id", "api_key_id", "model", "input_tokens", "output_tokens", "actual_cost", "duration_ms", "timings", "image_count", "image_output_tokens", "video_count", "billing_mode", "request_type"}).
+		AddRow(1, "first", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, first, 0, 0, 0, nil, 2).
+		AddRow(2, "second", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, second, 0, 0, 0, nil, 2).
+		AddRow(3, "second", time.Now(), 101, 0, 201, "image-model", 20, 10, 0.5, 1000, second, 1, 0, 0, "image", 1)
 	mock.ExpectQuery("SELECT id,COALESCE\\(request_id").WithArgs(pq.Array(ids), int64(101), true, "first", true).WillReturnRows(rows)
 	result := []requestlog.Detail{
 		{RequestRecord: telemetry.RequestRecord{RequestID: "first", DurationMs: 3000}},
