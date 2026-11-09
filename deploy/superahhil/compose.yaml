@@ -30,6 +30,7 @@ services:
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: "8080"
       SERVER_MODE: release
+      UPDATE_GITHUB_TOKEN: ${UPDATE_GITHUB_TOKEN:-}
       GOMEMLIMIT: 1536MiB
       PRICING_FALLBACK_FILE: /app/model_supplements.json
       DATABASE_HOST: postgres

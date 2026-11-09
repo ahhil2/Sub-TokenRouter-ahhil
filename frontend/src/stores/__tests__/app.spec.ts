@@ -4,11 +4,14 @@ import { useAppStore } from '@/stores/app'
 import { getPublicSettings } from '@/api/auth'
 import type { PublicSettings } from '@/api/settings.types'
 import { i18n } from '@/i18n'
+import { checkUpdates } from '@/api/admin/system'
 
 // app.spec.ts verifies shared notifications, sidebar state, loading ownership, and
 // locale-aware public settings caching. Fake timers drive toast dismissal and deferred
 // promises expose overlapping settings requests. Fixtures vary language and browser
 // injection independently to protect the settings cache decisions made before mounting.
+// Release fixtures cover failed checks and recovery so cached version labels cannot
+// hide a warning from the administrator's update controls.
 
 // createDeferred exposes a promise and its completion controls for settings concurrency
 // tests. The test resolves or rejects it after asserting that all overlapping callers
@@ -89,6 +92,7 @@ describe('useAppStore', () => {
     vi.useFakeTimers()
     localStorage.clear()
     vi.mocked(getPublicSettings).mockReset()
+    vi.mocked(checkUpdates).mockReset()
     // Remove prior injected configuration before each case so a cached browser value
     // cannot bypass the request behavior under test.
     delete (window as any).__APP_CONFIG__
@@ -97,6 +101,64 @@ describe('useAppStore', () => {
   afterEach(() => {
     vi.useRealTimers()
     localStorage.clear()
+  })
+
+  describe('version discovery', () => {
+    // A private release lookup returns a warning with the current version. The
+    // warning stays visible and a later ordinary read retries the failed check.
+    it('retries warnings and clears them when release discovery recovers', async () => {
+      vi.mocked(checkUpdates)
+        .mockResolvedValueOnce({
+          current_version: '0.4.6',
+          latest_version: '0.4.6',
+          has_update: false,
+          cached: false,
+          warning: 'GitHub API returned 404',
+          build_type: 'release',
+        })
+        .mockResolvedValueOnce({
+          current_version: '0.4.6',
+          latest_version: '0.4.8',
+          has_update: true,
+          cached: false,
+          build_type: 'release',
+        })
+      const store = useAppStore()
+      await store.fetchVersion()
+      expect(store.versionWarning).toBe('GitHub API returned 404')
+      expect(store.versionLoaded).toBe(false)
+      await store.fetchVersion()
+      expect(checkUpdates).toHaveBeenCalledTimes(2)
+      expect(store.versionWarning).toBe('')
+      expect(store.hasUpdate).toBe(true)
+      await store.fetchVersion()
+      expect(checkUpdates).toHaveBeenCalledTimes(2)
+    })
+
+    // A forced refresh can fail after an earlier successful check. The failure
+    // must become visible while retaining the version already shown to administrators.
+    it('surfaces transport failures after a successful check', async () => {
+      const translate = vi.spyOn(i18n.global, 't').mockReturnValue('Could not check for updates')
+      vi.mocked(checkUpdates)
+        .mockResolvedValueOnce({
+          current_version: '0.4.6',
+          latest_version: '0.4.6',
+          has_update: false,
+          cached: false,
+          build_type: 'release',
+        })
+        .mockRejectedValueOnce(new Error('network unavailable'))
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const store = useAppStore()
+      await store.fetchVersion()
+      expect(await store.fetchVersion(true)).toBeNull()
+      expect(store.currentVersion).toBe('0.4.6')
+      expect(store.versionWarning).toBe('Could not check for updates')
+      expect(translate).toHaveBeenCalledWith('version.checkFailed')
+      expect(store.versionLoaded).toBe(false)
+      log.mockRestore()
+      translate.mockRestore()
+    })
   })
 
   describe('Toast 消息管理', () => {

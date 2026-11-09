@@ -60,7 +60,9 @@ sudo systemctl enable tokenrouter
 
 在管理后台左上角点击"检测更新"，可以在线升级：自动检测新版本，下载并应用更新，也支持回滚。
 
-匿名访问 GitHub Release API 被限流时，可以在安装脚本的进程环境或 Docker `.env` 里设置 `UPDATE_GITHUB_TOKEN`。这个令牌只会发给 `https://api.github.com` 的版本检查请求，跨目标的重定向会移除认证头；Release 资源和校验和的下载始终是匿名的。系统不会改用 `GITHUB_TOKEN` 或 `GH_TOKEN`。
+访问私有 Release 或匿名 API 被限流时，为应用进程配置 `UPDATE_GITHUB_TOKEN`。使用限定到发布仓库、具有 Contents 读取权限的凭据；Docker 部署还需通过 Compose 的 `environment` 或受保护的 `env_file` 将变量传入容器。网页更新器通过 GitHub 附件 API 下载安装包和校验文件，凭据只发给受信任的 `https://api.github.com`，跨主机重定向会移除认证头。修改凭据后重启进程，容器环境变量的修改需要重建应用容器。
+
+安装脚本的 `UPDATE_GITHUB_TOKEN` 只用于版本 API 查询，脚本的附件下载仍使用公开地址。私有仓库首次安装或旧版更新器升级，需要先用已鉴权的下载工具取得安装包。系统不会改用 `GITHUB_TOKEN` 或 `GH_TOKEN`。
 
 ### 常用命令
 

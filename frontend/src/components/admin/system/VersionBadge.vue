@@ -6,11 +6,17 @@
         @click="toggleDropdown"
         class="flex items-center gap-1.5 rounded-control px-2 py-1 text-xs transition-colors"
         :class="[
-          hasUpdate
+          hasUpdate || versionWarning
             ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50'
             : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-400 dark:hover:bg-dark-700',
         ]"
-        :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
+        :title="
+          versionWarning
+            ? t('version.checkFailed')
+            : hasUpdate
+              ? t('version.updateAvailable')
+              : t('version.upToDate')
+        "
       >
         <span v-if="currentVersion" class="font-medium">v{{ currentVersion }}</span>
         <span
@@ -24,6 +30,7 @@
           ></span>
           <span class="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
         </span>
+        <Icon v-else-if="versionWarning" name="exclamationTriangle" size="xs" />
       </button>
 
       <!-- Dropdown -->
@@ -89,7 +96,7 @@
                   <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
                   <!-- Show check mark when up to date -->
                   <span
-                    v-if="!hasUpdate"
+                    v-if="!hasUpdate && !versionWarning"
                     class="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
                   >
                     <Icon
@@ -102,11 +109,22 @@
                 </div>
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
                   {{
-                    hasUpdate
-                      ? t('version.latestVersion') + ': v' + latestVersion
-                      : t('version.upToDate')
+                    versionWarning
+                      ? t('version.checkFailed')
+                      : hasUpdate
+                        ? t('version.latestVersion') + ': v' + latestVersion
+                        : t('version.upToDate')
                   }}
                 </p>
+              </div>
+
+              <div
+                v-if="versionWarning"
+                role="alert"
+                class="mb-3 rounded-control border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-300"
+              >
+                <p class="break-words">{{ versionWarning }}</p>
+                <p class="mt-2">{{ t('version.checkFailedHint') }}</p>
               </div>
 
               <!-- Priority 1: Update error (must check before hasUpdate) -->
@@ -556,6 +574,8 @@ import { vSegmented } from '@/directives/segmented'
 // commands for script and Docker installations. Update and rollback responses
 // determine whether a restart prompt is required, and successful binary changes
 // invalidate version metadata before another check.
+// Failed discovery remains visible beside cached release details so an
+// unavailable release source cannot be mistaken for a confirmed current version.
 //
 // Restart starts a countdown even when the request disconnects. After the
 // countdown, health probes wait briefly for the service and eventually reload
@@ -600,6 +620,7 @@ const currentVersion = computed(() => appStore.currentVersion || props.version |
 const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
+const versionWarning = computed(() => appStore.versionWarning)
 const buildType = computed(() => appStore.buildType)
 
 // Update and restart state drive operation feedback, prevent duplicate requests,

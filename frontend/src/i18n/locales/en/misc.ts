@@ -167,6 +167,9 @@ export default {
     currentVersion: 'Current Version',
     latestVersion: 'Latest Version',
     upToDate: "You're running the latest version.",
+    checkFailed: 'Could not check for updates',
+    checkFailedHint:
+      'Check server access to GitHub and the credentials for private repositories, then refresh.',
     updateAvailable: 'A new version is available!',
     releaseNotes: 'Release Notes',
     noReleaseNotes: 'No release notes',

@@ -9,6 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// release_query_test.go verifies update discovery, cache reuse, and eligible
+// rollback selection with deterministic metadata fixtures. Asset checks retain
+// authenticated API download endpoints through cache serialization while older
+// metadata continues to provide its browser URL.
+
 // updateServiceCacheStub supplies one mutable serialized release value for
 // query fixtures.
 type updateServiceCacheStub struct {
@@ -58,6 +63,33 @@ func (s *updateServiceCacheStub) SetUpdateInfo(_ context.Context, data string, _
 // dereferencing.
 func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {
 	return s.release, nil
+}
+
+// TestReleaseQueryRetainsAssetAPIURLs discovers a release containing both current
+// and legacy asset metadata. Fresh and cached results must select authenticated
+// API URLs where available and keep older browser-only assets downloadable.
+func TestReleaseQueryRetainsAssetAPIURLs(t *testing.T) {
+	query := NewReleaseQuery(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{
+		release: &GitHubRelease{TagName: "v0.4.8", Assets: []GitHubAsset{
+			{
+				Name:               "checksums.txt",
+				APIURL:             "https://api.github.com/repos/test/private/releases/assets/123",
+				BrowserDownloadURL: "https://github.com/test/private/releases/download/v0.4.8/checksums.txt",
+			},
+			{
+				Name:               "legacy.tar.gz",
+				BrowserDownloadURL: "https://github.com/test/private/releases/download/v0.4.8/legacy.tar.gz",
+			},
+		}},
+	}, "0.4.7", "release")
+	for _, force := range []bool{true, false} {
+		info, err := query.CheckUpdate(context.Background(), force)
+		require.NoError(t, err)
+		require.True(t, info.HasUpdate)
+		require.Equal(t, !force, info.Cached)
+		require.Equal(t, "https://api.github.com/repos/test/private/releases/assets/123", info.ReleaseInfo.Assets[0].DownloadURL)
+		require.Equal(t, "https://github.com/test/private/releases/download/v0.4.8/legacy.tar.gz", info.ReleaseInfo.Assets[1].DownloadURL)
+	}
 }
 
 // FetchRecentReleases returns the supplied recent slice and configured error

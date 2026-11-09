@@ -66,6 +66,10 @@ Ops 的构造和启动分开，app 在完成全部绑定后，才启动采样、
 
 本定制版的更新与回退候选来自 `ahhil2/Sub-TokenRouter-ahhil` 的 GitHub Releases。发布查询由 Ops 的 ReleaseQuery 和 GitHub provider 提供，负责版本比较、回退候选的过滤，结果缓存二十分钟；GitHub Token 的可信范围和重定向规则见[部署指南](../guides/deployment/index.md#升级)。下载校验和二进制替换由 Ops 的技术适配层执行；`ops/maintenance` 负责更新和回退、系统操作锁和重启请求的编排。实际的进程退出，由 `app/lifecycle`（只有一处）执行。
 
+私有仓库通过进程环境变量 `UPDATE_GITHUB_TOKEN` 提供访问凭据。发布查询保留附件的 GitHub API 地址，更新和回退都通过该地址下载安装包与校验文件，并使用 `application/octet-stream` 获取文件内容。凭据只发往受信任的 HTTPS `api.github.com`；下载重定向到其他主机时移除 Authorization。缺少 API 地址的历史附件沿用浏览器下载地址。
+
+检查失败时，版本徽章显示警告和刷新入口，失败结果允许后续重新检查。有缓存的新版本时，警告和可用更新一起显示；无法确定版本时，不显示“已是最新版本”。安装入口也会区分检查失败与确实没有更新，缺失安装元数据时返回错误。
+
 发布元数据的 Redis 缓存键包含 `ops.GitHubRepository`。切换到定制仓库后，旧的 `update:latest` 缓存自行过期；网络请求失败时也不会借用其中的上游发布信息，避免更新时覆盖定制功能。
 
 `cleanup-ingress-reject-logs` 用精简版 bootstrap 装配 Ops 的分类和清理能力，不启动完整的 worker。它默认 dry-run，参数是 `--before`、`--batch-size`、`--execute`，分类版本是 `ingress-reject-v1`；它只清理匹配的分析事件。

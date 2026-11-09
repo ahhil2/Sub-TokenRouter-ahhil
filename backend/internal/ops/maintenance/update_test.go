@@ -12,6 +12,11 @@ import (
 	opsadapter "github.com/TokenFlux/TokenRouter/internal/ops/provider"
 )
 
+// update_test.go checks release eligibility before binary installation using
+// deterministic release and cache fixtures. Failed discovery must remain
+// distinguishable from a confirmed current version, while rollback selection
+// carries authenticated asset endpoints to the installer.
+
 // updateServiceCacheStub retains update JSON for sequential release-query fixture calls.
 type updateServiceCacheStub struct {
 	data string // stored fixture update JSON
@@ -19,11 +24,39 @@ type updateServiceCacheStub struct {
 
 // updateServiceGitHubClientStub supplies selected release responses for maintenance eligibility tests.
 type updateServiceGitHubClientStub struct {
-	release *ops.GitHubRelease // latest fixture release metadata
+	release   *ops.GitHubRelease // latest fixture release metadata
+	latestErr error              // injected release lookup failure
 	// recentReleases and recentErr are returned together for candidate enumeration.
 	// Tests configure them before query calls to choose eligible release data or an enumeration failure.
 	recentReleases []*ops.GitHubRelease // recent fixture release records
 	recentErr      error                // injected candidate enumeration failure
+}
+
+// updateQueriesFixture supplies one update result while inherited methods remain unused.
+type updateQueriesFixture struct {
+	ReleaseQueries                 // unused candidate query methods
+	info           *ops.UpdateInfo // supplied update comparison result
+}
+
+// updateInstallerRecorder captures installation metadata for eligibility tests.
+type updateInstallerRecorder struct {
+	assets []ops.Asset // assets accepted by Apply
+}
+
+// CheckUpdate returns the supplied fixture result for installation admission checks.
+func (q updateQueriesFixture) CheckUpdate(context.Context, bool) (*ops.UpdateInfo, error) {
+	return q.info, nil
+}
+
+// Apply records selected assets and reports successful fixture installation.
+func (r *updateInstallerRecorder) Apply(_ context.Context, assets []ops.Asset) error {
+	r.assets = assets
+	return nil
+}
+
+// Rollback rejects unexpected local-binary restoration in asset selection fixtures.
+func (r *updateInstallerRecorder) Rollback() error {
+	return errors.New("unexpected local rollback")
 }
 
 // GetUpdateInfo returns fixture update JSON or a cache-miss error for empty data.
@@ -44,9 +77,48 @@ func (s *updateServiceCacheStub) SetUpdateInfo(_ context.Context, data string, _
 	return nil
 }
 
-// FetchLatestRelease returns the configured latest release without remote network access.
+// FetchLatestRelease returns the configured release and lookup error for discovery tests.
 func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*ops.GitHubRelease, error) {
-	return s.release, nil
+	return s.release, s.latestErr
+}
+
+// TestUpdateServiceReportsFailedDiscovery reproduces a private repository lookup
+// rejection with no cached release. Installation must report a failed check and
+// never claim that the running version is already current.
+func TestUpdateServiceReportsFailedDiscovery(t *testing.T) {
+	svc := newMaintenanceUpdateForTest(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{
+		latestErr: errors.New("GitHub API returned 404"),
+	}, "0.4.6", "release")
+	err := svc.PerformUpdate(context.Background())
+	require.ErrorIs(t, err, ErrUpdateCheckFailed)
+	require.NotErrorIs(t, err, ErrNoUpdateAvailable)
+}
+
+// TestUpdateServiceRejectsMissingMetadata supplies an available version with no
+// release object. Installation must return a diagnostic error before touching
+// the installer, including when the version originated from cached metadata.
+func TestUpdateServiceRejectsMissingMetadata(t *testing.T) {
+	installer := &updateInstallerRecorder{}
+	svc := NewUpdateService(updateQueriesFixture{info: &ops.UpdateInfo{HasUpdate: true}}, installer)
+	require.ErrorIs(t, svc.PerformUpdate(context.Background()), ErrReleaseMetadataMissing)
+	require.Nil(t, installer.assets)
+}
+
+// TestUpdateServiceRollbackUsesAssetAPI selects an eligible private release.
+// Its authenticated download endpoint must reach the installer, matching the
+// endpoint used when upgrading to a newly published release.
+func TestUpdateServiceRollbackUsesAssetAPI(t *testing.T) {
+	installer := &updateInstallerRecorder{}
+	query := ops.NewReleaseQuery(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{
+		recentReleases: []*ops.GitHubRelease{{TagName: "v0.4.7", Assets: []ops.GitHubAsset{{
+			Name: "checksums.txt", APIURL: "https://api.github.com/repos/test/private/releases/assets/123",
+			BrowserDownloadURL: "https://github.com/test/private/releases/download/v0.4.7/checksums.txt",
+		}}}},
+	}, "0.4.8", "release")
+	svc := NewUpdateService(query, installer)
+	require.NoError(t, svc.RollbackToVersion(context.Background(), "0.4.7"))
+	require.Len(t, installer.assets, 1)
+	require.Equal(t, "https://api.github.com/repos/test/private/releases/assets/123", installer.assets[0].DownloadURL)
 }
 
 // FetchRecentReleases returns the supplied candidate fixture records and enumeration error.

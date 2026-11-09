@@ -22,8 +22,9 @@ import (
 // The update API token is attached only to trusted HTTPS api.github.com
 // requests without user information or an explicit port. API redirects remove
 // Authorization before applying any earlier redirect policy when the target
-// leaves that authority. Archive and checksum constructors make generic GET
-// requests and do not consult the update token.
+// leaves that authority. Archive and checksum requests use the asset API URL
+// from release metadata, request binary content, and apply the same credential
+// rules. External download destinations receive unsigned requests.
 //
 // Release metadata and checksum bodies use a thirty-second client, while
 // archives use a ten-minute client. Shallow copies retain selected transport
@@ -45,8 +46,8 @@ type githubReleaseClient struct {
 	// transport or the nil default; fixtures can supply other settings.
 	downloadHTTPClient *http.Client
 	// updateGitHubToken is the supplied token text, retained without trimming.
-	// newAPIRequest uses it for trusted API URLs; asset and checksum request
-	// constructors do not consult it.
+	// Metadata and asset requests use it for trusted API URLs. Redirects to
+	// external asset storage remove the credential before making that request.
 	updateGitHubToken string
 }
 
@@ -99,10 +100,11 @@ type ReleaseClient interface {
 // Allowed recovery bypasses the supplied ProxyURL with standard HTTP clients,
 // whose default transport can use environment proxy settings. Selected clients
 // are shallow copied, retaining referenced transports while owning redirect
-// fields. Only the API copy installs the token-stripping redirect callback.
-// Token text is copied for newAPIRequest; generic archive/checksum constructors
-// omit it. Network errors do not trigger construction recovery, and either
-// construction phase can determine the returned error client.
+// fields. Both copies install the token-stripping redirect callback so signed
+// storage redirects receive credentials appropriate to their destination.
+// Token text is copied for metadata and asset API requests. Network errors do
+// not trigger construction recovery, and either construction phase can determine
+// the returned error client.
 func NewReleaseClient(options ReleaseOptions) ReleaseClient {
 	proxyURL, allowDirectOnProxyError := options.ProxyURL, options.AllowDirectOnProxyError
 	// A configured proxy error can make the entire release client unusable.
@@ -143,6 +145,7 @@ func NewReleaseClient(options ReleaseOptions) ReleaseClient {
 		downloadClient = &http.Client{Timeout: 10 * time.Minute}
 	}
 	downloadClient = cloneHTTPClient(downloadClient)
+	downloadClient.CheckRedirect = githubAPICheckRedirect(downloadClient.CheckRedirect)
 
 	return &githubReleaseClient{
 		httpClient:         apiClient,
@@ -327,7 +330,7 @@ func (c *githubReleaseClient) FetchRecentReleases(ctx context.Context, repo stri
 // copy can return nil despite that close failure. The response body is closed
 // on every received-response path.
 func (c *githubReleaseClient) DownloadFile(ctx context.Context, url, dest string, maxSize int64) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := c.newAssetRequest(ctx, url)
 	if err != nil {
 		return err
 	}
@@ -387,11 +390,12 @@ func (c *githubReleaseClient) DownloadFile(ctx context.Context, url, dest string
 
 // FetchChecksumFile requests the supplied URL with context through the API
 // client and reads a 200 response completely. NewReleaseClient gives that
-// client thirty seconds, while fixtures can supply other settings. It does not
-// attach the update token or impose a body-byte cap; request/status/read errors
-// are returned and response-close errors are suppressed.
+// client thirty seconds, while fixtures can supply other settings. The request
+// authenticates trusted asset API URLs and requests binary content. There is
+// no separate body-byte cap; request/status/read errors are returned and
+// response-close errors are suppressed.
 func (c *githubReleaseClient) FetchChecksumFile(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := c.newAssetRequest(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -409,4 +413,16 @@ func (c *githubReleaseClient) FetchChecksumFile(ctx context.Context, url string)
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+// newAssetRequest requests release file bytes through the shared authority rules.
+// GitHub asset API endpoints require the octet-stream Accept header to return
+// file content or a signed storage redirect instead of JSON asset metadata.
+func (c *githubReleaseClient) newAssetRequest(ctx context.Context, url string) (*http.Request, error) {
+	req, err := c.newAPIRequest(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/octet-stream")
+	return req, nil
 }

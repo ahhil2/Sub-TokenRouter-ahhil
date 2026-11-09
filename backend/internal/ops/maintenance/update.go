@@ -14,11 +14,13 @@ import (
 // only the selected asset metadata to its installer. Local previous-binary rollback
 // is a separate installer operation that performs no release-candidate lookup.
 
-// ErrNoUpdateAvailable follows a false update flag, including a remote failure
-// without usable cache. ErrRollbackVersionNotAllowed rejects malformed or
-// unmatched candidate targets before installer work starts.
+// Update eligibility errors distinguish confirmed current versions, failed
+// checks, missing installation metadata, and rejected rollback selections before
+// any binary replacement starts.
 var (
 	ErrNoUpdateAvailable         = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
+	ErrUpdateCheckFailed         = infraerrors.ServiceUnavailable("UPDATE_CHECK_FAILED", "Update check failed; verify GitHub access and refresh the version information")
+	ErrReleaseMetadataMissing    = infraerrors.ServiceUnavailable("RELEASE_METADATA_MISSING", "Release download information is unavailable; refresh the version information")
 	ErrRollbackVersionNotAllowed = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
 )
 
@@ -85,12 +87,13 @@ func (s *UpdateService) Rollback() error { return s.installer.Rollback() }
 
 // PerformUpdate requests forced update information and forwards release assets
 // to the installer when HasUpdate is true. It propagates query errors and
-// returns ErrNoUpdateAvailable when that flag is false.
+// returns ErrNoUpdateAvailable for a confirmed current version. An unsuccessful
+// check or missing release metadata receives a distinct error before installation.
 //
-// Force can still select cached data after a remote fetch failure. This method
-// checks HasUpdate before reading ReleaseInfo.Assets and has no nil metadata
-// guard. A cached view with a true flag and nil ReleaseInfo panics at that
-// dereference before installer Apply runs.
+// Force can still select cached data after a remote fetch failure. Complete
+// cached metadata remains usable when it identifies a newer version, while a
+// failed check with no available update cannot establish that the installation
+// is current. Asset validation belongs to the installer after these checks.
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
@@ -98,12 +101,16 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 	}
 
 	if !info.HasUpdate {
+		if info.Warning != "" {
+			return ErrUpdateCheckFailed
+		}
 		return ErrNoUpdateAvailable
 	}
 
-	// Argument evaluation reads the metadata slice before invoking Apply. A nil
-	// pointer therefore fails here before installer asset validation or error
-	// handling can run.
+	if info.ReleaseInfo == nil {
+		return ErrReleaseMetadataMissing
+	}
+
 	return s.installer.Apply(ctx, info.ReleaseInfo.Assets)
 }
 
@@ -140,7 +147,7 @@ func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) e
 	for i, a := range match.Assets {
 		assets[i] = Asset{
 			Name:        a.Name,
-			DownloadURL: a.BrowserDownloadURL,
+			DownloadURL: a.DownloadURL(),
 			Size:        a.Size,
 		}
 	}

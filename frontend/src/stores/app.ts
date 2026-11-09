@@ -56,6 +56,9 @@ export const useAppStore = defineStore('app', () => {
   const hasUpdate = ref<boolean>(false)
   const buildType = ref<string>('source')
   const releaseInfo = ref<ReleaseInfo | null>(null)
+  // versionWarning reports an incomplete version check until a successful refresh
+  // clears it. VersionBadge uses it to suppress the confirmed-current indicator.
+  const versionWarning = ref<string>('')
 
   // toastIdCounter increases across resets so a delayed toast dismissal cannot
   // accidentally address a later notification.
@@ -228,10 +231,10 @@ export const useAppStore = defineStore('app', () => {
   // forwarded to the API, but any caller reaching the busy check returns null while a
   // request is active.
   //
-  // A successful request publishes release fields and marks the cache loaded before
-  // returning its response. Failure logs the error and returns null while retaining
-  // previous cache contents and loaded state. Request settlement releases the busy
-  // flag for a later caller.
+  // A successful check publishes release fields and marks the cache loaded before
+  // returning its response. Server warnings and transport failures remain visible
+  // and leave the cache eligible for another check. Request settlement releases the
+  // busy flag for a later caller.
   async function fetchVersion(force = false): Promise<VersionInfo | null> {
     if (versionLoaded.value && !force) {
       return {
@@ -240,6 +243,7 @@ export const useAppStore = defineStore('app', () => {
         has_update: hasUpdate.value,
         build_type: buildType.value,
         release_info: releaseInfo.value || undefined,
+        warning: versionWarning.value || undefined,
         cached: true,
       }
     }
@@ -255,11 +259,14 @@ export const useAppStore = defineStore('app', () => {
       hasUpdate.value = data.has_update
       buildType.value = data.build_type || 'source'
       releaseInfo.value = data.release_info || null
-      versionLoaded.value = true
+      versionWarning.value = data.warning || ''
+      versionLoaded.value = !versionWarning.value
       return data
     } catch (error) {
-      // Retain the last displayed release details on request failure and return null,
-      // allowing callers to distinguish failure from cached success.
+      // Keep the last release details available while marking discovery as failed;
+      // administrators can retry instead of seeing a confirmed-current indicator.
+      versionWarning.value = i18n.global.t('version.checkFailed')
+      versionLoaded.value = false
       console.error('Failed to fetch version:', error)
       return null
     } finally {
@@ -275,6 +282,7 @@ export const useAppStore = defineStore('app', () => {
     // so the next idle read fetches a replacement without clearing current labels.
     versionLoaded.value = false
     hasUpdate.value = false
+    versionWarning.value = ''
   }
 
   // applySettings publishes public configuration to the injected browser object and
@@ -400,6 +408,7 @@ export const useAppStore = defineStore('app', () => {
     hasUpdate,
     buildType,
     releaseInfo,
+    versionWarning,
     hasActiveToasts,
     backendModeEnabled,
     toggleSidebar,

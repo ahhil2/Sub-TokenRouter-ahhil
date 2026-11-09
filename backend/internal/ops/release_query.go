@@ -80,6 +80,7 @@ type ReleaseQuery struct {
 type GitHubAsset struct {
 	Name               string `json:"name"`                 // GitHub release asset name
 	BrowserDownloadURL string `json:"browser_download_url"` // GitHub browser asset URL
+	APIURL             string `json:"url"`                  // GitHub asset API URL
 	Size               int64  `json:"size"`                 // reported asset byte size
 }
 
@@ -313,7 +314,7 @@ func (s *ReleaseQuery) FetchLatestRelease(ctx context.Context) (*UpdateInfo, err
 	for i, a := range release.Assets {
 		assets[i] = Asset{
 			Name:        a.Name,
-			DownloadURL: a.BrowserDownloadURL,
+			DownloadURL: a.DownloadURL(),
 			Size:        a.Size,
 		}
 	}
@@ -503,4 +504,14 @@ func (s *ReleaseQuery) CheckUpdate(ctx context.Context, force bool) (*UpdateInfo
 	// later.
 	s.SaveToCache(ctx, info)
 	return info, nil
+}
+
+// DownloadURL selects the asset API endpoint when GitHub supplies one.
+// The release client can authenticate that endpoint for private repositories;
+// older metadata with no API URL continues to use its browser download link.
+func (a GitHubAsset) DownloadURL() string {
+	if a.APIURL != "" {
+		return a.APIURL
+	}
+	return a.BrowserDownloadURL
 }
