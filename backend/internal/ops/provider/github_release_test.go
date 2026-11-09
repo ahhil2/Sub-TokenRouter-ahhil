@@ -165,7 +165,8 @@ func TestGitHubReleaseClientDoesNotAuthorizeExternalDownloads(t *testing.T) {
 func TestGitHubReleaseClientPrivateAssetDownloads(t *testing.T) {
 	for _, checksum := range []bool{false, true} {
 		t.Run(map[bool]string{false: "archive", true: "checksum"}[checksum], func(t *testing.T) {
-			client := NewReleaseClient(ReleaseOptions{GitHubToken: "private-update-token"}).(*githubReleaseClient)
+			client, ok := NewReleaseClient(ReleaseOptions{GitHubToken: "private-update-token"}).(*githubReleaseClient)
+			require.True(t, ok)
 			requests := 0
 			transport := githubReleaseRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 				requests++
