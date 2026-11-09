@@ -620,10 +620,12 @@ INSERT INTO providers(id,name,platform,type) VALUES(101,'performance','openai','
 		{"live", 0, 0, 0, "token", usage.RequestTypeLive, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			// Supply a valid billing size for generated images so the fixture satisfies
+			// the usage schema before exercising request lookup and TPS eligibility.
 			_, err := db.ExecContext(ctx, `INSERT INTO usage_logs
 (user_id,billing_user_id,api_key_id,provider_id,request_id,model,output_tokens,timings,
- image_count,image_output_tokens,video_count,billing_mode,request_type)
-VALUES(101,101,101,101,$1,'model',10,$2,$3,$4,$5,$6,$7)`,
+ image_count,image_size,image_output_tokens,video_count,billing_mode,request_type)
+VALUES(101,101,101,101,$1,'model',10,$2,$3,CASE WHEN $3>0 THEN '1K' ELSE NULL END,$4,$5,$6,$7)`,
 				test.name, string(timings), test.imageCount, test.imageOutputTokens,
 				test.videoCount, test.billingMode, test.requestType)
 			require.NoError(t, err)
