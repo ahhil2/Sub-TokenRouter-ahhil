@@ -113,7 +113,9 @@ func TestIngressTransportRetryBypassesOtherStaleConnections(t *testing.T) {
 					serverErrCh <- err
 					return
 				}
-				defer conn.CloseNow()
+				// Always release the accepted socket; the scenario may already have closed
+				// its peer, so cleanup errors do not describe the behavior under test.
+				defer func() { _ = conn.CloseNow() }()
 				c, _ := gin.CreateTestContext(httptest.NewRecorder())
 				c.Request = r.Clone(r.Context())
 				c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
@@ -136,7 +138,9 @@ func TestIngressTransportRetryBypassesOtherStaleConnections(t *testing.T) {
 			defer cancel()
 			client, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
 			require.NoError(t, err)
-			defer client.CloseNow()
+			// Client cleanup is best-effort because normal and failure scenarios may
+			// have already closed the connection during their assertions.
+			defer func() { _ = client.CloseNow() }()
 			payload := `{"type":"response.create","model":"gpt-5.1","stream":true}`
 			if strictContinuation {
 				payload = `{"type":"response.create","model":"gpt-5.1","stream":true,"store":false,"previous_response_id":"resp_prior"}`

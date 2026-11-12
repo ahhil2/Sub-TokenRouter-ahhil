@@ -423,7 +423,8 @@ func TestNativeConvertClaudeMessagesMixedToolConfiguration(t *testing.T) {
 				hasSearch := false
 				tools, _ := request["tools"].([]any)
 				for _, raw := range tools {
-					tool := raw.(map[string]any)
+					tool, ok := raw.(map[string]any)
+					require.True(t, ok)
 					declarations, _ := tool["functionDeclarations"].([]any)
 					functions += len(declarations)
 					_, found := tool[searchKey]

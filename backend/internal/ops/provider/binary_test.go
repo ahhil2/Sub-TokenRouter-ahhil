@@ -154,6 +154,104 @@ func TestBinaryInstallAndRollback(t *testing.T) {
 	require.NoError(t, installer.Rollback())
 }
 
+// TestBinaryInstallAssetFilename serves compressed releases through URLs whose
+// paths differ from their asset names. Installation must verify and extract the
+// named archive, retain the previous executable, and reject a mismatched digest.
+func TestBinaryInstallAssetFilename(t *testing.T) {
+	var buffer bytes.Buffer
+	gz := gzip.NewWriter(&buffer)
+	tw := tar.NewWriter(gz)
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "tokenrouter", Mode: 0o755, Size: 3}))
+	_, err := tw.Write([]byte("new"))
+	require.NoError(t, err)
+	// Close the tar writer before gzip so each format writes its trailer before
+	// the completed compressed archive is hashed and served to the installer.
+	require.NoError(t, tw.Close())
+	require.NoError(t, gz.Close())
+
+	for _, tt := range []struct {
+		name        string // installation scenario name
+		prefix      string // release product prefix
+		url         string // requested archive URL
+		checksum    bool   // checksum asset inclusion
+		badChecksum bool   // mismatched digest fixture
+	}{
+		{name: "asset API with checksum", prefix: "tokenrouter_", url: "https://api.github.com/repos/test/private/releases/assets/123", checksum: true},
+		{name: "asset API without checksum", prefix: "tokenrouter_", url: "https://api.github.com/repos/test/private/releases/assets/123"},
+		{name: "browser URL with query and fragment", prefix: "tokenrouter_", url: "https://github.com/test/private/releases/download/v1/archive.tar.gz?download=1#asset", checksum: true},
+		{name: "legacy asset API", prefix: "sub2api_", url: "https://api.github.com/repos/test/private/releases/assets/123", checksum: true},
+		{name: "asset API checksum mismatch", prefix: "tokenrouter_", url: "https://api.github.com/repos/test/private/releases/assets/123", checksum: true, badChecksum: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			name := tt.prefix + "1.0.0_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
+			sum := fmt.Sprintf("%x  %s\n", sha256.Sum256(buffer.Bytes()), name)
+			if tt.badChecksum {
+				sum = fmt.Sprintf("%x  %s\n", sha256.Sum256([]byte("different archive")), name)
+			}
+			// Fixture responses ignore write errors because client reads and installed
+			// bytes expose any incomplete payload before this scenario can succeed.
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/checksum" {
+					_, _ = io.WriteString(w, sum)
+				} else {
+					_, _ = w.Write(buffer.Bytes())
+				}
+			}))
+			defer server.Close()
+			assets := []ops.Asset{{Name: name, DownloadURL: tt.url}}
+			if tt.checksum {
+				assets = append(assets, ops.Asset{Name: "checksums.txt", DownloadURL: "https://api.github.com/repos/test/private/releases/assets/456"})
+			}
+			exe := filepath.Join(t.TempDir(), "server")
+			require.NoError(t, os.WriteFile(exe, []byte("old"), 0o755))
+			var downloads []string
+			installer := NewBinaryInstaller(binaryFixtureClient{url: server.URL, downloads: &downloads}, func() (string, error) { return exe, nil })
+			err := installer.Apply(context.Background(), assets)
+			if tt.badChecksum {
+				require.ErrorContains(t, err, "checksum mismatch")
+				data, readErr := os.ReadFile(exe)
+				require.NoError(t, readErr)
+				require.Equal(t, "old", string(data))
+				require.NoFileExists(t, exe+".backup")
+			} else {
+				require.NoError(t, err)
+				data, readErr := os.ReadFile(exe)
+				require.NoError(t, readErr)
+				require.Equal(t, "new", string(data))
+				backup, readErr := os.ReadFile(exe + ".backup")
+				require.NoError(t, readErr)
+				require.Equal(t, "old", string(backup))
+			}
+			require.Equal(t, []string{tt.url}, downloads)
+		})
+	}
+}
+
+// TestBinaryInstallRejectsAssetPaths supplies platform-matching names containing
+// directory separators. Invalid names must fail before downloading or changing
+// either the installed executable or its retained backup.
+func TestBinaryInstallRejectsAssetPaths(t *testing.T) {
+	platform := runtime.GOOS + "_" + runtime.GOARCH
+	for _, name := range []string{
+		"tokenrouter_../" + platform + ".tar.gz",
+		"tokenrouter_..\\" + platform + ".tar.gz",
+	} {
+		t.Run(name, func(t *testing.T) {
+			exe := filepath.Join(t.TempDir(), "server")
+			require.NoError(t, os.WriteFile(exe, []byte("old"), 0o755))
+			var downloads []string
+			installer := NewBinaryInstaller(binaryFixtureClient{downloads: &downloads}, func() (string, error) { return exe, nil })
+			err := installer.Apply(context.Background(), []ops.Asset{{Name: name, DownloadURL: "https://api.github.com/repos/test/private/releases/assets/123"}})
+			require.ErrorContains(t, err, "invalid archive name")
+			require.Empty(t, downloads)
+			data, readErr := os.ReadFile(exe)
+			require.NoError(t, readErr)
+			require.Equal(t, "old", string(data))
+			require.NoFileExists(t, exe+".backup")
+		})
+	}
+}
+
 // TestBinaryArchiveNameCompatibility writes tar entries with either product
 // name in both mixed orders and each name alone. It checks extraction chooses
 // tokenrouter when present and accepts sub2api as the sole compatible payload.

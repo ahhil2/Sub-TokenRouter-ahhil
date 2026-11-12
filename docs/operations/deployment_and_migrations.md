@@ -17,7 +17,7 @@
 
 源码镜像的前端阶段校验 `.node-version`，再按 `frontend/package.json` 的 `packageManager` 字段安装 pnpm，本地和 CI 读取同样的版本声明。默认 Node 镜像使用 26.12.1，覆盖 `NODE_IMAGE` 时仍需满足完整版本检查。Node 26 镜像通过 npm 安装声明的 pnpm 版本，冻结安装前复制 workspace 配置。
 
-Go 构建使用 1.27.3，后端模块、两个开发工具模块和三份源码 Dockerfile 同步声明该版本。Go 标准库的安全修复需要重新编译并部署应用二进制才能生效。Node.js 用于依赖安装、前端构建和开发工具；标准生产镜像由 Go 进程提供嵌入的静态资源。
+Go 构建使用 1.27.4，后端模块、两个开发工具模块和三份源码 Dockerfile 同步声明该版本。Go 标准库的安全修复需要重新编译并部署应用二进制才能生效。Node.js 用于依赖安装、前端构建和开发工具；标准生产镜像由 Go 进程提供嵌入的静态资源。
 
 前端构建会导入 `backend/internal/pkg/locale/manifest.json` 和 `error_messages.json`。根目录和 `deploy/` 的 Dockerfile 在前端构建阶段将这些文件复制到 `/app/backend/internal/pkg/locale/`，与源码中的相对导入路径一致。
 
@@ -98,7 +98,7 @@ Apple container 的新栈使用 `org.tokenrouter.stack` 标签；已有的 `sub2
 
 本定制版从 `ahhil2/Sub-TokenRouter-ahhil` 获取 Release。镜像入口将程序安装到 `/app/data/runtime/tokenrouter`，应用用户拥有该目录，因此网页更新器可以下载、备份和替换程序。`/app/data` 需要持久化，同一镜像的容器重启或重建会继续运行已安装的版本。
 
-仓库为私有时，为应用进程配置 `UPDATE_GITHUB_TOKEN`，凭据需要该仓库的 Contents 读取权限。Compose 部署需将变量传入应用服务的 `environment` 或受保护的 `env_file`；凭据存放在仓库外。程序在启动时读取凭据，修改环境后需要重建应用容器。更新器使用 GitHub 附件 API 下载私有安装包和校验文件，前端会显示访问失败的警告。旧版更新器缺少私有附件下载支持时，需先通过已鉴权的下载工具安装支持该流程的版本。
+仓库为私有时，为应用进程配置 `UPDATE_GITHUB_TOKEN`，凭据需要该仓库的 Contents 读取权限。Compose 部署需将变量传入应用服务的 `environment` 或受保护的 `env_file`；凭据存放在仓库外。程序在启动时读取凭据，修改环境后需要重建应用容器。更新器使用 GitHub 附件 API 下载私有安装包和校验文件，按 Release 附件名称保存安装包，供校验和匹配及解压格式识别使用。API 地址末尾的数字 ID 只用于请求附件。前端会显示访问失败的警告。旧版更新器缺少私有附件下载支持时，需先通过已鉴权的下载工具安装支持该流程的版本。
 
 入口记录镜像内程序的 SHA-256。镜像内程序变化时，启动前用镜像版本替换运行目录中的程序，并保留上一份程序为 `.backup`；使用新镜像或回退镜像都属于这种切换。网页更新不会修改镜像记录，因此普通重启不会覆盖网页安装的版本。容器需要 `restart: unless-stopped` 或等价策略，供网页重启请求结束进程后自动恢复服务。共享同一程序目录的多个容器不受支持。
 

@@ -3500,7 +3500,9 @@ func TestPoolReaderDependentTransportDisablesSpeculativePrewarm(t *testing.T) {
 	state, ok := pool.SnapshotProviderState(req.Provider.ID)
 	require.True(t, ok)
 	require.Equal(t, 1, state.Connections)
-	require.Zero(t, pool.clientDialer.(*openAIWSCountingDialer).DialCount())
+	dialer, ok := pool.clientDialer.(*openAIWSCountingDialer)
+	require.True(t, ok)
+	require.Zero(t, dialer.DialCount())
 	ap.mu.Lock()
 	disabled, creating := ap.prewarmDisabled, ap.creating
 	ap.mu.Unlock()
