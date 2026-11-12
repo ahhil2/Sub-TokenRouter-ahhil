@@ -60,8 +60,8 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Text endpoint rejection can occur before provider selection, after a
-// credential refresh, or after upstream output has already reached the client.
+// gateway_openai_text_http_test.go checks text endpoint rejection before provider
+// selection, after credential refresh, and after upstream output reaches clients.
 // The tests distinguish those stages through scheduler counters, recorded
 // provider calls, HTTP status, response frames, and completion writes instead
 // of relying on an endpoint's final status alone.
@@ -1488,13 +1488,14 @@ func TestOpenAIResponses_RejectsUnownedHTTPContinuation(t *testing.T) {
 }
 
 // TestOpenAIResponses_FunctionCallOutputHTTPGuidanceDoesNotSuggestPreviousResponseReuse
-// sends an incomplete function-call output through HTTP Responses. It checks
-// WebSocket v2 guidance and absence of advice to reuse previous_response_id.
+// sends a function-call output with a call ID but no associated context through
+// HTTP Responses. It checks missing-context guidance and rejects obsolete advice
+// to switch transports or reuse previous_response_id.
 func TestOpenAIResponses_FunctionCallOutputHTTPGuidanceDoesNotSuggestPreviousResponseReuse(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", strings.NewReader(
-		`{"model":"gpt-5.4","stream":false,"input":[{"type":"function_call_output","output":"{}"}]}`,
+		`{"model":"gpt-5.4","stream":false,"input":[{"type":"function_call_output","call_id":"call_http_orphan","output":"{}"}]}`,
 	))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -1513,7 +1514,9 @@ func TestOpenAIResponses_FunctionCallOutputHTTPGuidanceDoesNotSuggestPreviousRes
 	h.Responses(c)
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Contains(t, w.Body.String(), "Responses WebSocket v2")
+	require.Equal(t, "invalid_request_error", gjson.Get(w.Body.String(), "error.type").String())
+	require.Equal(t, "Client tool outputs require tool-call context, item_reference entries matching each call_id, or a previous_response_id", gjson.Get(w.Body.String(), "error.message").String())
+	require.NotContains(t, w.Body.String(), "Responses WebSocket v2")
 	require.NotContains(t, w.Body.String(), "reuse previous_response_id")
 }
 

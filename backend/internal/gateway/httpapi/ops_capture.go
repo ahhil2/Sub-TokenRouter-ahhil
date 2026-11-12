@@ -1342,7 +1342,7 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *opscore.OpsService, finalStatu
 		return
 	}
 	canceled := c.Request != nil && c.Request.Context().Err() != nil
-	if finalStatus >= http.StatusBadRequest && !(canceled && finalStatus == StatusClientClosedRequest) {
+	if finalStatus >= http.StatusBadRequest && (!canceled || finalStatus != StatusClientClosedRequest) {
 		return
 	}
 
