@@ -34,6 +34,20 @@ import (
 // ImageResponseOptions binds image readers to request-specific output,
 // accounting, and error policy callbacks.
 type ImageResponseOptions struct {
+	ExpectedGIF bool // requested GIF output validation
+	// ExpectedImages is the requested final image count; zero uses one when
+	// validating a native Images stream before buffered or streaming delivery.
+	ExpectedImages int
+	// EventPrefix selects generation or editing completions when a native
+	// upstream mislabeled its buffered JSON response as an event stream.
+	EventPrefix string
+	// RequireBase64 makes native Images JSON conversion supply encoded data for
+	// every completion; OAuth's existing JSON compatibility path remains independent.
+	RequireBase64 bool
+	// FetchImage downloads URL-only outputs with the selected provider proxy and
+	// public-target validation. Failure ends delivery after retaining upstream observations.
+	FetchImage func(string) (string, error)
+
 	// StartKeepalive optionally starts the HTTP SSE controller before a streamed
 	// exchange. Its idempotent cleanup waits for writes and restores the writer.
 	StartKeepalive func() func()
@@ -43,8 +57,8 @@ type ImageResponseOptions struct {
 	// Backfill converts the API-key nonstream body after usage observation; that
 	// reader requires this callback even when it returns unchanged bytes.
 	Backfill func([]byte) []byte
-	// ReadLimit supplies the API-key stream's plain-JSON retention limit in bytes;
-	// SSE line allocation is independent of this value.
+	// ReadLimit bounds retained plain JSON and buffered native SSE events in bytes.
+	// Legacy streaming passthrough retains its existing independent line allocation.
 	ReadLimit func() int64
 	// ReadBody consumes buffered JSON under the caller's size and error policy.
 	// Nonstream readers and streamed Images JSON conversion require this callback.
@@ -144,9 +158,11 @@ func TryWriteImagesStreamEvent(
 // Completed results and completed-item copies are reconciled by the codec
 // before output. If no image remains, structured errors precede model-text
 // classification and the caller's empty-output policy. Retryable errors remain
-// available to the executor before error presentation; all error returns from
-// this reader discard the parsed usage. A blank result model receives
-// fallbackModel before response construction.
+// available to the executor before error presentation. GIF validation failures
+// retain parsed usage and original size observations; earlier parsing and empty
+// output failures return no usage. A blank result model receives fallbackModel
+// before response construction. Successful GIF output reports dimensions from
+// validated bytes, keeping billing sizes consistent with the delivered document.
 func ReadImagesOAuthNonStreaming(
 	resp *http.Response,
 	sink upstream.OutputSink, options ImageResponseOptions,
@@ -195,10 +211,20 @@ func ReadImagesOAuthNonStreaming(
 	if err != nil {
 		return wire.ForwardUsage{}, 0, nil, err
 	}
+	responseBody, usage.ImageFrameCount, err = ValidateGIFImagesResponse(responseBody, options.ExpectedGIF, options.FetchImage)
+	if err != nil {
+		return usage, len(results), OpenAIResponsesImageResultSizes(results), err
+	}
+	imageSizes := OpenAIResponsesImageResultSizes(results)
+	if usage.ImageFrameCount > 0 {
+		// The normalized document includes the decoded GIF canvas and unchanged
+		// static entries, so completion prices the dimensions delivered to the client.
+		imageSizes = wire.CollectOpenAIResponseImageOutputSizesFromJSONBytes(responseBody)
+	}
 	c := upstream.NewOutputContext(sink)
 	options.ResponseHeaders(c.Writer.Header(), resp.Header)
 	c.Data(resp.StatusCode, "application/json; charset=utf-8", responseBody)
-	return usage, len(results), OpenAIResponsesImageResultSizes(results), nil
+	return usage, len(results), imageSizes, nil
 }
 
 // ReadImagesOAuthStreaming converts Responses events to Images SSE while

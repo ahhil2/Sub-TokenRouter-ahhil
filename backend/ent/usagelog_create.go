@@ -29,6 +29,34 @@ type UsageLogCreate struct {
 	conflict []sql.ConflictOption
 }
 
+// SetImageFrameCount sets the "image_frame_count" field.
+func (_c *UsageLogCreate) SetImageFrameCount(v int) *UsageLogCreate {
+	_c.mutation.SetImageFrameCount(v)
+	return _c
+}
+
+// SetNillableImageFrameCount sets the "image_frame_count" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableImageFrameCount(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetImageFrameCount(*v)
+	}
+	return _c
+}
+
+// SetImageCacheReadTokens sets the "image_cache_read_tokens" field.
+func (_c *UsageLogCreate) SetImageCacheReadTokens(v int) *UsageLogCreate {
+	_c.mutation.SetImageCacheReadTokens(v)
+	return _c
+}
+
+// SetNillableImageCacheReadTokens sets the "image_cache_read_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableImageCacheReadTokens(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetImageCacheReadTokens(*v)
+	}
+	return _c
+}
+
 // SetUserID sets the "user_id" field.
 func (_c *UsageLogCreate) SetUserID(v int64) *UsageLogCreate {
 	_c.mutation.SetUserID(v)
@@ -786,6 +814,14 @@ func (_c *UsageLogCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *UsageLogCreate) defaults() {
+	if _, ok := _c.mutation.ImageFrameCount(); !ok {
+		v := usagelog.DefaultImageFrameCount
+		_c.mutation.SetImageFrameCount(v)
+	}
+	if _, ok := _c.mutation.ImageCacheReadTokens(); !ok {
+		v := usagelog.DefaultImageCacheReadTokens
+		_c.mutation.SetImageCacheReadTokens(v)
+	}
 	if _, ok := _c.mutation.Platform(); !ok {
 		v := usagelog.DefaultPlatform
 		_c.mutation.SetPlatform(v)
@@ -882,6 +918,12 @@ func (_c *UsageLogCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *UsageLogCreate) check() error {
+	if _, ok := _c.mutation.ImageFrameCount(); !ok {
+		return &ValidationError{Name: "image_frame_count", err: errors.New(`ent: missing required field "UsageLog.image_frame_count"`)}
+	}
+	if _, ok := _c.mutation.ImageCacheReadTokens(); !ok {
+		return &ValidationError{Name: "image_cache_read_tokens", err: errors.New(`ent: missing required field "UsageLog.image_cache_read_tokens"`)}
+	}
 	if _, ok := _c.mutation.UserID(); !ok {
 		return &ValidationError{Name: "user_id", err: errors.New(`ent: missing required field "UsageLog.user_id"`)}
 	}
@@ -1087,6 +1129,14 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec = sqlgraph.NewCreateSpec(usagelog.Table, sqlgraph.NewFieldSpec(usagelog.FieldID, field.TypeInt64))
 	)
 	_spec.OnConflict = _c.conflict
+	if value, ok := _c.mutation.ImageFrameCount(); ok {
+		_spec.SetField(usagelog.FieldImageFrameCount, field.TypeInt, value)
+		_node.ImageFrameCount = value
+	}
+	if value, ok := _c.mutation.ImageCacheReadTokens(); ok {
+		_spec.SetField(usagelog.FieldImageCacheReadTokens, field.TypeInt, value)
+		_node.ImageCacheReadTokens = value
+	}
 	if value, ok := _c.mutation.BillingUserID(); ok {
 		_spec.SetField(usagelog.FieldBillingUserID, field.TypeInt64, value)
 		_node.BillingUserID = value
@@ -1388,7 +1438,7 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 // of the `INSERT` statement. For example:
 //
 //	client.UsageLog.Create().
-//		SetUserID(v).
+//		SetImageFrameCount(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -1397,7 +1447,7 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.UsageLogUpsert) {
-//			SetUserID(v+v).
+//			SetImageFrameCount(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *UsageLogCreate) OnConflict(opts ...sql.ConflictOption) *UsageLogUpsertOne {
@@ -1432,6 +1482,42 @@ type (
 		*sql.UpdateSet
 	}
 )
+
+// SetImageFrameCount sets the "image_frame_count" field.
+func (u *UsageLogUpsert) SetImageFrameCount(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldImageFrameCount, v)
+	return u
+}
+
+// UpdateImageFrameCount sets the "image_frame_count" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateImageFrameCount() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldImageFrameCount)
+	return u
+}
+
+// AddImageFrameCount adds v to the "image_frame_count" field.
+func (u *UsageLogUpsert) AddImageFrameCount(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldImageFrameCount, v)
+	return u
+}
+
+// SetImageCacheReadTokens sets the "image_cache_read_tokens" field.
+func (u *UsageLogUpsert) SetImageCacheReadTokens(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldImageCacheReadTokens, v)
+	return u
+}
+
+// UpdateImageCacheReadTokens sets the "image_cache_read_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateImageCacheReadTokens() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldImageCacheReadTokens)
+	return u
+}
+
+// AddImageCacheReadTokens adds v to the "image_cache_read_tokens" field.
+func (u *UsageLogUpsert) AddImageCacheReadTokens(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldImageCacheReadTokens, v)
+	return u
+}
 
 // SetUserID sets the "user_id" field.
 func (u *UsageLogUpsert) SetUserID(v int64) *UsageLogUpsert {
@@ -2406,6 +2492,48 @@ func (u *UsageLogUpsertOne) Update(set func(*UsageLogUpsert)) *UsageLogUpsertOne
 		set(&UsageLogUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetImageFrameCount sets the "image_frame_count" field.
+func (u *UsageLogUpsertOne) SetImageFrameCount(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetImageFrameCount(v)
+	})
+}
+
+// AddImageFrameCount adds v to the "image_frame_count" field.
+func (u *UsageLogUpsertOne) AddImageFrameCount(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddImageFrameCount(v)
+	})
+}
+
+// UpdateImageFrameCount sets the "image_frame_count" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateImageFrameCount() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateImageFrameCount()
+	})
+}
+
+// SetImageCacheReadTokens sets the "image_cache_read_tokens" field.
+func (u *UsageLogUpsertOne) SetImageCacheReadTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetImageCacheReadTokens(v)
+	})
+}
+
+// AddImageCacheReadTokens adds v to the "image_cache_read_tokens" field.
+func (u *UsageLogUpsertOne) AddImageCacheReadTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddImageCacheReadTokens(v)
+	})
+}
+
+// UpdateImageCacheReadTokens sets the "image_cache_read_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateImageCacheReadTokens() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateImageCacheReadTokens()
+	})
 }
 
 // SetUserID sets the "user_id" field.
@@ -3628,7 +3756,7 @@ func (_c *UsageLogCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.UsageLogUpsert) {
-//			SetUserID(v+v).
+//			SetImageFrameCount(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *UsageLogCreateBulk) OnConflict(opts ...sql.ConflictOption) *UsageLogUpsertBulk {
@@ -3702,6 +3830,48 @@ func (u *UsageLogUpsertBulk) Update(set func(*UsageLogUpsert)) *UsageLogUpsertBu
 		set(&UsageLogUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetImageFrameCount sets the "image_frame_count" field.
+func (u *UsageLogUpsertBulk) SetImageFrameCount(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetImageFrameCount(v)
+	})
+}
+
+// AddImageFrameCount adds v to the "image_frame_count" field.
+func (u *UsageLogUpsertBulk) AddImageFrameCount(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddImageFrameCount(v)
+	})
+}
+
+// UpdateImageFrameCount sets the "image_frame_count" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateImageFrameCount() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateImageFrameCount()
+	})
+}
+
+// SetImageCacheReadTokens sets the "image_cache_read_tokens" field.
+func (u *UsageLogUpsertBulk) SetImageCacheReadTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetImageCacheReadTokens(v)
+	})
+}
+
+// AddImageCacheReadTokens adds v to the "image_cache_read_tokens" field.
+func (u *UsageLogUpsertBulk) AddImageCacheReadTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddImageCacheReadTokens(v)
+	})
+}
+
+// UpdateImageCacheReadTokens sets the "image_cache_read_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateImageCacheReadTokens() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateImageCacheReadTokens()
+	})
 }
 
 // SetUserID sets the "user_id" field.

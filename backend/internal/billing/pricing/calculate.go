@@ -273,6 +273,9 @@ func ApplyConfigTokenPriceOverrides(pricing *ModelPricing, configPricing *ModelP
 	if configPricing.CacheReadPrice != nil {
 		priority := ConfigTierOverridePrice(pricing.CacheReadPricePerToken, pricing.CacheReadPricePerTokenPriority, *configPricing.CacheReadPrice)
 		pricing.CacheReadPricePerToken = *configPricing.CacheReadPrice
+		// A manual aggregate cache price also owns the image subset; retaining the
+		// catalog image rate would partially bypass this administrator override.
+		pricing.ImageCacheReadPriceExplicit = false
 		pricing.CacheReadPricePerTokenPriority = priority
 	}
 	applyConfigImagePriceOverrides(pricing, configPricing)
@@ -364,6 +367,7 @@ func ComputeTokenBreakdown(
 	cacheReadPrice := pricing.CacheReadPricePerToken
 	cacheCreationPrice := pricing.CacheCreationPricePerToken
 	cacheCreationMultiplier := 1.0
+	imageCacheMultiplier := 1.0
 	tierMultiplier := 1.0
 
 	tier := NormalizeBillingServiceTier(serviceTier)
@@ -406,6 +410,7 @@ func ComputeTokenBreakdown(
 		// the selected input factor, so cached input follows that same long-context
 		// amount rule.
 		cacheReadPrice *= longContextInputMultiplier
+		imageCacheMultiplier = longContextInputMultiplier
 		// ComputeCacheCreationCost selects aggregate or TTL rates from pricing
 		// directly; pass the input factor separately so whichever cache rate is
 		// chosen receives the long-context adjustment.
@@ -413,11 +418,11 @@ func ComputeTokenBreakdown(
 	}
 
 	bd := &CostBreakdown{}
-	// Split reported image input from the aggregate input bucket before charging.
-	// Separate text and image components keep reconciliation able to identify
-	// their rates without adding the image subset twice.
+	// Remove reported cached image input before splitting the uncached aggregate.
+	// Upstream image details can include cached tokens, which the cache bucket
+	// charges separately; retaining them here would also reduce uncached text.
 	if tokens.ImageInputTokens > 0 {
-		imageInputTokens := tokens.ImageInputTokens
+		imageInputTokens := max(tokens.ImageInputTokens-tokens.ImageCacheReadTokens, 0)
 		textInputTokens := tokens.InputTokens - imageInputTokens
 		// Reported image input can exceed its aggregate; cap the image subset at that
 		// aggregate so splitting cannot create a negative text-input component.
@@ -461,7 +466,14 @@ func ComputeTokenBreakdown(
 	// those adjustments once.
 	bd.CacheCreationCost = ComputeCacheCreationCost(pricing, tokens, cacheCreationPrice, cacheCreationMultiplier)
 
-	bd.CacheReadCost = float64(tokens.CacheReadTokens) * cacheReadPrice
+	// Image cache detail subdivides the aggregate cache count. Clamp it to that
+	// aggregate so an overreported detail cannot create a negative text-cache cost.
+	imageCached := min(max(tokens.ImageCacheReadTokens, 0), max(tokens.CacheReadTokens, 0))
+	imageCachePrice := cacheReadPrice
+	if pricing.ImageCacheReadPriceExplicit {
+		imageCachePrice = pricing.ImageCacheReadPricePerToken * imageCacheMultiplier
+	}
+	bd.CacheReadCost = float64(tokens.CacheReadTokens-imageCached)*cacheReadPrice + float64(imageCached)*imageCachePrice
 
 	if tierMultiplier != 1.0 {
 		bd.InputCost *= tierMultiplier
@@ -1041,6 +1053,7 @@ func FastModeDisplayPricing(pricing *ModelPricing) (*ModelPricing, bool) {
 	multiplier := ConfiguredServiceTierMultiplier(OpenAIFastTierPriority, pricing)
 	fastPricing.InputPricePerToken *= multiplier
 	fastPricing.ImageInputPricePerToken *= multiplier
+	fastPricing.ImageCacheReadPricePerToken *= multiplier
 	fastPricing.OutputPricePerToken *= multiplier
 	fastPricing.CacheCreationPricePerToken *= multiplier
 	fastPricing.CacheReadPricePerToken *= multiplier

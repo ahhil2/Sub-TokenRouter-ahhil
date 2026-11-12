@@ -248,6 +248,8 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 		"provider_mode",
 		"api_protocol",
 		"openai_workload_capabilities",
+		"images_generations_mode",
+		"images_edits_mode",
 		"api_key",
 		"project_id",
 		"oauth_type",
@@ -282,6 +284,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 	// observations used by those checks.
 	keys := []string{
 		providercore.OpenAIClientClassExtraKey,
+		"images_gif_enabled",
 		"quota_limit",
 		"quota_used",
 		"quota_daily_limit",

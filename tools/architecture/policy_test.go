@@ -7,7 +7,14 @@ import (
 	"testing"
 )
 
-// TestDependencyBoundaries 检查各目录角色的允许依赖和禁止依赖。
+// policy_test.go checks architecture permissions with allowed and forbidden
+// import fixtures. File-scoped exceptions are exercised beside neighboring files
+// and nested packages so adding a required dependency keeps the surrounding
+// package restrictions observable.
+
+// TestDependencyBoundaries supplies allowed and forbidden imports across module
+// roles and file permissions. Diagnostics must identify rejected imports at their
+// source lines while admitting each registered dependency.
 func TestDependencyBoundaries(t *testing.T) {
 	cases := []struct {
 		file     string
@@ -44,6 +51,17 @@ func TestDependencyBoundaries(t *testing.T) {
 		{"internal/protocol/openai/helpers/new.go", "os", false},
 		{"internal/protocol/openai/new_test.go", "net/http", false},
 		{"internal/protocol/openai/new.go", "bytes", true},
+		{"internal/protocol/image_gif.go", "encoding/binary", true},
+		{"internal/protocol/image_gif.go", "os", false},
+		{"internal/protocol/new.go", "encoding/binary", false},
+		{"internal/protocol/helpers/image_gif.go", "encoding/binary", false},
+		{"internal/creative/provider/openai.go", modulePath + "/internal/upstream/openai", true},
+		{"internal/creative/provider/openai_test.go", modulePath + "/internal/upstream/openai", true},
+		{"internal/creative/provider/new.go", modulePath + "/internal/upstream/openai", false},
+		{"internal/creative/provider/new_test.go", modulePath + "/internal/upstream/openai", false},
+		{"internal/creative/provider/helpers/openai.go", modulePath + "/internal/upstream/openai", false},
+		{"internal/creative/provider/openai.go", modulePath + "/internal/upstream/openai/ws", false},
+		{"internal/creative/new.go", modulePath + "/internal/upstream/openai", false},
 		{"internal/protocol/openai/new.go", modulePath + "/internal/protocol/bridge", false},
 		{"internal/protocol/bridge/new.go", modulePath + "/internal/protocol/openai", true},
 		{"internal/billing/pricing/new.go", modulePath + "/internal/billing", false},

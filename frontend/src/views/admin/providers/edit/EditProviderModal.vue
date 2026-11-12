@@ -778,6 +778,13 @@
                 :hint="t('admin.providers.openai.flattenNamespacesDesc')"
                 testid="edit-openai-flatten-namespaces-toggle"
               />
+              <SettingToggleRow
+                v-if="provider.type === 'oauth' || provider.type === 'apikey'"
+                id="edit-openai-images-gif"
+                v-model="openAIImagesGIFEnabled"
+                :label="t('admin.providers.openai.imagesGIFEnabled')"
+                :hint="t('admin.providers.openai.imagesGIFEnabledDesc')"
+              />
               <template v-if="provider.type === 'apikey'">
                 <SettingToggleRow
                   id="edit-openai-continuation-supported"
@@ -1169,6 +1176,7 @@ const {
   openAICompactMode,
   openAINativeCompactionV2Mode,
   openAIResponsesContinuationSupported,
+  openAIImagesGIFEnabled,
   openAIImagesURLToB64JSON,
   responsesWSConnectionMode,
   codexCLIOnlyAllowClaudeCodeEnabled,

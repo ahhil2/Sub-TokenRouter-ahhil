@@ -328,6 +328,24 @@ describe('CreateProviderModal OpenAI provider options', () => {
     expect(payload?.extra?.openai_responses_continuation_supported).toBe(false)
     expect(payload?.extra).not.toHaveProperty('openai_responses_mode')
     expect(payload?.extra).not.toHaveProperty('openai_responses_supported')
+    expect(payload?.extra).not.toHaveProperty('images_gif_enabled')
+  })
+
+  // An OpenAI API Key that cannot generate animations is explicitly disabled
+  // in the creation dialog. Saving preserves false instead of restoring the default.
+  it('preserves an explicitly disabled GIF capability during creation', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('form#create-provider-form input[type="text"]').setValue('Static images')
+    await wrapper.get('form#create-provider-form input[type="password"]').setValue('test-api-key')
+    const toggle = wrapper.get('#create-openai-images-gif')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    await setSwitch(toggle, false)
+    await wrapper.get('form#create-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createProviderMock.mock.calls[0]?.[0]?.extra?.images_gif_enabled).toBe(false)
+    wrapper.unmount()
   })
 
   // The diagnostic header override remains empty during creation. Extra must

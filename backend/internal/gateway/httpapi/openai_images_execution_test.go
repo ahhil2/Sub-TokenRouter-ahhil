@@ -46,6 +46,11 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_images_execution_test.go verifies authenticated image exchanges through
+// API-key and OAuth routes. Local transports expose request bytes, response
+// framing, observed usage, retry decisions, and client-disconnect behavior without
+// calling a paid generation provider.
+
 // openAIOAuthImageActualSizeTestRun retains execution and HTTP observations
 // from one dimension fixture.
 type openAIOAuthImageActualSizeTestRun struct {
@@ -3322,5 +3327,53 @@ func TestImagesRejectUnknownCapabilityBeforeTransport(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, recorder.Code)
 			require.Equal(t, tc.reason, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
 		})
+	}
+}
+
+// TestForwardImagesGIFBothCredentials preserves actual animation observations.
+// Native JSON and OAuth Responses fixtures omit image format and size metadata;
+// returned bytes must still establish GIF MIME, frame units, and dimensions.
+func TestForwardImagesGIFBothCredentials(t *testing.T) {
+	encoded := "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAkQBACwAAAAAAQABAAACAkQBADs="
+	for _, model := range []string{"gpt-image-2.6-sunburst", "gpt-image-2.6-flare"} {
+		for _, kind := range []string{capability.ProviderTypeAPIKey, capability.ProviderTypeOAuth} {
+			t.Run(model+"/"+kind, func(t *testing.T) {
+				body := []byte(fmt.Sprintf(`{"model":%q,"prompt":"A blinking star","quality":"max","output_format":"gif","frame_count":4,"response_format":"url"}`, model))
+				parsed, err := media.ParseImageRequest("/v1/images/generations", "application/json", body, true)
+				require.NoError(t, err)
+				response := `{"data":[{"b64_json":"` + encoded + `"}],"usage":{"input_tokens":5,"output_tokens":100}}`
+				contentType := "application/json"
+				if kind == capability.ProviderTypeOAuth {
+					response = `data: {"type":"response.completed","response":{"tool_usage":{"image_gen":{"input_tokens":5,"output_tokens":100,"output_tokens_details":{"image_tokens":100}}},"output":[{"type":"image_generation_call","id":"gif-test","result":"` + encoded + `"}]}}` + "\n\n"
+					contentType = "text/event-stream"
+				}
+				transport := &auxiliaryHTTPRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(strings.NewReader(response))}}
+				service := newImagesFixture(imagesFixtureInputs{transport: transport})
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+				value := &gatewayprovider.ExecutionProvider{Record: providerimages.Record{ID: 12, Platform: capability.PlatformOpenAI, Type: kind, Credentials: map[string]any{"api_key": "test-key", "access_token": "test-oauth"}}}
+				result, err := service.ForwardImages(context.Background(), c, value, body, parsed, "")
+				require.NoError(t, err)
+				require.Equal(t, 1, result.ImageCount)
+				require.Equal(t, 2, result.ImageFrameCount)
+				require.Equal(t, 100, result.Usage.ImageOutputTokens)
+				require.Contains(t, result.ImageOutputSizes, "1x1")
+				require.Equal(t, "gif", gjson.Get(recorder.Body.String(), "output_format").String())
+				if kind == capability.ProviderTypeOAuth {
+					require.Equal(t, "data:image/gif;base64,"+encoded, gjson.Get(recorder.Body.String(), "data.0.url").String())
+					require.Equal(t, model, gjson.GetBytes(transport.lastBody, "tools.0.model").String())
+					require.Equal(t, "max", gjson.GetBytes(transport.lastBody, "tools.0.quality").String())
+					require.Equal(t, int64(4), gjson.GetBytes(transport.lastBody, "tools.0.frame_count").Int())
+					require.Equal(t, int64(200), gjson.GetBytes(transport.lastBody, "tools.0.frame_duration_ms").Int())
+				} else {
+					require.Equal(t, model, gjson.GetBytes(transport.lastBody, "model").String())
+					require.Equal(t, "max", gjson.GetBytes(transport.lastBody, "quality").String())
+					require.Equal(t, int64(4), gjson.GetBytes(transport.lastBody, "frame_count").Int())
+					require.Equal(t, int64(200), gjson.GetBytes(transport.lastBody, "frame_duration_ms").Int())
+				}
+				require.Len(t, transport.requests, 1)
+			})
+		}
 	}
 }

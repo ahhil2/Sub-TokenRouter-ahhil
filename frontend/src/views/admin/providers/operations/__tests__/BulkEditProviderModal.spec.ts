@@ -196,6 +196,43 @@ describe('BulkEditProviderModal', () => {
     vi.mocked(adminAPI.tlsFingerprintRouters.list).mockResolvedValue([])
   })
 
+  // GIF support is enabled by default but bulk edits require an explicit
+  // application choice. Both supported credential types can persist false independently.
+  it.each(['oauth', 'apikey'])(
+    'disables GIF capability only when selected for %s',
+    async (type) => {
+      const wrapper = mountModal({
+        selectedPlatforms: ['openai'],
+        selectedTypes: [type],
+      })
+      await flushPromises()
+      const apply = wrapper.get<HTMLInputElement>('#bulk-edit-images-gif-enabled')
+      expect(apply.element.checked).toBe(false)
+      await apply.setValue(true)
+      const toggle = wrapper.get('#bulk-edit-images-gif-toggle')
+      expect(toggle.attributes('aria-checked')).toBe('true')
+      await setSwitch(toggle, false)
+      await wrapper.get('form').trigger('submit.prevent')
+      await flushPromises()
+      expect(adminAPI.providers.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        extra: { images_gif_enabled: false },
+      })
+      wrapper.unmount()
+    },
+  )
+
+  // The GIF control applies only to supported OpenAI credentials. Mixed-platform
+  // selections cannot assign an OpenAI capability to providers on other transports.
+  it('hides GIF changes for mixed platforms', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai', 'anthropic'],
+      selectedTypes: ['apikey'],
+    })
+    await flushPromises()
+    expect(wrapper.find('#bulk-edit-images-gif-enabled').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   // Two providers store the same whitelist in different orders. Opening the
   // modal fills the sorted shared whitelist while leaving its apply checkbox
   // unchecked.

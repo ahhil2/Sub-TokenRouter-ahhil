@@ -129,6 +129,9 @@ func NormalizeProviderProtocols(provider *Record) error {
 	if err := ValidateJevCredentials(provider); err != nil {
 		return err
 	}
+	if err := validateImageStreamModes(provider); err != nil {
+		return err
+	}
 	protocols := provider.UpstreamProtocols()
 	// Validate an explicit selection before interpreting legacy bridge switches.
 	// Otherwise a bridge could hide an invalid or duplicated WebSocket identifier by deleting it.

@@ -82,6 +82,8 @@ func usageLogFromServiceUser(l *usage.UsageLog, language ...string) UsageLog {
 		TPS:                       l.TPS(),
 		TTFTMode:                  recordedTimingMode(l),
 		ImageCount:                l.ImageCount,
+		ImageFrameCount:           l.ImageFrameCount,
+		ImageCacheReadTokens:      l.ImageCacheReadTokens,
 		ImageSize:                 l.ImageSize,
 		ImageInputSize:            l.ImageInputSize,
 		ImageOutputSize:           l.ImageOutputSize,

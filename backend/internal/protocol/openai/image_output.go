@@ -2,10 +2,14 @@ package openai
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"strings"
 
 	"github.com/tidwall/gjson"
+
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
 // image_output.go counts distinct generated images across repeated response
@@ -20,8 +24,13 @@ import (
 // Item sizes retain first-seen identity order, and later observations can fill a
 // missing size. Any recorded item size suppresses the data-array size list, whose
 // latest nonempty observation may describe fewer images than the largest count.
-// Readers pass these observations onward for response accounting; field evidence
-// here does not validate image bytes, URL reachability, or dimension syntax.
+// Readers pass these observations onward for response accounting. Static image
+// bytes and URL reachability are not validated here; GIF completion checks
+// require complete containers independently from request frame limits.
+
+// ErrGIFResultInvalid identifies generated animation bytes that cannot establish
+// a complete supported result; callers must stop delivery without resubmitting generation.
+var ErrGIFResultInvalid = errors.New("upstream returned invalid GIF output")
 
 // OpenAIImageOutputCounter retains image evidence for one response or ordered
 // event stream. Construct it with NewOpenAIImageOutputCounter before adding
@@ -40,8 +49,11 @@ type OpenAIImageOutputCounter struct {
 	// count counts unique output identities, and maxDataCount retains the largest
 	// recognized data-array count. Count selects their maximum because the two
 	// representations may report overlapping images from the same response.
-	count        int // distinct output-item count
-	maxDataCount int // largest data-array count
+	frames       int  // completed image frame units
+	dataFrames   int  // largest array frame units
+	animated     bool // at least one GIF observed
+	count        int  // distinct output-item count
+	maxDataCount int  // largest data-array count
 }
 
 // NewOpenAIImageOutputCounter constructs an empty counter with writable identity
@@ -179,6 +191,7 @@ func (c *OpenAIImageOutputCounter) addDataArray(data gjson.Result) {
 	}
 	items := data.Array()
 	imageCount := 0
+	frameCount := 0
 	sizes := make([]string, 0, len(items))
 	for _, item := range items {
 		if !item.IsObject() {
@@ -190,12 +203,20 @@ func (c *OpenAIImageOutputCounter) addDataArray(data gjson.Result) {
 			continue
 		}
 		imageCount++
+		encoded := item.Get("b64_json").String()
+		if encoded == "" {
+			encoded = item.Get("url").String()
+		}
+		frames := imageOutputFrames(encoded)
+		frameCount += max(1, frames)
+		c.animated = c.animated || frames > 0
 		if size := strings.TrimSpace(item.Get("size").String()); size != "" {
 			sizes = append(sizes, size)
 		}
 	}
 	// Arrays are whole-response count observations. Retain their maximum so a
 	// repeated snapshot does not add the same reported images to an earlier total.
+	c.dataFrames = max(c.dataFrames, frameCount)
 	if imageCount > c.maxDataCount {
 		c.maxDataCount = imageCount
 	}
@@ -221,9 +242,9 @@ func (c *OpenAIImageOutputCounter) addOutputArray(output gjson.Result) {
 
 // addImageOutputItem records an object with a blank type string form or the
 // image_generation_call/image_generation.completed label and a nonblank result,
-// b64_json, or url string form. A raw partial_image substring discards the item,
-// including a match inside an unrelated value. Result fields supply output
-// evidence through gjson string forms, which also accept nonstring JSON values;
+// b64_json, or url string form. Explicit partial-image type labels are excluded;
+// unrelated metadata and URL text do not determine completion. Result fields
+// supply output evidence through gjson string forms, which accept nonstring values;
 // image bytes and URLs are not validated here.
 //
 // Identity prefers id, then call_id, then a hash of the selected trimmed result.
@@ -239,10 +260,22 @@ func (c *OpenAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 	if itemType != "" && itemType != "image_generation_call" && itemType != "image_generation.completed" && itemType != "image_edit.completed" {
 		return
 	}
-	// Exclude payloads carrying the raw partial-image marker before result
-	// selection. The substring screen can also match unrelated field names or values.
-	if strings.Contains(strings.ToLower(item.Raw), "partial_image") {
-		return
+	_ = c.AddCompletedImage(item)
+}
+
+// AddCompletedImage observes an image whose enclosing event already established
+// completion and reports whether its identity is new. Callers validate native
+// image fields or filter Responses item types before invoking this method; item
+// type labels and unrelated metadata do not decide completion here. Construct
+// the receiver with NewOpenAIImageOutputCounter and serialize its observations.
+//
+// Identity prefers id, call_id, and then the selected content hash. A repeated
+// identity can fill a missing size and returns false without increasing the
+// image count. Native readers use that result to suppress duplicate delivery,
+// independently from the generic event decoder's filtering of other item types.
+func (c *OpenAIImageOutputCounter) AddCompletedImage(item gjson.Result) bool {
+	if c == nil || !item.IsObject() {
+		return false
 	}
 	// Output evidence follows result, b64_json, then url, so an earlier nonblank
 	// value defines the hash identity when the item has no supplied identifier.
@@ -254,7 +287,7 @@ func (c *OpenAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		result = strings.TrimSpace(item.Get("url").String())
 	}
 	if result == "" {
-		return
+		return false
 	}
 	// Repeated completion events converge on the supplied ID before hashing
 	// result text. Distinct trimmed IDs can count identical text as separate outputs.
@@ -266,7 +299,7 @@ func (c *OpenAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		key = HashOpenAIImageOutputResult(result)
 	}
 	if key == "" {
-		return
+		return false
 	}
 	size := strings.TrimSpace(item.Get("size").String())
 	// Later terminal snapshots may add a missing size for this identity.
@@ -275,14 +308,18 @@ func (c *OpenAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		if size != "" && strings.TrimSpace(c.seenSizes[key]) == "" {
 			c.seenSizes[key] = size
 		}
-		return
+		return false
 	}
 	c.seen[key] = struct{}{}
 	c.seenOrder = append(c.seenOrder, key)
 	if size != "" {
 		c.seenSizes[key] = size
 	}
+	frames := imageOutputFrames(result)
+	c.frames += max(1, frames)
+	c.animated = c.animated || frames > 0
 	c.count++
+	return true
 }
 
 // HashOpenAIImageOutputResult returns a lowercase SHA-256 hex digest of trimmed
@@ -336,4 +373,118 @@ func CollectOpenAIImageOutputSizesFromSSEBody(body string) []string {
 	counter := NewOpenAIImageOutputCounter()
 	counter.AddSSEBody(body)
 	return counter.Sizes()
+}
+
+// FrameCount returns frame billing units when any observed output is animated.
+// Static-only responses return zero for compatibility. Each GIF contributes its
+// encoded frame count, while static files in mixed results contribute one unit.
+func (c *OpenAIImageOutputCounter) FrameCount() int {
+	if c == nil || !c.animated {
+		return 0
+	}
+	return max(c.frames, c.dataFrames)
+}
+
+// imageOutputFrames reads GIF frame units from bounded encoded result bytes.
+// Non-GIF and undecodable values return zero; response readers separately reject
+// invalid requested GIF results before presenting a successful Images response.
+func imageOutputFrames(encoded string) int {
+	if strings.HasPrefix(encoded, "data:") {
+		_, encoded, _ = strings.Cut(encoded, ",")
+	}
+	// GIF signatures share this Base64 prefix. Skip all other outputs before
+	// decoding so ordinary large PNG results do not allocate another full image.
+	if !strings.HasPrefix(encoded, "R0lGOD") {
+		return 0
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		data, err = base64.RawStdEncoding.DecodeString(encoded)
+	}
+	if err != nil || len(data) < 6 || (string(data[:6]) != "GIF87a" && string(data[:6]) != "GIF89a") {
+		return 0
+	}
+	metadata, err := protocol.ParseGIFMetadata(data)
+	if err != nil {
+		return 0
+	}
+	return metadata.FrameCount
+}
+
+// CountOpenAIImageFramesFromJSON counts complete encoded GIF frames without
+// changing the returned image count. Static-only documents report zero; callers
+// retain their ordinary per-file counting in that case.
+func CountOpenAIImageFramesFromJSON(body []byte) int {
+	counter := NewOpenAIImageOutputCounter()
+	counter.AddJSONResponse(body)
+	return counter.FrameCount()
+}
+
+// CountOpenAIImageFramesFromSSE reconciles repeated completed GIF observations.
+// Item identifiers and final snapshots share the counter's existing deduplication,
+// so lifecycle replay cannot multiply frame billing units.
+func CountOpenAIImageFramesFromSSE(body string) int {
+	counter := NewOpenAIImageOutputCounter()
+	counter.AddSSEBody(body)
+	return counter.FrameCount()
+}
+
+// ValidateGIFImageOutputs checks complete GIF results in Images and Responses shapes.
+// Partial previews and ordinary static results remain untouched. Validation uses
+// encoded bytes rather than claimed frame counts, and no image decoding buffers
+// are allocated beyond the bounded Base64 payload already received by the reader.
+//
+// The format label and byte prefix identify candidate animations independently.
+// A complete container must contain at least one encoded frame. Request frame
+// limits do not constrain returned GIFs, so HTTP and WebSocket readers accept
+// the same observed frame counts as the native Images response validator.
+func ValidateGIFImageOutputs(body []byte) error {
+	root := gjson.ParseBytes(body)
+	items := []gjson.Result{}
+	for _, path := range []string{"data", "output", "response.output"} {
+		items = append(items, root.Get(path).Array()...)
+	}
+	for _, path := range []string{"item", "output"} {
+		if item := root.Get(path); item.IsObject() {
+			items = append(items, item)
+		}
+	}
+	items = append(items, root)
+	for _, item := range items {
+		if strings.Contains(item.Get("type").String(), "partial_image") {
+			continue
+		}
+		encoded := item.Get("result").String()
+		if encoded == "" {
+			encoded = item.Get("b64_json").String()
+		}
+		if encoded == "" {
+			continue
+		}
+		format := item.Get("output_format").String()
+		if format == "" {
+			format = root.Get("output_format").String()
+		}
+		if !strings.EqualFold(format, "gif") && !strings.HasPrefix(encoded, "R0lGOD") {
+			continue
+		}
+		frames := imageOutputFrames(encoded)
+		if frames == 0 {
+			return ErrGIFResultInvalid
+		}
+	}
+	return nil
+}
+
+// ValidateGIFSSEOutputs validates completed animations across buffered lifecycle events.
+// The first invalid result ends validation. Repeated valid completions remain
+// harmless because this pass validates bytes without adding billing observations.
+func ValidateGIFSSEOutputs(body string) error {
+	var failure error
+	ForEachSSEDataPayload(body, func(data []byte) {
+		if failure == nil {
+			failure = ValidateGIFImageOutputs(data)
+		}
+	})
+	return failure
 }

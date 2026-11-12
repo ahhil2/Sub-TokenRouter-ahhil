@@ -3,6 +3,7 @@ package openai
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,25 +15,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// images_apikey_response.go forwards API-key image responses while collecting
-// image counts, dimensions, usage, and stream timing.
-// API-key image streams can contain SSE events or a plain JSON response despite
-// being requested as streams. Raw lines reach the client as they arrive, while
-// event payloads feed usage and completed-image accounting independently of
-// downstream write success. A plain-body observation is retained only before
-// the first SSE data event and within the caller's fallback limit.
+// images_apikey_response.go presents API-key Images responses to clients while
+// collecting image counts, verified GIF frames, dimensions, and token usage.
+// Native streaming preserves upstream lines, including compatible providers
+// that label a plain JSON document as an event stream. Buffered consumers use
+// the shared event reader when their selected provider requires upstream SSE.
+// GIF validation corrects buffered response dimensions before delivery and billing.
 //
-// Idle checks use the reader's upstream arrival timestamp, while heartbeats use
-// the last successful downstream write. The timed path separates reading from
-// consumption through a bounded channel. Returning signals queued sends to
-// stop; the executor still owns closing the response body to release a blocked
-// read. Generated image counts and usage remain available after disconnection.
+// Streaming delivery latches downstream failure and continues collecting usage.
+// A bounded fallback buffer counts plain JSON only before SSE data arrives, so
+// one output cannot contribute through both representations. Timed reads use
+// upstream arrival timestamps independently from successful client writes. The
+// executor owns body closure after readers return, including early idle errors.
 
 // ReadImagesNonStreaming reads an API-key image body, captures upstream usage
 // and image dimensions, and writes the backfilled representation with the
 // upstream status. ReadBody, Backfill, and ResponseHeaders are required for
 // this path; the executor retains response-body ownership.
 //
+// Successful JSON is validated before accounting and output. Error envelopes
+// and invalid image arrays return terminal errors with no completed-image count.
 // Usage and output counts are extracted before Backfill can replace URL entries
 // with encoded data. PreserveContentType allows a supplied upstream type to
 // override the JSON default. Sink delivery uses OutputContext.Data, whose write
@@ -42,11 +44,23 @@ func ReadImagesNonStreaming(resp *http.Response, sink upstream.OutputSink, optio
 	if err != nil {
 		return wire.ForwardUsage{}, 0, nil, err
 	}
+	if _, err := validateImagesJSONResponse(body); err != nil {
+		return wire.ForwardUsage{}, 0, nil, err
+	}
 	// Observe accounting before Backfill changes the client representation, so URL
 	// download outcomes cannot remove upstream-reported image usage or dimensions.
-	usage, _ := wire.ExtractOpenAIUsageFromJSONBytes(body)
+	usage, _ := wire.ExtractNativeImageUsage(body)
 	imageCount := wire.CountOpenAIResponseImageOutputsFromJSONBytes(body)
 	imageSizes := wire.CollectOpenAIResponseImageOutputSizesFromJSONBytes(body)
+	body, usage.ImageFrameCount, err = ValidateGIFImagesResponse(body, options.ExpectedGIF, options.FetchImage)
+	if err != nil {
+		return usage, imageCount, imageSizes, err
+	}
+	if usage.ImageFrameCount > 0 {
+		// GIF validation obtained complete bytes before delivery. Use their actual
+		// dimensions for billing even when the upstream omitted its size metadata.
+		imageSizes = wire.CollectOpenAIResponseImageOutputSizesFromJSONBytes(body)
+	}
 	body = options.Backfill(body)
 	c := upstream.NewOutputContext(sink)
 	options.ResponseHeaders(c.Writer.Header(), resp.Header)
@@ -62,7 +76,7 @@ func ReadImagesNonStreaming(resp *http.Response, sink upstream.OutputSink, optio
 }
 
 // ReadImagesStreaming forwards API-key image lines while accumulating usage,
-// image counts and sizes. The writer needs http.Flusher;
+// image counts, verified GIF frames, and sizes. The writer needs http.Flusher;
 // ReadLimit, ResponseHeaders, StreamInterval, KeepaliveInterval, and Logf
 // support the selected paths. The executor closes resp.Body after return,
 // including when a timed reader remains blocked.
@@ -105,6 +119,7 @@ func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options
 		fallbackBytes = 0
 		wire.MergeImageResponseUsage(&usage, dataBytes)
 		imageCounter.AddSSEData(dataBytes)
+		usage.ImageFrameCount = imageCounter.FrameCount()
 	}
 
 	flushSSEEvent := func() {
@@ -158,6 +173,7 @@ func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options
 		// the same response from contributing through both representations.
 		wire.MergeImageResponseUsage(&usage, body)
 		imageCounter.AddJSONResponse(body)
+		usage.ImageFrameCount = imageCounter.FrameCount()
 	}
 
 	streamInterval := options.StreamInterval()
@@ -292,4 +308,30 @@ func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options
 			lastDownstreamWriteAt = time.Now()
 		}
 	}
+}
+
+// ReadImagesSSEToJSON aggregates native Images events for a buffered client.
+// Failed streams retain completed-image and usage observations without delivering
+// a partial JSON success. The caller owns error presentation and response closure.
+//
+// Successful GIF normalization supplies dimensions from returned bytes, replacing
+// the counter's original upstream size labels for billing. Static responses and
+// failures keep those original observations. The verified JSON is delivered before
+// returning the same size evidence used by the completion recorder.
+func ReadImagesSSEToJSON(ctx context.Context, resp *http.Response, sink upstream.OutputSink, options ImageResponseOptions, responseFormat string) (wire.ForwardUsage, int, []string, error) {
+	body, result, err := ReadImagesBufferedResponse(ctx, resp, options, responseFormat)
+	imageSizes := result.Counter.Sizes()
+	if err == nil {
+		// The counter observed raw events before GIF validation corrected dimensions.
+		// Read the verified document so delivered metadata and billing use one canvas.
+		if result.Usage.ImageFrameCount > 0 {
+			imageSizes = wire.CollectOpenAIResponseImageOutputSizesFromJSONBytes(body)
+		}
+		c := upstream.NewOutputContext(sink)
+		options.ResponseHeaders(c.Writer.Header(), resp.Header)
+		c.Writer.Header().Del("Content-Length")
+		c.Header("Content-Type", "application/json")
+		c.Data(http.StatusOK, "application/json", body)
+	}
+	return result.Usage, result.Counter.Count(), imageSizes, err
 }

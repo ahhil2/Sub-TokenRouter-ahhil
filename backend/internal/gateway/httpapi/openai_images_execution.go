@@ -123,6 +123,15 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 	if err := s.resolveModelAttributes(ctx, provider, upstreamModel); err != nil {
 		return nil, err
 	}
+	if parsed.OutputFormat == "gif" {
+		operation := protocol.ProtocolImagesGenerations
+		if parsed.IsEdits() {
+			operation = protocol.ProtocolImagesEdits
+		}
+		if err := gatewayprovider.RequireImageGIF(provider, operation, provider.Capabilities.Attributes); err != nil {
+			return nil, err
+		}
+	}
 	SetOpsUpstreamModel(c, upstreamModel)
 	logging.LegacyPrintf(
 		"service.openai_gateway",
@@ -132,9 +141,23 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 		parsed.Endpoint,
 		provider.Record.Type,
 	)
-	forwardBody, forwardContentType, err := upstream.RewriteImageModel(body, parsed.ContentType, upstreamModel)
+	operation := protocol.ProtocolImagesGenerations
+	if parsed.IsEdits() {
+		operation = protocol.ProtocolImagesEdits
+	}
+	mode, err := gatewayprovider.ExecutionProtocolRecord(provider).ImageStreamMode(operation)
 	if err != nil {
 		return nil, err
+	}
+	forwardBody, forwardContentType, err := upstream.RewriteImageRequest(body, parsed.ContentType, upstreamModel, mode, parsed.Stream)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.OutputFormat == "gif" {
+		forwardBody, forwardContentType, err = upstream.RewriteImageGIFOptions(forwardBody, forwardContentType, *parsed.FrameCount, *parsed.FrameDurationMS)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// Continue the selected exchange after client departure so an image and its
 	// observed tokens can still reach completion. A retained server-abort signal can
@@ -157,6 +180,18 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 	}
 
 	options := s.Output.ImageOptions(c)
+	options.ExpectedGIF = parsed.OutputFormat == "gif"
+	options.ExpectedImages = parsed.N
+	download := s.imageBackfillOptions(provider)
+	options.FetchImage = func(rawURL string) (string, error) {
+		// URL expansion can outlast an ingress idle timeout. This download owns
+		// output waiting exclusively; stop its heartbeat before event delivery resumes.
+		if parsed.Stream && options.StartKeepalive != nil {
+			stop := options.StartKeepalive()
+			defer stop()
+		}
+		return download.FetchBase64(upstreamCtx, rawURL)
+	}
 	// Native nonstream reading extracts usage and dimensions before invoking this
 	// delivery conversion, so downloaded image bytes cannot replace the observed billing data.
 	options.Backfill = func(body []byte) []byte { return s.backfillOpenAIImagesB64JSON(upstreamCtx, provider, parsed, body) }

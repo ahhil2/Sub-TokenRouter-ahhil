@@ -184,7 +184,7 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	if err != nil &&
 		!errors.Is(err, context.Canceled) &&
 		!errors.Is(err, context.DeadlineExceeded) {
-		err = imagesJSONProtocolError("Failed to read upstream image JSON response: " + logredact.SanitizeUpstreamQueries(err.Error()))
+		err = imagesProtocolError("Failed to read upstream image JSON response: " + logredact.SanitizeUpstreamQueries(err.Error()))
 	}
 	observed := &imagesObservedSink{OutputSink: sink}
 	sink = observed
@@ -204,6 +204,10 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	before := 0
 	if t.OAuth {
 		before = t.Options.AdjustedWrittenSize()
+	}
+	t.Options.EventPrefix = "image_generation"
+	if input.Protocol == protocol.ProtocolImagesEdits {
+		t.Options.EventPrefix = "image_edit"
 	}
 	if input.Stream {
 		output = upstream.NewOutputContext(sink)
@@ -231,6 +235,8 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 		}
 	} else if t.OAuth {
 		usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesOAuthNonStreaming(resp, sink, t.Options, t.ResponseFormat, input.ResponseModel)
+	} else if mediaErr == nil && mediaType == "text/event-stream" {
+		usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesSSEToJSON(ctx, resp, sink, t.Options, t.ResponseFormat)
 	} else {
 		usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesNonStreaming(resp, sink, t.Options)
 	}
@@ -241,7 +247,9 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 		CacheCreationInputTokens: usage.CacheCreationInputTokens,
 		ImageOutputTokens:        usage.ImageOutputTokens,
 	}
+	result.ImageFrameCount = usage.ImageFrameCount
 	result.ImageInputTokens = usage.ImageInputTokens
+	result.ImageCacheReadTokens = usage.ImageCacheReadTokens
 	result.HasUsage = result.Usage.HasObservedTokens() || usage.ImageInputTokens > 0
 	result.Served = result.ObservedImages > 0
 	if output != nil {
@@ -249,7 +257,7 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	}
 	// Responses failure policy may retry before image output. Images JSON failures
 	// remain terminal because a successful HTTP exchange may already have generated images.
-	if err != nil && !streamJSON && t.OAuth && (!input.Stream || result.ObservedImages <= 0) {
+	if err != nil && !streamJSON && t.OAuth && result.ObservedImages <= 0 {
 		err = t.ResponseError(resp, before, err)
 	}
 	return result, err

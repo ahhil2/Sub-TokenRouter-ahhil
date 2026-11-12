@@ -2,6 +2,7 @@ package creative
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"testing"
 	"time"
@@ -9,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// result_delivery_test.go checks durable output metadata and transient image delivery.
+//
 // Delivery fixtures represent a provider fact with a shared boolean and
 // retained metadata before SaveOutput can accept calls. The store checks that
 // ordering, counts attempts, and injects the first configured failures,
@@ -183,4 +186,39 @@ func TestResultDeliveryCancellationStopsSaving(t *testing.T) {
 	require.True(t, outcome.recorded)
 	require.Zero(t, store.attempts)
 	require.Zero(t, repo.updates)
+}
+
+// TestResultDeliveryRecordsActualGIFFrames persists the count decoded from a
+// complete animation before byte delivery. A truncated container must fail
+// before either the provider outcome or transient image is recorded.
+func TestResultDeliveryRecordsActualGIFFrames(t *testing.T) {
+	valid, err := base64.StdEncoding.DecodeString("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAkQBACwAAAAAAQABAAACAkQBADs=")
+	require.NoError(t, err)
+	for _, scenario := range []struct {
+		name  string // output validity scenario
+		data  []byte // container bytes returned by provider
+		valid bool   // outcome can enter settlement
+	}{
+		{name: "two_actual_frames", data: valid, valid: true},
+		{name: "truncated_container", data: valid[:len(valid)-1]},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			outcome := &deliveryContractOutcomes{}
+			store := &deliveryContractStore{recorded: &outcome.recorded}
+			repo := &deliveryContractRepo{}
+			delivery := ResultDelivery{Outcomes: outcome, Store: store, Repo: repo, TTL: time.Minute}
+			err := delivery.Record(context.Background(), "gif-run", 1, []ProviderOutput{{Index: 0, Success: true, Bytes: scenario.data, Mime: "image/gif"}})
+			if !scenario.valid {
+				require.Error(t, err)
+				require.False(t, outcome.recorded)
+				require.Zero(t, store.attempts)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, outcome.metadata, 1)
+			require.Equal(t, 2, outcome.metadata[0].FrameCount)
+			require.Equal(t, "image/gif", *outcome.metadata[0].MimeType)
+			require.Equal(t, 1, store.attempts)
+		})
+	}
 }

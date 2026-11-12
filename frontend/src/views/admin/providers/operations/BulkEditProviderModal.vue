@@ -519,6 +519,20 @@
             </BulkApplyField>
           </template>
 
+          <BulkApplyField
+            v-if="allOpenAIPassthroughCapable"
+            id="bulk-edit-images-gif"
+            v-model="enableImagesGIF"
+            :label="t('admin.providers.openai.imagesGIFEnabled')"
+            :hint="t('admin.providers.openai.imagesGIFEnabledDesc')"
+          >
+            <Toggle
+              id="bulk-edit-images-gif-toggle"
+              v-model="imagesGIFEnabled"
+              :aria-label="t('admin.providers.openai.imagesGIFEnabled')"
+            />
+          </BulkApplyField>
+
           <template v-if="allOpenAIPassthroughCapable">
             <BulkApplyField
               id="bulk-edit-codex-image-tool"
@@ -1012,6 +1026,9 @@ const enableGroups = ref(false)
 const enableOpenAIPassthrough = ref(false)
 const enableOpenAIFlattenNamespaces = ref(false)
 const enableCodexImageToolMode = ref(false)
+/** GIF bulk changes remain opt-in while their proposed value defaults on. */
+const enableImagesGIF = ref(false)
+const imagesGIFEnabled = ref(true)
 const enableUpstreamProtocols = ref(false)
 const upstreamProtocols = ref<ProtocolID[] | undefined>(undefined)
 watch(
@@ -1514,6 +1531,10 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.openai_responses_flatten_namespaces = openaiFlattenNamespacesEnabled.value
   }
 
+  if (enableImagesGIF.value && allOpenAIPassthroughCapable.value) {
+    ensureExtra().images_gif_enabled = imagesGIFEnabled.value
+  }
+
   if (enableCodexImageToolMode.value) {
     const extra = ensureExtra()
     applyCodexImageToolMode(extra, codexImageToolMode.value, 'null')
@@ -1704,6 +1725,7 @@ const handleSubmit = async () => {
   }
 
   const hasAnyFieldEnabled =
+    enableImagesGIF.value ||
     enableUpstreamProtocols.value ||
     (enableBaseUrl.value && allBaseUrlCapable.value) ||
     enableOpenAIPassthrough.value ||
@@ -1836,6 +1858,8 @@ const resetBulkEditFormState = () => {
   enableOpenAIPassthrough.value = false
   enableOpenAIFlattenNamespaces.value = false
   enableCodexImageToolMode.value = false
+  enableImagesGIF.value = false
+  imagesGIFEnabled.value = true
   enableUpstreamProtocols.value = false
   upstreamProtocols.value = undefined
   enableOpenAIResponsesContinuationSupported.value = false

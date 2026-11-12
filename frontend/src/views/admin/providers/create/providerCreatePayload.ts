@@ -58,6 +58,7 @@ export interface OpenAICreateExtraDraft {
   codexFingerprintMode: CodexFingerprintMode
   openAICompactMode: OpenAICompactMode // first-generation compaction mode
   openAINativeCompactionV2Mode: OpenAICompactMode // second-generation compaction mode
+  openAIImagesGIFEnabled?: boolean // Missing values keep GIF enabled.
   // openAIImagesURLToB64JSON is an opt-in API Key policy; disabled or OAuth
   // drafts remove the inherited image backfill setting from resulting metadata.
   openAIImagesURLToB64JSON: boolean
@@ -83,6 +84,10 @@ export const buildOpenAICreateExtra = (
   }
 
   const extra: Record<string, unknown> = { ...base }
+  if (draft.type === 'oauth' || draft.providerCategory === 'apikey') {
+    if (draft.openAIImagesGIFEnabled === false) extra.images_gif_enabled = false
+    else delete extra.images_gif_enabled
+  }
   extra.responses_ws_connection_mode = draft.responsesWSConnectionMode
   // Remove obsolete connection controls before normalization so stored legacy
   // flags cannot override the selected unified WebSocket connection policy.

@@ -14,6 +14,10 @@ const (
 	Label = "usage_log"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldImageFrameCount holds the string denoting the image_frame_count field in the database.
+	FieldImageFrameCount = "image_frame_count"
+	// FieldImageCacheReadTokens holds the string denoting the image_cache_read_tokens field in the database.
+	FieldImageCacheReadTokens = "image_cache_read_tokens"
 	// FieldUserID holds the string denoting the user_id field in the database.
 	FieldUserID = "user_id"
 	// FieldBillingUserID holds the string denoting the billing_user_id field in the database.
@@ -183,6 +187,8 @@ const (
 // Columns holds all SQL columns for usagelog fields.
 var Columns = []string{
 	FieldID,
+	FieldImageFrameCount,
+	FieldImageCacheReadTokens,
 	FieldUserID,
 	FieldBillingUserID,
 	FieldTeamID,
@@ -250,6 +256,10 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultImageFrameCount holds the default value on creation for the "image_frame_count" field.
+	DefaultImageFrameCount int
+	// DefaultImageCacheReadTokens holds the default value on creation for the "image_cache_read_tokens" field.
+	DefaultImageCacheReadTokens int
 	// DefaultPlatform holds the default value on creation for the "platform" field.
 	DefaultPlatform string
 	// PlatformValidator is a validator for the "platform" field. It is called by the builders before save.
@@ -338,6 +348,16 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByImageFrameCount orders the results by the image_frame_count field.
+func ByImageFrameCount(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldImageFrameCount, opts...).ToFunc()
+}
+
+// ByImageCacheReadTokens orders the results by the image_cache_read_tokens field.
+func ByImageCacheReadTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldImageCacheReadTokens, opts...).ToFunc()
 }
 
 // ByUserID orders the results by the user_id field.

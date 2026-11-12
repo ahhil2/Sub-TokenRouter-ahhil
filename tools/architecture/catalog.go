@@ -166,7 +166,7 @@ internal/server/clientip/policy internal/server/httpconfig`, Tests: ""},
 internal/creative/... internal/identity/httpapi/authctx internal/infra/postgres/... internal/infra/telemetry/... internal/pkg/
 internal/protocol internal/protocol/gemini internal/routing internal/routing/capability internal/routing/modelmap
 internal/scheduler internal/server/httpx internal/settings internal/upstream
-internal/upstream/gemini internal/upstream/grok internal/usage`, Tests: `internal/modelcatalog/testkit internal/apikey internal/billing/provider internal/billing/testkit internal/config
+internal/upstream/gemini internal/upstream/grok internal/upstream/openai internal/usage`, Tests: `internal/modelcatalog/testkit internal/apikey internal/billing/provider internal/billing/testkit internal/config
 internal/gateway/completion internal/gateway/media internal/gateway/provider/modelidentity
 internal/identity internal/infra/telemetry/... internal/moderation internal/routing/capability
 internal/testutil/assertion`},
@@ -393,6 +393,9 @@ internal/upstream/zhipu/...`, Tests: ""},
 	pureFileStandard = map[string]string{
 		"internal/pkg/locale/locale.go": "embed golang.org/x/text/language",
 		"internal/pkg/locale/errors.go": "embed unicode",
+		// GIF metadata inspection reads little-endian dimensions from caller-owned
+		// bytes before checking frame rectangles and counting animation frames.
+		"internal/protocol/image_gif.go": "encoding/binary",
 		// 请求取消测试使用虚拟时钟检查截止时间和异步回调。
 		"internal/pkg/requestcontext/context_test.go":          "testing/synctest",
 		"internal/gateway/clientmeta/claude_validator_test.go": "net/http net/http/httptest os",
@@ -447,6 +450,9 @@ internal/upstream/zhipu/...`, Tests: ""},
 		{Scope: "internal/creative", Imports: "internal/creative/provider", Files: "helpers_external_test.go public_external_test.go"},
 		{Scope: "internal/creative", Imports: "internal/gateway/provider/modelidentity", Files: "helpers_external_test.go public_external_test.go"},
 		{Scope: "internal/creative", Imports: "internal/billing/provider", Files: "public_external_test.go"},
+		// OpenAI creative execution reuses shared Responses conversion and GIF
+		// validation through the adapter and its transport fixtures.
+		{Scope: "internal/creative/provider", Imports: "internal/upstream/openai", Files: "openai.go openai_test.go"},
 		{Scope: "internal/gateway/clientmeta", Imports: "net/http/httptest", Files: "claude_validator_test.go"},
 		{Scope: "internal/gateway/clientmeta", Imports: "net/http os", Files: "claude_validator_test.go"},
 		{Scope: "internal/gateway/completion", Imports: "internal/gateway/provider", Files: "pricing_external_test.go record_external_test.go"},

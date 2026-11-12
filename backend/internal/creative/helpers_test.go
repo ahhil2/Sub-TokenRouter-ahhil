@@ -9,6 +9,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// helpers_test.go supplies target-query fixtures that record creative group and provider reads.
+//
 // Target-query fixtures count group/provider reads and candidate-inventory
 // access separately. Provider support checks retain their requested names,
 // allowing direct validation and saved-setting discovery tests to distinguish
@@ -131,3 +133,6 @@ func newTargetQueryPublic(fixture *targetQueryFixture) *Public {
 		return billing.ImageQuote{UnitPrice: 0.1}, true
 	}}
 }
+
+// SupportsImageGIF keeps the generic target-query fixture limited to static images.
+func (f *targetQueryFixture) SupportsImageGIF(protocol.ProtocolID) bool { return false }

@@ -138,6 +138,23 @@ OpenAI API Key 提供商可以通过 `extra.images_url_to_b64_json=true` 开启�
 
 分组可以按协议开放 Messages、Responses 和 Chat，新建时默认开放这三个文本入口，三项都可以关闭。旧字段 `allow_messages_dispatch` 是 Messages 已弃用的兼容镜像；迁移时，只有这个旧字段开启的分组才加入 Messages。Messages 的模型改写，统一使用分组的 `routing_policy.model_mapping` 和提供商的模型规则。Responses WebSocket 是 OpenAI 和 Grok 的原生传输能力，其他平台启用了兼容 Responses，也不会因此开放它。
 
+<a id="openai_image_gif"></a>
+### GPT Image 2.6 与 GIF
+
+`gpt-image-2.6-sunburst` 与 `gpt-image-2.6-flare` 使用内嵌目录补充，并开放 `xhigh`、`max` 质量选项。GIF 使用 `output_format=gif`，`frame_count` 为 2 至 16，缺省 9；`frame_duration_ms` 为 20 至 2000，缺省 200，按 10 毫秒舍入。尺寸为 `auto` 或两边均为 16 倍数的正整数，供应商负责总像素预算校验。
+
+原生 Images JSON 的 `frame_count` 和 `frame_duration_ms` 接受 `null`，与省略字段相同：GIF 请求使用对应默认值，静态图片请求不设置动画参数；显式整数继续按范围校验。
+
+OpenAI OAuth 和 API Key 提供商的 `extra.images_gif_enabled` 缺省开启，显式 false 关闭。调度、粘性复核和实际发送都检查开关与最终模型的 GIF 格式能力；API Key 的对应 Images 端点配置为仅流式时不接收 GIF。创建、编辑、批量编辑和导入导出保留该设置，缓存快照保留显式 false。
+
+Images GIF 请求不接受 `stream=true`、`partial_images`、mask 或 `output_compression`。OAuth 通过 Responses 图片工具发送动画参数，承载请求继续使用生命周期事件流，工具不发送中间图片帧。创作台 OAuth 复用相同的请求构造与身份头。
+
+GIF 的 MIME、尺寸和帧数读取返回字节，下载及本地保存保留原始动画。返回帧数可以与请求不同，单帧或超过请求帧数范围的有效 GIF 也会接受；按图片计费使用实际帧数，token 和按次计费保持各自的计费单位。URL 结果使用现有的安全下载器取得字节，即使未启用普通 URL 回填也需要验证动画。无法下载或容器不完整时结束结果处理，不重新提交生成；已观测用量仍保留。文件数量与计费帧数分别记录，计费规则见[路由与结算](../domains/routing_and_billing.md#group_model_pricing)。
+
+Responses 的 HTTP、SSE 和 WebSocket 结果同样按完整 GIF 容器校验并记录实际帧数，不把请求的 2 至 16 帧限制用于返回结果。GIF 容器不完整或缺少图像帧记录时仍作为结果失败处理。
+
+Images 响应中的 GIF 项按实际字节校正 `data[].size`。当全部输出都是同尺寸 GIF 时，顶层 `size` 同步为该尺寸；尺寸不一致或混有其他格式时移除顶层 `size`，各项保留自己的尺寸信息。成功的 GIF 原生 JSON 和 SSE 汇总响应都使用校正后的条目尺寸计费。仅含静态图片的响应保持原有元数据。
+
 <a id="openai_fast_policy"></a>
 ### Fast 与 Ultra Fast 策略
 

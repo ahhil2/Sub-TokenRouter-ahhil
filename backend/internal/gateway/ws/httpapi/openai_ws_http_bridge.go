@@ -912,6 +912,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 		result.SetWSProviderFailoverReplayInput(replayCollector.AllItems())
 		if imageCount > 0 {
 			result.ImageCount = imageCount
+			result.ImageFrameCount = imageCounter.FrameCount()
 			result.ImageSize = imageSizeTier
 			result.ImageInputSize = imageInputSize
 			result.ImageOutputSizes = imageCounter.Sizes()
@@ -1027,6 +1028,9 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		if eventType == "error" || eventType == "response.failed" {
 			gatewayhttp.MarkOpenAICyberPolicyEvent(c, upstreamMessage, http.StatusOK, &usage)
+		}
+		if err := openai.ValidateGIFImageOutputs(upstreamMessage); err != nil {
+			return resultWithUsage(), err
 		}
 		imageCounter.AddSSEData(upstreamMessage)
 

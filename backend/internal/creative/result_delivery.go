@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
 // result_delivery.go records billable provider outcomes before saving
@@ -107,9 +109,19 @@ func (d ResultDelivery) Record(ctx context.Context, id string, providerID int64,
 			code = OutputDeliveryPending
 			message = ""
 		}
+		frameCount := 0
+		// Persist frames decoded from the completed container before delivery so
+		// settlement recovery uses actual output even after transient bytes expire.
+		if output.Success && output.Mime == "image/gif" {
+			info, err := protocol.ParseGIFMetadata(output.Bytes)
+			if err != nil {
+				return ErrCreativeTransientFailed.WithCause(err)
+			}
+			frameCount = info.FrameCount
+		}
 		mime := output.Mime
 		size := int64(len(output.Bytes))
-		metadata = append(metadata, CreativeRunOutput{RunID: id, OutputIndex: output.Index, Status: status, MimeType: &mime, ByteSize: &size, TransientExpiresAt: &expires, ErrorCode: &code, ErrorMessage: &message})
+		metadata = append(metadata, CreativeRunOutput{FrameCount: frameCount, RunID: id, OutputIndex: output.Index, Status: status, MimeType: &mime, ByteSize: &size, TransientExpiresAt: &expires, ErrorCode: &code, ErrorMessage: &message})
 	}
 	// Commit the provider-work fact and recovery metadata before storing image
 	// bytes. A failed transient save after this point still leaves enough durable

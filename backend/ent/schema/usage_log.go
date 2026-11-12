@@ -37,6 +37,10 @@ func (UsageLog) Annotations() []schema.Annotation {
 // schema and preserve supplied historical attribution.
 func (UsageLog) Fields() []ent.Field {
 	return []ent.Field{
+		// Actual frame billing units for animated output; zero denotes static output.
+		field.Int("image_frame_count").Default(0),
+		// Explicit cached image input; absent upstream subdivision remains zero.
+		field.Int("image_cache_read_tokens").Default(0),
 		// user_id, billing_user_id, team_id, and api_key_id separate the acting
 		// user, recorded payer, optional team scope, and credential. Historical
 		// payer writes are supported by migration 221, while current repositories
