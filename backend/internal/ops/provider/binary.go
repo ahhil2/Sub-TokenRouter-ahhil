@@ -23,8 +23,10 @@ import (
 // Release archives use current tokenrouter names and historical sub2api names
 // for the same runtime platform. Installation prefers a current-name archive,
 // checks its initial download host, and verifies an archive hash only when
-// checksums.txt is supplied. Extraction similarly keeps a historical binary
-// while looking for a current-name entry.
+// checksums.txt is supplied. Asset names identify staged files for checksum
+// matching and format detection; download URLs may identify GitHub API records.
+// Extraction similarly keeps a historical binary while looking for a
+// current-name entry.
 //
 // Preparation takes place beside the symlink-resolved executable. Replacement
 // moves the current binary to an adjacent backup before installing the staged
@@ -89,6 +91,11 @@ func NewBinaryInstaller(client BinaryDownload, executable func() (string, error)
 // Supply a nonnil context/downloader and serialize maintenance of the same
 // executable and backup paths.
 //
+// The selected asset name supplies the staged filename, checksum identity, and
+// archive format. Names containing directory separators are rejected before
+// staging. The download URL is passed unchanged to the downloader, including
+// numeric API paths or query parameters.
+//
 // The executable path is resolved through symlinks, and staging beside that
 // resolved file keeps rename moves on its filesystem. Downloads, optional hash
 // checking, extraction, and permission changes precede the cancellation check.
@@ -102,7 +109,7 @@ func NewBinaryInstaller(client BinaryDownload, executable func() (string, error)
 // before creating another.
 func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) error {
 	archiveName := s.getArchiveName()
-	var downloadURL string
+	var archiveAsset ops.Asset
 	var checksumURL string
 
 	// Current product archive names take precedence regardless of asset order.
@@ -111,11 +118,11 @@ func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) 
 	for _, prefix := range []string{"tokenrouter_", "sub2api_"} {
 		for _, asset := range releaseAssets {
 			if strings.HasPrefix(asset.Name, prefix) && strings.Contains(asset.Name, archiveName) && !strings.HasSuffix(asset.Name, ".txt") {
-				downloadURL = asset.DownloadURL
+				archiveAsset = asset
 				break
 			}
 		}
-		if downloadURL != "" {
+		if archiveAsset.DownloadURL != "" {
 			break
 		}
 	}
@@ -125,14 +132,17 @@ func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) 
 		}
 	}
 
-	if downloadURL == "" {
+	if archiveAsset.DownloadURL == "" {
 		return fmt.Errorf("no compatible release found for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	if filepath.Base(archiveAsset.Name) != archiveAsset.Name || strings.ContainsAny(archiveAsset.Name, `/\`) {
+		return fmt.Errorf("invalid archive name: %q", archiveAsset.Name)
 	}
 
 	// Validate both selected initial URLs before downloading or staging. The bound
 	// downloader remains responsible for redirected destinations and
 	// request-header policy.
-	if err := validateDownloadURL(downloadURL); err != nil {
+	if err := validateDownloadURL(archiveAsset.DownloadURL); err != nil {
 		return fmt.Errorf("invalid download URL: %w", err)
 	}
 	if checksumURL != "" {
@@ -161,11 +171,10 @@ func (s *BinaryInstaller) Apply(ctx context.Context, releaseAssets []ops.Asset) 
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	// The local archive basename comes from the raw download URL text. That same
-	// basename drives checksum matching, so query or fragment suffixes can affect
-	// verification and format detection.
-	archivePath := filepath.Join(tempDir, filepath.Base(downloadURL))
-	if err := s.downloadFile(ctx, downloadURL, archivePath); err != nil {
+	// GitHub asset API URLs end in numeric identifiers. Retain the selected asset
+	// name so checksums match and gzip/tar extraction sees the archive suffix.
+	archivePath := filepath.Join(tempDir, archiveAsset.Name)
+	if err := s.downloadFile(ctx, archiveAsset.DownloadURL, archivePath); err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 
