@@ -21,7 +21,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
-	openaierrors "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
 // support.go qualifies replay and captures scheduling, error and Cyber
@@ -261,24 +260,6 @@ func (h *Support) HandleFailoverExhaustedSimple(c *gin.Context, statusCode int, 
 	status, errType, errMsg := gatewayhttp.MapOpenAIUpstreamError(statusCode)
 	gatewayhttp.SetOpsUpstreamError(c, statusCode, errMsg, "")
 	gatewayhttp.DefaultOpenAIErrorOutput().StreamError(c, status, errType, errMsg, streamStarted)
-}
-
-// EnsureOpenAIStreamReadErrorResponse writes a recognized stream-read failure
-// when semantic output is uncommitted. Unrecognized errors or
-// unavailable/committed responses return false. Already-written HTTP headers
-// select streaming output; the returned true reports fallback emission.
-func (h *Support) EnsureOpenAIStreamReadErrorResponse(c *gin.Context, err error, streamStarted bool) bool {
-	code, message, ok := openaierrors.OpenAIUpstreamStreamReadErrorDetails(err)
-	if !ok || c == nil || c.Writer == nil || gatewayhttp.IsResponseCommitted(c) {
-		return false
-	}
-	if c.Writer.Written() {
-		streamStarted = true
-	}
-	gatewayhttp.DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(
-		c, http.StatusBadGateway, "upstream_error", code, message, streamStarted, true,
-	)
-	return true
 }
 
 // RecordCyberPolicyIfMarked captures the current HTTP Cyber mark for policy

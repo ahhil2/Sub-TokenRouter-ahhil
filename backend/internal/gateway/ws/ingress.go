@@ -50,8 +50,9 @@ func payloadString(body []byte, key string) string {
 // turns preserve strict connection affinity when store is disabled and
 // continuation is present. A missing-response error or pre-output transport
 // failure can use its bounded recovery path while skipping repeated admission
-// callbacks. Idle ping recovery separately requires sufficient tool-call
-// context before dropping continuation. AfterTurn observes final local outcomes
+// callbacks. Transport recovery acquires a fresh connection because idle pool
+// peers can have failed under the same upstream lifecycle condition. Idle ping
+// recovery separately requires sufficient tool-call context before dropping continuation. AfterTurn observes final local outcomes
 // before affinity writes; deferred cleanup releases any held lease.
 func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 	p, codec, o, state := s.Port, s.Codec, s.Options, s.State
@@ -319,9 +320,15 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 	// mark it consumed before recovery so a failed repair cannot reopen the same
 	// dial loop.
 	credentialRecovered := false
-	acquireTurnLease := func(turn int, preferred string, force bool) (ConnLease, error) {
+	acquireTurnLease := func(turn int, preferred string, force bool, fresh bool) (ConnLease, error) {
 		for {
-			lease, err := p.Acquire(turn, preferred, force, !credentialRecovered)
+			lease, err := p.Acquire(IngressAcquireOptions{
+				Turn:               turn,
+				PreferredConnID:    preferred,
+				ForcePreferredConn: force,
+				ForceNewConn:       fresh,
+				AllowRecovery:      !credentialRecovered,
+			})
 			var recovery *AcquireRecoveryError
 			if errors.As(err, &recovery) && !credentialRecovered {
 				credentialRecovered = true
@@ -513,7 +520,8 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 	}
 	// Retry only one pre-output transport failure when continuation does not force
 	// the held connection; preserve turn admission by skipping its callbacks after
-	// resetting the broken lease.
+	// resetting the broken lease. The retry counter also requires fresh acquisition,
+	// since another idle socket can carry the same unread upstream close.
 	retryIngressTurn := func(relayErr error, turn int, connID string) bool {
 		if !IsIngressTurnRetryable(relayErr) || turnRetry >= 1 {
 			return false
@@ -748,7 +756,7 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		}
 		forcePreferredConn := isStrictAffinityTurn(currentPayload)
 		if sessionLease == nil {
-			acquiredLease, acquireErr := acquireTurnLease(turn, state.PreferredConnID, forcePreferredConn)
+			acquiredLease, acquireErr := acquireTurnLease(turn, state.PreferredConnID, forcePreferredConn, turnRetry > 0)
 			if acquireErr != nil {
 				return fmt.Errorf("acquire upstream websocket: %w", acquireErr)
 			}
@@ -865,7 +873,7 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 				// still-admitted turn.
 				resetSessionLease(true)
 
-				acquiredLease, acquireErr := acquireTurnLease(turn, state.PreferredConnID, forcePreferredConn)
+				acquiredLease, acquireErr := acquireTurnLease(turn, state.PreferredConnID, forcePreferredConn, turnRetry > 0)
 				if acquireErr != nil {
 					return fmt.Errorf("acquire upstream websocket after preflight ping fail: %w", acquireErr)
 				}
@@ -911,10 +919,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			if retryIngressTurn(relayErr, turn, connID) {
 				continue
 			}
-			finalErr := relayErr
-			if unwrapped := errors.Unwrap(relayErr); unwrapped != nil {
-				finalErr = unwrapped
-			}
+			// Retain the upstream I/O stage for final Ops attribution. Standard
+			// error-chain inspection still reaches close codes and cancellation
+			// causes through the wrapper during completion and client presentation.
 			if hooks != nil && hooks.AfterTurn != nil {
 				hooks.AfterTurn(TurnCapture{
 					Turn:               turn,
@@ -922,12 +929,12 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 					RequestBody:        append([]byte(nil), currentPayload...),
 					OriginalModel:      currentOriginalModel,
 					PreviousResponseID: currentPreviousResponseID,
-					Err:                finalErr,
+					Err:                relayErr,
 					PayloadSource:      "ctx_pool",
 				})
 			}
 			sessionLease.MarkBroken()
-			return finalErr
+			return relayErr
 		}
 		turnRetry = 0
 		turnPrevRecoveryTried = false

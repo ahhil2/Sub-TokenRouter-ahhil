@@ -300,6 +300,22 @@ type ReplayCodec interface {
 	ClassifyPrevious(string) string
 }
 
+// IngressAcquireOptions selects connection affinity and recovery for one turn.
+// Ingress owns replay eligibility before requesting a fresh transport.
+type IngressAcquireOptions struct {
+	Turn            int    // logical request turn
+	PreferredConnID string // requested continuation connection identity
+	// ForcePreferredConn requires the named connection for strict continuation.
+	// Ingress leaves ForceNewConn false when this affinity cannot be relaxed.
+	ForcePreferredConn bool
+	// ForceNewConn bypasses idle connections after an eligible transport failure,
+	// preventing recovery from selecting another socket with an unread peer close.
+	ForceNewConn bool
+	// AllowRecovery permits an identity-repair marker on a failed handshake.
+	// Ingress consumes that separate recovery budget before invoking the repair.
+	AllowRecovery bool
+}
+
 // IngressPort supplies adapter operations while IngressSession owns turn
 // iteration and recovery.
 type IngressPort interface {
@@ -343,11 +359,10 @@ type IngressPort interface {
 	// OpenPool prepares the provider pool from the first normalized request and
 	// connection configuration.
 	OpenPool(ClientPayload) error
-	// Acquire obtains a provider connection for this turn and optional preferred
-	// ID. Force requires continuation affinity, while allowRecovery permits
-	// returning AcquireRecoveryError for the session's single credential recovery
-	// path.
-	Acquire(int, string, bool, bool) (ConnLease, error)
+	// Acquire obtains a provider connection using the turn's affinity and recovery
+	// options. Ingress owns eventual release and requests a fresh connection only
+	// after checking replay eligibility and strict continuation requirements.
+	Acquire(IngressAcquireOptions) (ConnLease, error)
 	// RecoverAcquire repairs provider identity after a marked dial failure under
 	// the control context. Ingress sets its one-recovery flag before invoking this
 	// method and retries acquisition only when recovery succeeds.

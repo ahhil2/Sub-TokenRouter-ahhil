@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -840,7 +841,16 @@ func (t *openAIWSEntryTarget) Run(ctx context.Context, client gatewayws.ClientSo
 // LogFailure records the selected provider's WS error and summarized close
 // labels. Shared proxy fields are appended before writing the warning so
 // provider failure diagnostics retain the egress route used by this attempt.
+// Final upstream read/write failures also mark the current Ops turn, whose
+// existing first-marker rule deduplicates any previously forwarded error event.
 func (t *openAIWSEntryTarget) LogFailure(err error) {
+	stage := gatewayws.IngressTurnRetryReason(err)
+	if (stage == "read_upstream" || stage == "write_upstream") &&
+		!gatewayhttp.ResponsesWSEndedByClient(err, gatewayhttp.ResponsesWSCloseInfo(err)) {
+		// An upgraded request retains status 101 even when its upstream socket
+		// fails; a turn marker lets Ops capture that failure with its provider context.
+		gatewayhttp.MarkOpsStreamFailure(t.root.c, "upstream_error", "upstream_websocket_error", err.Error(), http.StatusBadGateway)
+	}
 	status, reason := gatewayhttp.SummarizeWSCloseErrorForLog(err)
 	fields := []zap.Field{zap.Int64("provider_id", t.provider.Record.ID), zap.Error(err), zap.String("close_status", status), zap.String("close_reason", reason)}
 	fields = openaiattempt.AppendOpenAIProviderProxyLogFields(fields, t.provider)

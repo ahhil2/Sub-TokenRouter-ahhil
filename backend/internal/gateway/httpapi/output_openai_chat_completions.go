@@ -36,6 +36,8 @@ import (
 // policy performs its health and retry handling before the adapter restores
 // the safe transport payload, because that policy can otherwise substitute a
 // generic envelope that drops the transport code needed by final error rules.
+// During that construction the local transport origin is supplied to the
+// event recorder, then restored so later attempts retain independent attribution.
 func (p *OpenAIResponseOutput) BufferedReadFailure(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -72,6 +74,13 @@ func (p *OpenAIResponseOutput) BufferedReadFailure(
 	var responseHeaders http.Header
 	if resp != nil {
 		responseHeaders = resp.Header
+	}
+	if c != nil {
+		previousPhase := c.GetString(opsLocalForwardFailureKey)
+		c.Set(opsLocalForwardFailureKey, "network")
+		// Scope the origin to this event construction. A subsequent provider can
+		// return an HTTP rejection whose attribution must follow its own evidence.
+		defer c.Set(opsLocalForwardFailureKey, previousPhase)
 	}
 	failoverErr := p.NewStreamPolicyFailure(
 		c, provider, false, requestID, responseHeaders, payload, message,

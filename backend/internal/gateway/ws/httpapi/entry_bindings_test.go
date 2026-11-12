@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	keyhttp "github.com/TokenFlux/TokenRouter/internal/apikey/httpapi"
@@ -17,6 +19,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	"github.com/TokenFlux/TokenRouter/internal/billing/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/admission"
+	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/httpapi/openaiattempt"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
@@ -309,4 +312,53 @@ func TestPrepareCompletionKeepsTurnIdentity(t *testing.T) {
 		require.Equal(t, "response-"+id, input.BillingKey)
 	}
 	require.Equal(t, "connection", telemetry.RequestIDValue(c.Request.Context()))
+}
+
+// TestEntryLogFailureCapturesUpstreamTransportErrors exercises final close and
+// transport failures after upgrade. Ops records one upstream failure per turn
+// while cancellation, normal closure, and client writes remain excluded.
+func TestEntryLogFailureCapturesUpstreamTransportErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string // tested transport outcome
+		stage  string // failing relay operation
+		err    error  // underlying transport failure
+		marked bool   // expected Ops failure
+	}{
+		{"policy_close", "read_upstream", websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "missing first response.create message"}, true},
+		{"write_failed", "write_upstream", errors.New("broken pipe"), true},
+		{"read_timeout", "read_upstream", context.DeadlineExceeded, true},
+		{"normal_close", "read_upstream", websocket.CloseError{Code: websocket.StatusNormalClosure}, false},
+		{"canceled", "read_upstream", context.Canceled, false},
+		{"client_write", "write_client", errors.New("broken pipe"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+			gatewayhttp.SetOpenAIClientTransport(c, gatewayhttp.OpenAIClientTransportWS)
+			c.Set(gatewayhttp.OpsStreamTurnKey, 1)
+			target := &openAIWSEntryTarget{
+				root:     &openAIWSEntryAdapter{c: c, log: zap.NewNop()},
+				provider: &gatewayprovider.ExecutionProvider{Record: provider.Record{ID: 39}},
+			}
+			err := gatewayws.WrapIngressTurnError(tc.stage, tc.err, true)
+			target.LogFailure(err)
+			if !tc.marked {
+				require.Empty(t, gatewayhttp.GetOpsStreamErrors(c))
+				return
+			}
+			observed := gatewayhttp.GetOpsStreamErrors(c)
+			require.Len(t, observed, 1)
+			require.Equal(t, http.StatusBadGateway, observed[0].IntendedStatus)
+			require.Equal(t, "upstream_websocket_error", observed[0].Code)
+			require.True(t, observed[0].CountTowardsSLA)
+			target.LogFailure(err)
+			require.Len(t, gatewayhttp.GetOpsStreamErrors(c), 1)
+			c.Set(gatewayhttp.OpsStreamTurnKey, 2)
+			gatewayhttp.MarkOpsStreamFailure(c, "upstream_error", "existing_event", "upstream error event", http.StatusServiceUnavailable)
+			target.LogFailure(err)
+			observed = gatewayhttp.GetOpsStreamErrors(c)
+			require.Len(t, observed, 2)
+			require.Equal(t, "existing_event", observed[1].Code)
+		})
+	}
 }

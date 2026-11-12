@@ -156,6 +156,100 @@ func TestHasFunctionCallOutputMissingCallID(t *testing.T) {
 	}).HasFunctionCallOutputMissingCallID)
 }
 
+// TestToolOutputContextHostedSearch replays hosted search results with absent
+// or null call IDs beside an identified client result. Every context scanner
+// excludes the hosted result without losing the client's reference requirement.
+func TestToolOutputContextHostedSearch(t *testing.T) {
+	for _, hosted := range []string{
+		`{"type":"tool_search_output","execution":"server","call_id":null,"tools":[]}`,
+		`{"type":"tool_search_output","execution":"server","tools":[]}`,
+	} {
+		t.Run(hosted, func(t *testing.T) {
+			var hostedItem map[string]any
+			require.NoError(t, json.Unmarshal([]byte(hosted), &hostedItem))
+			standalone := map[string]any{"input": []any{hostedItem}}
+			standaloneBytes, err := json.Marshal(standalone)
+			require.NoError(t, err)
+			require.Empty(t, ValidateFunctionCallOutputContext(standalone))
+			require.Empty(t, ValidateFunctionCallOutputContextBytes(standaloneBytes))
+			require.Empty(t, AnalyzeToolContinuationSignals(standalone))
+			require.Empty(t, AnalyzeToolCallOutputContextCoverageBytes(standaloneBytes))
+			require.Empty(t, AnalyzeToolCallOutputContextCoverageBytes([]byte(`{"input":`+hosted+`}`)))
+			require.True(t, NeedsToolContinuation(standalone))
+			require.True(t, IsCodexToolCallOutputItemType("tool_search_output"))
+
+			for _, hostedFirst := range []bool{true, false} {
+				clientOutput := map[string]any{"type": "function_call_output", "call_id": "call_client", "output": "ok"}
+				input := []any{clientOutput, hostedItem}
+				if hostedFirst {
+					input = []any{hostedItem, clientOutput}
+				}
+				for _, referenced := range []bool{false, true} {
+					request := map[string]any{"input": input}
+					if referenced {
+						request["input"] = append(input, map[string]any{"type": "item_reference", "id": "call_client"})
+					}
+					body, err := json.Marshal(request)
+					require.NoError(t, err)
+					want := FunctionCallOutputValidation{
+						HasFunctionCallOutput:         true,
+						HasItemReferenceForAllCallIDs: referenced,
+					}
+					require.Equal(t, want, ValidateFunctionCallOutputContext(request))
+					require.Equal(t, want, ValidateFunctionCallOutputContextBytes(body))
+					signals := AnalyzeToolContinuationSignals(request)
+					require.True(t, signals.HasFunctionCallOutput)
+					require.False(t, signals.HasFunctionCallOutputMissingCallID)
+					require.Equal(t, referenced, signals.HasItemReferenceForAllCallIDs)
+					require.Equal(t, []string{"call_client"}, signals.FunctionCallOutputCallIDs)
+					require.Equal(t, ToolCallOutputContextCoverage{
+						HasFunctionCallOutput:   true,
+						ContextCoversAllCallIDs: referenced,
+					}, AnalyzeToolCallOutputContextCoverageBytes(body))
+				}
+			}
+		})
+	}
+}
+
+// TestToolOutputContextRetainsClientIDRequirements mixes a valid hosted search
+// result with outputs that still require call IDs. Missing and unknown execution
+// modes, and other output kinds, must retain their missing-ID diagnostics.
+func TestToolOutputContextRetainsClientIDRequirements(t *testing.T) {
+	for _, output := range []string{
+		`{"type":"tool_search_output","execution":"client","call_id":null}`,
+		`{"type":"tool_search_output","execution":"client"}`,
+		`{"type":"tool_search_output","call_id":null}`,
+		`{"type":"tool_search_output"}`,
+		`{"type":"tool_search_output","execution":"unknown","call_id":null}`,
+		`{"type":"tool_search_output","execution":" server ","call_id":null}`,
+		`{"type":"tool_search_output","execution":null,"call_id":null}`,
+		`{"type":"tool_search_output","execution":false,"call_id":null}`,
+		`{"type":"function_call_output","execution":"server","call_id":null}`,
+		`{"type":"custom_tool_call_output","execution":"server","call_id":null}`,
+		`{"type":"mcp_tool_call_output","execution":"server","call_id":null}`,
+	} {
+		t.Run(output, func(t *testing.T) {
+			body := []byte(`{"input":[{"type":"tool_search_output","execution":"server","call_id":null},` + output + `]}`)
+			var request map[string]any
+			require.NoError(t, json.Unmarshal(body, &request))
+			want := FunctionCallOutputValidation{
+				HasFunctionCallOutput:              true,
+				HasFunctionCallOutputMissingCallID: true,
+			}
+			require.Equal(t, want, ValidateFunctionCallOutputContext(request))
+			require.Equal(t, want, ValidateFunctionCallOutputContextBytes(body))
+			signals := AnalyzeToolContinuationSignals(request)
+			require.True(t, signals.HasFunctionCallOutput)
+			require.True(t, signals.HasFunctionCallOutputMissingCallID)
+			require.Empty(t, signals.FunctionCallOutputCallIDs)
+			require.Equal(t, ToolCallOutputContextCoverage{
+				HasFunctionCallOutput: true,
+			}, AnalyzeToolCallOutputContextCoverageBytes(body))
+		})
+	}
+}
+
 // TestHasItemReferenceForCallIDs compares supplied call-ID lists with two
 // available references. Single/full subsets pass, while absent input and a
 // list containing an unmatched ID fail.

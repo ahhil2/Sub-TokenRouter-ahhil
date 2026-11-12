@@ -1,6 +1,8 @@
 package gemini
 
 import (
+	"context"
+	"errors"
 	mathrand "math/rand"
 	"net/http"
 	"strings"
@@ -18,6 +20,12 @@ import (
 // exponential base, while text estimation reads ordinary prompt text as an
 // approximation for countTokens responses when OAuth scopes prevent that
 // action.
+//
+// Request cancellation interrupts waiting and retains its error identity before
+// protocol-specific error mapping. Parent deadlines use the request context
+// because the transport can time out independently while the client remains
+// active. The timer path rechecks cancellation when both signals are ready,
+// and exchange callers check again before constructing another request.
 
 const (
 	// geminiRetryBaseDelay and geminiRetryMaxDelay bound the exponential delay
@@ -41,11 +49,18 @@ func IsGeminiSignatureRelatedError(respBody []byte) bool {
 	return strings.Contains(msg, "thought_signature") || strings.Contains(msg, "signature")
 }
 
-// SleepGeminiBackoff sleeps for a positive one-based attempt using the capped
-// exponential base and twenty-percent jitter. Exchange callers use their
-// bounded attempt counter; sleeping runs for its duration even if request
-// context is cancelled.
-func SleepGeminiBackoff(attempt int) {
+// SleepGeminiBackoff waits for a positive one-based attempt using the capped
+// exponential base and twenty-percent jitter. Cancellation returns ctx.Err
+// promptly, including when the timer and cancellation become ready together;
+// a completed delay returns nil and permits another attempt.
+//
+// Exchange callers check the context again before dispatch because cancellation
+// can arrive after this function returns. The timer is stopped on every exit,
+// and the existing capped jitter calculation determines successful wait length.
+func SleepGeminiBackoff(ctx context.Context, attempt int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	delay := min(geminiRetryBaseDelay*time.Duration(1<<uint(attempt-1)), geminiRetryMaxDelay)
 
 	// Jitter spreads simultaneous retries around the exponential base. The
@@ -54,7 +69,33 @@ func SleepGeminiBackoff(attempt int) {
 	r := mathrand.New(mathrand.NewSource(time.Now().UnixNano()))
 	jitter := time.Duration(float64(delay) * 0.2 * (r.Float64()*2 - 1))
 	sleepFor := max(delay+jitter, 0)
-	time.Sleep(sleepFor)
+	timer := time.NewTimer(sleepFor)
+	defer timer.Stop()
+	// Both signals can become ready together. Recheck the context after timer
+	// selection so a completed delay cannot authorize work for a canceled request.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return ctx.Err()
+	}
+}
+
+// geminiCancellationError returns request cancellation or a wrapped transport
+// cancellation while leaving independent upstream deadlines retryable. A parent
+// deadline is identified through ctx.Err because a transport deadline can expire
+// while the client request remains active. Wrapped cancellation errors keep their
+// identity so the executor can classify them after this exchange returns.
+// Independent timeout errors return nil here and reach the ordinary transport
+// retry budget and final upstream error presenter.
+func geminiCancellationError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
 }
 
 // IsGeminiInsufficientScope recognizes OAuth scope rejection in the challenge

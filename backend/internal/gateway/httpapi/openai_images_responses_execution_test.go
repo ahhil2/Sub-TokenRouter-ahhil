@@ -25,6 +25,11 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// openai_images_responses_execution_test.go exercises image error processing
+// across upstream Responses exchanges. The fixtures retain dispatch identity,
+// observed HTTP status, semantic failure, and retry policy independently, so
+// response reading cannot attribute a delayed failure to another attempt.
+
 // openAIImagesReadErrorBody returns one configured failure on every image
 // body read.
 type openAIImagesReadErrorBody struct {
@@ -426,7 +431,8 @@ func TestOpenAIImagesTextFallback_RemainsRetryableAndThusCascades(t *testing.T) 
 
 // TestImageStreamFailureUsesResponseDispatch reports an older image stream error
 // after a replacement exchange starts. The production error adapter must attach
-// its response reference so only the interrupted attempt receives the failure.
+// its response reference so only the interrupted attempt receives the failure,
+// retaining its observed HTTP 200 beside the semantic 502 error event.
 func TestImageStreamFailureUsesResponseDispatch(t *testing.T) {
 	var saved telemetry.RequestRecord
 	ctx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "local"}, func(r telemetry.RequestRecord) { saved = r })
@@ -450,7 +456,13 @@ func TestImageStreamFailureUsesResponseDispatch(t *testing.T) {
 	require.Error(t, readErr)
 	require.Error(t, svc.handleOpenAIImagesOAuthResponseError(ctx, c, target, "gpt-image-2", "", resp, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c), readErr))
 	require.Equal(t, "failed", saved.Attempts[0].Outcome)
-	require.Equal(t, 502, saved.Attempts[0].Status)
+	require.Equal(t, http.StatusOK, saved.Attempts[0].Status)
+	events, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	upstreamErrors, ok := events.([]*ops.OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, upstreamErrors, 1)
+	require.Equal(t, http.StatusBadGateway, upstreamErrors[0].UpstreamStatusCode)
 	require.Equal(t, "running", saved.Attempts[1].Outcome)
 	require.Equal(t, 200, saved.Attempts[1].Status)
 	require.Equal(t, "shared", saved.Attempts[0].RequestID)

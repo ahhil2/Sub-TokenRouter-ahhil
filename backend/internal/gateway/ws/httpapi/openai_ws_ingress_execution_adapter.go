@@ -288,11 +288,13 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 		return nil
 	}
 
-	acquireTurnLease := func(turn int, preferred string, forcePreferredConn bool, allowRecovery bool) (*openaiws.WSConnLease, error) {
+	acquireTurnLease := func(options gatewayws.IngressAcquireOptions) (*openaiws.WSConnLease, error) {
+		turn := options.Turn
+		forcePreferredConn := options.ForcePreferredConn
 		req := openaiws.CloneWSAcquireRequest(baseAcquireReq)
-		req.PreferredConnID = strings.TrimSpace(preferred)
+		req.PreferredConnID = strings.TrimSpace(options.PreferredConnID)
 		req.ForcePreferredConn = forcePreferredConn
-		req.ForceNewConn = false
+		req.ForceNewConn = options.ForceNewConn
 		// Freeze one deadline across reuse, queue wakeups and dialing for this lease;
 		// later turns can take a newer Options snapshot before starting another acquire.
 		acquireTimeout := s.openAIWSAcquireTimeout()
@@ -302,7 +304,7 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 		var dialErr *openai.WSDialError
 		// Return a distinct task-invalid marker before ordinary dial policy so the
 		// core can use its single identity repair and retry this acquisition.
-		if acquireErr != nil && s.Requests.Identity.UsesAgentIdentity(ctx, provider) && errors.As(acquireErr, &dialErr) && openai.IsAgentTaskInvalidWSDialError(dialErr) && allowRecovery {
+		if acquireErr != nil && s.Requests.Identity.UsesAgentIdentity(ctx, provider) && errors.As(acquireErr, &dialErr) && openai.IsAgentTaskInvalidWSDialError(dialErr) && options.AllowRecovery {
 			return nil, &gatewayws.AcquireRecoveryError{Err: acquireErr}
 		}
 		if acquireErr != nil {
@@ -317,7 +319,7 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 				dialCloseStatus, gatewayprovider.TruncateOpenAIWSLogValue(dialCloseReason, gatewayprovider.OpenAIWSHeaderValueMaxLen), dialRespServer,
 				dialRespVia,
 				dialRespCFRay,
-				dialRespReqID, gatewayprovider.TruncateOpenAIWSLogValue(acquireErr.Error(), gatewayprovider.OpenAIWSLogValueMaxLen), gatewayprovider.TruncateOpenAIWSLogValue(preferred, gatewayprovider.OpenAIWSIDValueMaxLen), forcePreferredConn,
+				dialRespReqID, gatewayprovider.TruncateOpenAIWSLogValue(acquireErr.Error(), gatewayprovider.OpenAIWSLogValueMaxLen), gatewayprovider.TruncateOpenAIWSLogValue(options.PreferredConnID, gatewayprovider.OpenAIWSIDValueMaxLen), forcePreferredConn,
 				wsHost,
 				wsPath,
 				provider.Record.ProxyID != nil && provider.Record.Proxy != nil,
@@ -378,7 +380,7 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 			provider.Record.ID,
 			turn, gatewayprovider.TruncateOpenAIWSLogValue(connID, gatewayprovider.OpenAIWSIDValueMaxLen), lease.Reused(),
 			lease.ConnPickDuration().Milliseconds(),
-			lease.QueueWaitDuration().Milliseconds(), gatewayprovider.TruncateOpenAIWSLogValue(preferred, gatewayprovider.OpenAIWSIDValueMaxLen),
+			lease.QueueWaitDuration().Milliseconds(), gatewayprovider.TruncateOpenAIWSLogValue(options.PreferredConnID, gatewayprovider.OpenAIWSIDValueMaxLen),
 		)
 		return lease, nil
 	}
@@ -417,8 +419,8 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 		RecoverAcquireFn: func(ctx context.Context) error {
 			return s.Requests.Identity.Recover(ctx, provider, provider.View().GetCredential("task_id"))
 		},
-		AcquireFn: func(turn int, preferred string, force bool, allowRecovery bool) (gatewayws.ConnLease, error) {
-			lease, err := acquireTurnLease(turn, preferred, force, allowRecovery)
+		AcquireFn: func(options gatewayws.IngressAcquireOptions) (gatewayws.ConnLease, error) {
+			lease, err := acquireTurnLease(options)
 			if err != nil || lease == nil {
 				return nil, err
 			}

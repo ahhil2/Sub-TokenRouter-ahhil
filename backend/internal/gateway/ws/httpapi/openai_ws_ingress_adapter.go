@@ -39,7 +39,7 @@ type wsIngressAdapter struct {
 	BridgeFn         func(ctx context.Context, input gatewayws.ClientPayload, body []byte, identity string, turn int) (*gatewayws.ForwardResult, error) // one HTTP bridge turn executor
 	SetStateFn       func(state, hash string)                                                                                                           // request turn-state publication operation
 	OpenPoolFn       func(payload gatewayws.ClientPayload) error                                                                                        // initial handshake and pool preparation
-	AcquireFn        func(turn int, preferred string, force bool, allowRecovery bool) (gatewayws.ConnLease, error)                                      // provider pool lease acquisition
+	AcquireFn        func(gatewayws.IngressAcquireOptions) (gatewayws.ConnLease, error)                                                                 // provider pool lease acquisition
 	RelayFn          func(turn int, lease gatewayws.ConnLease, payload gatewayws.ClientPayload) (*gatewayws.ForwardResult, error)                       // one pooled turn frame relay
 	PinFn            func(id int64, conn string) bool                                                                                                   // disabled-store connection reservation operation
 	UnpinFn          func(id int64, conn string)                                                                                                        // connection reservation cleanup operation
@@ -128,12 +128,11 @@ func (p *wsIngressAdapter) OpenPool(payload gatewayws.ClientPayload) error {
 	return p.OpenPoolFn(payload)
 }
 
-// Acquire obtains a provider lease using optional preferred connection
-// identity for this turn. Force requires that continuation connection;
-// allowRecovery permits the bound acquire operation to return a
-// credential-recovery marker. The core owns eventual lease release.
-func (p *wsIngressAdapter) Acquire(turn int, preferred string, force bool, allowRecovery bool) (gatewayws.ConnLease, error) {
-	return p.AcquireFn(turn, preferred, force, allowRecovery)
+// Acquire obtains a provider lease with the core's affinity and recovery
+// options. The bound operation honors fresh acquisition after a retryable
+// transport failure; the core owns eventual lease release.
+func (p *wsIngressAdapter) Acquire(options gatewayws.IngressAcquireOptions) (gatewayws.ConnLease, error) {
+	return p.AcquireFn(options)
 }
 
 // Relay executes this turn's payload over its held lease and returns

@@ -274,3 +274,24 @@ func TestExecuteGeminiCancelledRequestDoesNotReachServer(t *testing.T) {
 	require.Zero(t, calls.Load())
 	require.EqualValues(t, 1, releases.Load())
 }
+
+// TestExecuteGeminiIndependentDeadlineIsUpstreamFailure returns a deadline from
+// response handling while the request context remains active. It checks that
+// the executor retains the failure without classifying the client as canceled.
+func TestExecuteGeminiIndependentDeadlineIsUpstreamFailure(t *testing.T) {
+	options := cancellationExchangeOptions()
+	options.Do = func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("fixture"))}, nil
+	}
+	target := &Target{
+		Mode:     NativeResponse,
+		Exchange: options,
+		BeforeResponse: func(context.Context, *http.Response, string) (bool, error) {
+			return true, context.DeadlineExceeded
+		},
+	}
+	result, err := (Executor{}).Execute(context.Background(), upstream.AttemptInput{Target: target, Protocol: protocol.ProtocolGeminiGenerateContent}, nil)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.False(t, result.Cancelled)
+	require.Equal(t, "upstream", result.FailureClass)
+}

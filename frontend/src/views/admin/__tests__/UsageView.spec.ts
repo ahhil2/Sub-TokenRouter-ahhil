@@ -1188,6 +1188,8 @@ describe('admin UsageView errors tab filter forwarding', () => {
     vi.useRealTimers()
   })
 
+  // Calendar and rolling shortcuts remain ordered beside the date control. Custom
+  // minute ranges reach usage, chart, and error requests with matching endpoints.
   it('preserves a minute range in usage, charts and error requests', async () => {
     const wrapper = mountRouteFilteredUsageView()
     vi.advanceTimersByTime(120)
@@ -1195,7 +1197,7 @@ describe('admin UsageView errors tab filter forwarding', () => {
     const picker = wrapper.findComponent({ name: 'DateRangePicker' })
     expect(picker.props()).toMatchObject({
       enableTime: true,
-      quickPresets: ['yesterday', 'last24Hours'],
+      quickPresets: ['today', 'yesterday', 'last24Hours'],
     })
     const range = {
       startDate: '2026-10-19T12:20:00.000Z',

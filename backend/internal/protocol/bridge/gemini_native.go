@@ -20,7 +20,9 @@ import (
 // function names before REST sanitization removes invocation IDs. The shared
 // ID/name map resolves later tool results, caller-selected thought markers
 // fill missing call signatures, and final-model thinking controls arrive as
-// options rather than being guessed from client model spelling.
+// options rather than being guessed from client model spelling. Accepted
+// functions combined with built-in search enable server-side tool invocation
+// reporting in the generated request.
 //
 // Buffered responses and native iterators use the first candidate and keep
 // observed token counts separate from converted content. Prompt counts lose
@@ -443,7 +445,9 @@ func NativeMapGeminiFinishReasonToClaudeStopReason(finishReason string) string {
 // whitespace and supports base64 image blocks. Thinking is inserted from
 // options rather than inferred here. The request is rebuilt with ordinary JSON
 // decoding, so generic numbers use float64; the result contains the supported
-// GenerateContent fields selected by these converters.
+// GenerateContent fields selected by these converters. Accepted search and
+// function declarations together enable server-side invocation reporting; a
+// request containing either tool kind alone leaves that option absent.
 func NativeConvertClaudeMessagesToGeminiGenerateContent(options NativeGeminiOptions, body []byte) ([]byte, error) {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -468,6 +472,21 @@ func NativeConvertClaudeMessagesToGeminiGenerateContent(options NativeGeminiOpti
 
 	if tools := NativeConvertClaudeToolsToGeminiTools(req["tools"]); tools != nil {
 		out["tools"] = tools
+		// Detect accepted declarations after conversion because malformed client
+		// tools may be dropped before built-in search and functions reach Gemini.
+		var hasFunctions, hasSearch bool
+		for _, rawTool := range tools {
+			tool, _ := rawTool.(map[string]any)
+			declarations, _ := tool["functionDeclarations"].([]any)
+			_, search := tool["googleSearch"]
+			hasFunctions = hasFunctions || len(declarations) > 0
+			hasSearch = hasSearch || search
+		}
+		if hasFunctions && hasSearch {
+			// Gemini requires server invocation reporting when built-in search and
+			// client functions coexist; otherwise the upstream rejects this tool set.
+			out["toolConfig"] = map[string]any{"includeServerSideToolInvocations": true}
+		}
 	}
 
 	generationConfig := NativeConvertClaudeGenerationConfig(req)

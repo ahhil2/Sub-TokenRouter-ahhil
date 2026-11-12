@@ -293,16 +293,20 @@ func (b *openAIChatAttemptBridge) Switching(failure *textflow.AttemptFailure, sw
 	)
 }
 
-// OtherFailure records Chat warnings and scheduling failure before supplying
-// missing output. It prefers warning evidence carried by the error chain, then
-// passes error text to the recorder when that evidence is absent.
+// OtherFailure ends canceled Chat requests before warning or scheduling
+// feedback. Connected requests prefer warning evidence carried by the error
+// chain, then pass error text to the recorder when that evidence is absent.
 //
 // Communicated-error state and the raw writer size are checked after warning
 // handling. A recorded warning allows fallback while size remains unchanged;
-// communicated errors suppress that path. Once eligible, classified stream-read
-// output takes precedence over the general OpenAI fallback, and the chosen
-// output result is logged.
+// communicated errors suppress that path. The shared OpenAI output classifies
+// stream-read failures and records local presentation separately from upstream
+// HTTP evidence, and the chosen output result is logged.
 func (b *openAIChatAttemptBridge) OtherFailure(err error) {
+	if gatewayhttp.FailoverClientGone(b.c) {
+		b.reqLog.Info("openai_chat_completions.client_disconnected", zap.Error(err))
+		return
+	}
 	statusCode := 0
 	if v, ok := GetContextInt64(b.c, gatewayhttp.OpsUpstreamStatusCodeKey); ok {
 		statusCode = int(v)
@@ -318,13 +322,7 @@ func (b *openAIChatAttemptBridge) OtherFailure(err error) {
 	// its evidence with communicated-error and byte-count checks before
 	// choosing another missing error response.
 	if !upstreamErrorAlreadyCommunicated && (!recordedWarning || b.c.Writer.Size() == b.writerSizeBeforeForward) {
-		// Prefer classified stream-read output before the generic
-		// upstream fallback, preserving that failure's code and message
-		// while emitting at most this selected missing error path.
-		b.wroteFallback = b.binding().ensureOpenAIStreamReadErrorResponse(b.c, err, *b.streamStarted)
-		if !b.wroteFallback {
-			b.wroteFallback = b.binding().ensureOpenAIForwardErrorResponse(b.c, *b.streamStarted, err)
-		}
+		b.wroteFallback = b.binding().ensureOpenAIForwardErrorResponse(b.c, *b.streamStarted, err)
 	}
 	b.reqLog.Warn("openai_chat_completions.forward_failed",
 		zap.Int64("provider_id", b.provider.Record.ID),

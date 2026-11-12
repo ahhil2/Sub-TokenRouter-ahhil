@@ -329,9 +329,9 @@ func (b *openAIMessageAttemptBridge) Switching(failure *textflow.AttemptFailure,
 }
 
 // OtherFailure supplies missing Messages failure output after warning and
-// scheduling observations. A result reporting client disconnection returns
-// after its disconnect log, keeping that path separate from warning handling
-// and fallback output.
+// scheduling observations. Canceled requests or results reporting client
+// disconnection return after an informational log, before warning handling,
+// provider feedback, or fallback output.
 //
 // Other failures prefer warning evidence from the error chain before recording
 // error text. After those callbacks, communicated-error evidence and the raw
@@ -340,7 +340,7 @@ func (b *openAIMessageAttemptBridge) Switching(failure *textflow.AttemptFailure,
 // suppress it. Diagnostics retain the selected fallback and communication
 // observations.
 func (b *openAIMessageAttemptBridge) OtherFailure(err error) {
-	if b.result != nil && b.result.ClientDisconnect {
+	if gatewayhttp.FailoverClientGone(b.c) || b.result != nil && b.result.ClientDisconnect {
 		b.reqLog.Info("openai_messages.client_disconnected",
 			zap.Int64("provider_id", b.provider.Record.ID),
 			zap.Error(err),

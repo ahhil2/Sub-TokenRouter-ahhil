@@ -33,7 +33,9 @@ import (
 // reservations, pins, generation, and change notifications; closing runs
 // outside that lock. Acquisitions register against shutdown before queueing or
 // dialing, and late prewarm results recheck demand and compatibility before
-// publication. Callers finish lease I/O before Release, keep shared
+// publication. Reader-dependent transports receive demand-driven connections;
+// speculative idle sockets cannot expose their peer closes to this pool.
+// Callers finish lease I/O before Release, keep shared
 // provider/profile inputs stable, and close the pool after its transport work
 // ends.
 
@@ -195,8 +197,8 @@ type WSConn struct {
 // openAIWSProviderPool stores a provider's connections and admission/prewarm
 // state under its mutex.
 // mu protects conns, pinnedConns, changedCh, waiters, creating, generation,
-// lastCleanupAt, lastAcquire, prewarmActive, prewarmUntil, prewarmFails, and
-// prewarmFailAt. Callers mutate admission/target state and publish changedCh
+// lastCleanupAt, lastAcquire, prewarmDisabled, prewarmActive, prewarmUntil,
+// prewarmFails, and prewarmFailAt. Callers mutate admission/target state and publish changedCh
 // under that lock, then close retired transports after unlocking.
 type openAIWSProviderPool struct {
 	mu          sync.Mutex         // provider admission state mutex
@@ -218,6 +220,10 @@ type openAIWSProviderPool struct {
 	// demand prewarming; its header map is cloned while provider/profile/callback
 	// references stay shared.
 	lastAcquire *WSAcquireRequest
+	// prewarmDisabled follows the last successful target's transport capability.
+	// Reader-dependent transports are dialed on demand so idle first-message
+	// deadlines cannot accumulate unnoticed in speculative connections.
+	prewarmDisabled bool
 	// prewarmActive excludes another batch for this provider until the current
 	// batch returns reservations and clears its activity flag in deferred settlement.
 	prewarmActive bool
@@ -1539,7 +1545,7 @@ func (p *WSConnPool) deliverLease(ctx context.Context, req WSAcquireRequest, gen
 	} else {
 		p.metrics.acquireCreateTotal.Add(1)
 	}
-	p.recordLastSuccessfulAcquire(req.Provider.ID, generation, req)
+	p.recordLastSuccessfulAcquire(req.Provider.ID, generation, req, conn.supportsIdlePingWithoutReader())
 	p.ensureTargetIdleAsync(req.Provider.ID)
 	return lease, nil
 }
@@ -1563,8 +1569,13 @@ func (p *WSConnPool) recordConnPickDuration(duration time.Duration) {
 // locking when its generation still matches. Missing pools or invalid IDs are
 // ignored. The stored provider/profile/callback references remain shared;
 // generation rejection prevents a pre-clear request from restoring the prewarm
-// target.
-func (p *WSConnPool) recordLastSuccessfulAcquire(providerID int64, generation uint64, req WSAcquireRequest) {
+// target. Reader-dependent transports disable speculative prewarming for that
+// target because the pool cannot observe upstream closes while they wait idle.
+//
+// Publish the capability and request together so a later batch uses the
+// transport property of its retained target. A successful acquisition can
+// re-enable prewarming after the provider changes transport.
+func (p *WSConnPool) recordLastSuccessfulAcquire(providerID int64, generation uint64, req WSAcquireRequest, idlePingSupported bool) {
 	if p == nil || providerID <= 0 {
 		return
 	}
@@ -1578,6 +1589,7 @@ func (p *WSConnPool) recordLastSuccessfulAcquire(providerID int64, generation ui
 		return
 	}
 	ap.lastAcquire = CloneWSAcquireRequestPtr(&req)
+	ap.prewarmDisabled = !idlePingSupported
 	ap.mu.Unlock()
 }
 
@@ -1938,8 +1950,10 @@ func (p *WSConnPool) targetConnCountLocked(ap *openAIWSProviderPool, maxConns in
 // count; general compatibility waiters remain separate demand observations.
 // Callers hold ap.mu and supply initialized provider state. Its decision is
 // sampled again after dialing because capacity and demand can change meanwhile.
+// Reader-dependent targets remain on demand because idle peer-close frames
+// cannot be consumed by their transport until a request starts reading.
 func (p *WSConnPool) prewarmNeededLocked(ap *openAIWSProviderPool) bool {
-	if ap.lastAcquire == nil {
+	if ap.lastAcquire == nil || ap.prewarmDisabled {
 		return false
 	}
 	limit := p.effectiveMaxConnsByProvider(ap.lastAcquire.Provider)
@@ -1966,7 +1980,9 @@ func (p *WSConnPool) prewarmNeededLocked(ap *openAIWSProviderPool) bool {
 // recomputation using the latest successful request. Failed dials advance
 // suppression evidence but this batch can continue its reserved attempts;
 // suppression controls later batch admission. Prewarm uses its cancellable
-// parent plus dial budget and extra delay.
+// parent plus dial budget and extra delay. Reader-dependent results are closed
+// and suppress later batches for the captured target because they cannot be
+// checked while awaiting their first request.
 func (p *WSConnPool) prewarmConns(providerID int64, req WSAcquireRequest, total int, generations ...uint64) {
 	generation := uint64(0)
 	if len(generations) > 0 {
@@ -2046,6 +2062,16 @@ func (p *WSConnPool) prewarmConns(providerID int64, req WSAcquireRequest, total 
 			conn.close()
 			return
 		}
+		// A dial can reveal a reader-dependent transport after a target change.
+		// Discard its speculative socket and suppress future batches until another
+		// successful acquisition supplies a transport that can be checked while idle.
+		if !conn.supportsIdlePingWithoutReader() {
+			ap.prewarmDisabled = true
+			ap.signalChangedLocked()
+			ap.mu.Unlock()
+			conn.close()
+			return
+		}
 		// Dialing runs without provider locking; recheck target demand and
 		// cancellation before publication so a late socket cannot exceed changed idle/capacity needs.
 		if parent.Err() != nil || !p.prewarmNeededLocked(ap) {
@@ -2093,6 +2119,7 @@ func (p *WSConnPool) ClearProvider(providerID int64) {
 		}
 	}
 	ap.lastAcquire = nil
+	ap.prewarmDisabled = false
 	ap.prewarmUntil = time.Time{}
 	ap.prewarmFails = 0
 	ap.prewarmFailAt = time.Time{}

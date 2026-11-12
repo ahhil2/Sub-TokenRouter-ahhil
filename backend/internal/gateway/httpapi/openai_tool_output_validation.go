@@ -18,17 +18,20 @@ import (
 // other request validation to the entry handler.
 //
 // A nonblank previous response ID or existing tool-call context admits the
-// request before standalone-output checks. Remaining outputs require call IDs
-// first, then item references covering every call ID. Missing IDs and missing
-// references produce distinct diagnostic reasons and HTTP 400 messages, so
-// callers can identify which association information the request lacks.
+// request before standalone-output checks. Server-executed tool search results
+// carry hosted history; the protocol helper excludes them from client call-ID
+// requirements. Remaining outputs require call IDs first, then item references
+// covering every call ID. Missing IDs and missing references produce distinct
+// diagnostic reasons and HTTP 400 messages, so callers can identify which
+// association information the request lacks.
 // Validation leaves the supplied body intact for subsequent execution.
 
 // ValidateOpenAIFunctionCallOutput reports whether HTTP tool outputs pass its
 // call-context checks. Requests without function_call_output pass immediately.
 // A nonblank previous_response_id or explicit tool-call context also passes;
-// remaining outputs need call IDs and matching item_reference entries, with
-// failures logged and written as HTTP 400.
+// remaining client outputs need call IDs and matching item_reference entries.
+// Hosted tool search results do not require a client reply identifier, while
+// invalid client outputs are logged and written as HTTP 400.
 func ValidateOpenAIFunctionCallOutput(c *gin.Context, body []byte, reqLog *zap.Logger) bool {
 	if !gjson.GetBytes(body, `input.#(type=="function_call_output")`).Exists() {
 		return true
@@ -51,7 +54,7 @@ func ValidateOpenAIFunctionCallOutput(c *gin.Context, body []byte, reqLog *zap.L
 		reqLog.Warn("openai.request_validation_failed",
 			zap.String("reason", "function_call_output_missing_call_id"),
 		)
-		DefaultOpenAIErrorOutput().WriteError(c, http.StatusBadRequest, "invalid_request_error", "function_call_output requires call_id on HTTP requests; continuation via previous_response_id is only supported on Responses WebSocket v2")
+		DefaultOpenAIErrorOutput().WriteError(c, http.StatusBadRequest, "invalid_request_error", "Client tool outputs require a non-empty call_id")
 		return false
 	}
 	if validation.HasItemReferenceForAllCallIDs {
@@ -61,6 +64,6 @@ func ValidateOpenAIFunctionCallOutput(c *gin.Context, body []byte, reqLog *zap.L
 	reqLog.Warn("openai.request_validation_failed",
 		zap.String("reason", "function_call_output_missing_item_reference"),
 	)
-	DefaultOpenAIErrorOutput().WriteError(c, http.StatusBadRequest, "invalid_request_error", "function_call_output requires item_reference ids matching each call_id on HTTP requests; continuation via previous_response_id is only supported on Responses WebSocket v2")
+	DefaultOpenAIErrorOutput().WriteError(c, http.StatusBadRequest, "invalid_request_error", "Client tool outputs require tool-call context, item_reference entries matching each call_id, or a previous_response_id")
 	return false
 }

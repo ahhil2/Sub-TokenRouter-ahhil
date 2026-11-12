@@ -326,6 +326,8 @@ describe('user UsageView', () => {
     60_000,
   )
 
+  // Calendar and rolling shortcuts share the precise range handler. Their configured
+  // order remains visible while usage summaries and charts receive matching boundaries.
   it.each([
     {
       startDate: '2026-10-18T19:25:30.123Z',
@@ -338,7 +340,7 @@ describe('user UsageView', () => {
     await flushPromises()
     expect(wrapper.findComponent({ name: 'DateRangePicker' }).props()).toMatchObject({
       enableTime: true,
-      quickPresets: ['yesterday', 'last24Hours'],
+      quickPresets: ['today', 'yesterday', 'last24Hours'],
     })
     wrapper.findComponent({ name: 'DateRangePicker' }).vm.$emit('change', range)
     await flushPromises()

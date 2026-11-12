@@ -18,7 +18,7 @@
                 v-model:start-date="startDate"
                 v-model:end-date="endDate"
                 enable-time
-                :quick-presets="['yesterday', 'last24Hours']"
+                :quick-presets="['today', 'yesterday', 'last24Hours']"
                 @change="onDateRangeChange"
               />
             </div>

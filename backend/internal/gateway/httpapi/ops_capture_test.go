@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,9 +15,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
+	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	opscore "github.com/TokenFlux/TokenRouter/internal/ops"
+	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
@@ -56,6 +62,475 @@ type deterministicOpsCaptureWriterStatePool struct {
 	// inspection occurs behind the blocked writer gate, and reuse waits for the
 	// release-completion channel.
 	states []*opsCaptureWriterState
+}
+
+// ops_capture_test.go exercises HTTP and streaming failure capture through the
+// middleware and its queue. Tests distinguish local execution failures from
+// provider responses, retaining observed HTTP status, terminal error details,
+// attempt history, and canceled request outcomes across their separate records.
+
+// TestOpsErrorLoggerMiddleware_ForwardFailureOrigin exercises terminal failures
+// after an earlier rejected attempt. Logical downstream errors retain their
+// source, while actual upstream HTTP observations and historical errors survive
+// capture and queue preparation independently of the presented stream status.
+func TestOpsErrorLoggerMiddleware_ForwardFailureOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name           string // named forwarding outcome
+		failure        error  // local terminal failure
+		upstreamStatus int    // observed response headers
+		logicalStatus  int    // downstream error presentation
+		errorType      string // downstream error category
+		phase          string // expected failure phase
+		source         string // expected evidence source
+		code           string // expected transport classification
+		stream         bool   // response committed before failure
+	}{
+		{"raw HTTP2 transport", fmt.Errorf("stream read error: %w", errors.New("http2: client connection lost")), 200, 502, "upstream_error", "network", "gateway", openai.OpenAIUpstreamHTTP2StreamErrorCode, true},
+		{"raw transport", fmt.Errorf("stream read error: %w", errors.New("connection reset by peer")), 200, 502, "upstream_error", "network", "gateway", openai.OpenAIUpstreamStreamReadErrorCode, true},
+		{"typed transport", openai.NewUpstreamStreamReadError(errors.New("stream error: stream ID 7; INTERNAL_ERROR")), 200, 502, "upstream_error", "network", "gateway", openai.OpenAIUpstreamHTTP2StreamErrorCode, true},
+		{"local conversion", errors.New("conversion failed"), 200, 502, "upstream_error", "internal", "gateway", "", true},
+		{"local before headers", errors.New("request encoding failed"), 0, 502, "upstream_error", "internal", "gateway", "", false},
+		{"provider stream 400", nil, 200, 400, "invalid_request_error", "upstream", "upstream_http", "", true},
+		{"provider stream 429", nil, 200, 429, "rate_limit_error", "upstream", "upstream_http", "", true},
+		{"provider stream 502", nil, 200, 502, "upstream_error", "upstream", "upstream_http", "", true},
+		{"provider HTTP 400", nil, 400, 400, "invalid_request_error", "upstream", "upstream_http", "", false},
+		{"provider HTTP 429", nil, 429, 429, "rate_limit_error", "upstream", "upstream_http", "", false},
+		{"provider HTTP 502", nil, 502, 502, "upstream_error", "upstream", "upstream_http", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupOpsErrorLogTestQueue(t, 2)
+			var observed telemetry.RequestRecord
+			ctx := telemetry.WithRequestCapture(context.Background(), telemetry.RequestRecord{
+				RequestID: "capture-origin", State: "running",
+				Attempts: []telemetry.RequestAttempt{
+					{Number: 1, ProviderID: 31, Status: http.StatusTooManyRequests, Outcome: "failed"},
+					{Number: 2, ProviderID: 31, Status: tc.upstreamStatus, Outcome: "running"},
+				},
+			}, func(record telemetry.RequestRecord) { observed = record })
+			router := gin.New()
+			router.Use(opsLoggerFixture(newOpsServiceFixture(nil, nil)))
+			router.POST("/v1/responses", func(c *gin.Context) {
+				c.Set(OpsProviderIDKey, int64(31))
+				SetOpsRequestContext(c, "test-model", tc.stream)
+				AppendOpsUpstreamError(c, opscore.OpsUpstreamErrorEvent{
+					ProviderID: 31, Kind: "retry", UpstreamStatusCode: http.StatusTooManyRequests,
+					Message: "earlier upstream rate limit",
+				}, telemetry.RequestAttemptRef{Number: 1, ProviderID: 31})
+				if tc.stream {
+					c.Status(http.StatusOK)
+					_, err := c.Writer.WriteString(": connected\n\n")
+					require.NoError(t, err)
+				}
+				if tc.failure != nil {
+					require.True(t, DefaultOpenAIErrorOutput().EnsureResponse(c, tc.stream, tc.failure))
+					return
+				}
+				AppendOpsUpstreamError(c, opscore.OpsUpstreamErrorEvent{
+					ProviderID: 31, Kind: "http_error", UpstreamStatusCode: tc.logicalStatus,
+					Message: "provider rejected the request",
+				}, telemetry.RequestAttemptRef{Number: 2, ProviderID: 31})
+				DefaultOpenAIErrorOutput().StreamError(c, tc.logicalStatus, tc.errorType, "provider rejected the request", tc.stream)
+			})
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+			router.ServeHTTP(recorder, request)
+
+			wantWireStatus := tc.logicalStatus
+			if tc.stream {
+				wantWireStatus = http.StatusOK
+			}
+			assert.Equal(t, wantWireStatus, recorder.Code)
+			require.Equal(t, int64(1), OpsErrorLogQueueLength())
+			entry := (<-opsErrorLogQueue).entry
+			assert.Equal(t, tc.logicalStatus, entry.StatusCode)
+			assert.Equal(t, tc.phase, entry.ErrorPhase)
+			assert.Equal(t, tc.source, entry.ErrorSource)
+			if tc.upstreamStatus > 0 && tc.phase != "internal" {
+				require.NotNil(t, entry.UpstreamStatusCode)
+				assert.Equal(t, tc.upstreamStatus, *entry.UpstreamStatusCode)
+			} else {
+				assert.Nil(t, entry.UpstreamStatusCode)
+			}
+			assert.Equal(t, tc.upstreamStatus, observed.Attempts[1].Status)
+			require.NotNil(t, entry.UpstreamErrorsJSON)
+			events, err := opscore.ParseOpsUpstreamErrors(*entry.UpstreamErrorsJSON)
+			require.NoError(t, err)
+			require.NotEmpty(t, events)
+			assert.Equal(t, http.StatusTooManyRequests, events[0].UpstreamStatusCode)
+			assert.Equal(t, "earlier upstream rate limit", events[0].Message)
+			if tc.failure != nil {
+				assert.Nil(t, entry.UpstreamErrorMessage)
+				assert.Nil(t, entry.UpstreamErrorDetail)
+			} else {
+				require.NotNil(t, entry.UpstreamErrorMessage)
+				assert.Equal(t, "provider rejected the request", *entry.UpstreamErrorMessage)
+				assert.NotContains(t, entry.ErrorBody, "upstream_stream_read_error")
+			}
+			if tc.code != "" {
+				assert.Contains(t, entry.ErrorBody, tc.code)
+				assert.Contains(t, recorder.Body.String(), `"code":"`+tc.code+`"`)
+			}
+		})
+	}
+}
+
+// TestOpsErrorLoggerMiddleware_CanceledForwardDoesNotInventFailure ends a
+// request before or after HTTP commitment. Fallback produces no error frame,
+// no provider failure record, and no replacement of the canceled lifecycle.
+func TestOpsErrorLoggerMiddleware_CanceledForwardDoesNotInventFailure(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		t.Run(fmt.Sprint(committed), func(t *testing.T) {
+			setupOpsErrorLogTestQueue(t, 2)
+			requestCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var observed telemetry.RequestRecord
+			requestCtx = telemetry.WithRequestCapture(requestCtx, telemetry.RequestRecord{
+				RequestID: "canceled-forward", State: "canceled",
+			}, func(record telemetry.RequestRecord) { observed = record })
+			router := gin.New()
+			router.Use(opsLoggerFixture(newOpsServiceFixture(nil, nil)))
+			router.POST("/v1/responses", func(c *gin.Context) {
+				if committed {
+					c.Status(http.StatusOK)
+					_, err := c.Writer.WriteString(": connected\n\n")
+					require.NoError(t, err)
+				}
+				cancel()
+				assert.False(t, DefaultOpenAIErrorOutput().EnsureResponse(c, committed, fmt.Errorf("stream read error: %w", context.Canceled)))
+			})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(requestCtx))
+			wantStatus := StatusClientClosedRequest
+			if committed {
+				wantStatus = http.StatusOK
+			}
+			assert.Equal(t, wantStatus, recorder.Code)
+			assert.NotContains(t, recorder.Body.String(), "error")
+			assert.Equal(t, "canceled", observed.State)
+			assert.Empty(t, observed.ErrorCode)
+			assert.Zero(t, OpsErrorLogQueueLength())
+		})
+	}
+}
+
+// TestOpsErrorLoggerMiddleware_CanceledForwardRetainsHistory records provider
+// failures before client cancellation. Earlier observations stay queryable,
+// while final cancellation remains client-owned and excluded from SLA failures.
+func TestOpsErrorLoggerMiddleware_CanceledForwardRetainsHistory(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		for _, upstreamStatus := range []int{http.StatusTooManyRequests, http.StatusBadGateway} {
+			t.Run(fmt.Sprintf("committed=%t/status=%d", committed, upstreamStatus), func(t *testing.T) {
+				setupOpsErrorLogTestQueue(t, 2)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				var observed telemetry.RequestRecord
+				ctx = telemetry.WithRequestCapture(ctx, telemetry.RequestRecord{State: "canceled"}, func(record telemetry.RequestRecord) { observed = record })
+				router := gin.New()
+				router.Use(opsLoggerFixture(newOpsServiceFixture(nil, nil)))
+				router.POST("/v1/responses", func(c *gin.Context) {
+					c.Set(OpsProviderIDKey, int64(31))
+					AppendOpsUpstreamError(c, opscore.OpsUpstreamErrorEvent{
+						ProviderID: 31, Kind: "http_error", UpstreamStatusCode: upstreamStatus,
+						Message: "earlier provider rejection",
+					})
+					if committed {
+						_, err := c.Writer.WriteString(": connected\n\n")
+						require.NoError(t, err)
+					}
+					cancel()
+					require.False(t, DefaultOpenAIErrorOutput().EnsureResponse(c, committed, context.Canceled))
+				})
+				recorder := httptest.NewRecorder()
+				router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx))
+				require.Equal(t, int64(1), OpsErrorLogQueueLength())
+				entry := (<-opsErrorLogQueue).entry
+				assert.Equal(t, recorder.Code, entry.StatusCode)
+				assert.Equal(t, "request", entry.ErrorPhase)
+				assert.Equal(t, "client_request", entry.ErrorSource)
+				assert.Equal(t, "client", entry.ErrorOwner)
+				assert.True(t, entry.IsBusinessLimited)
+				require.NotNil(t, entry.UpstreamStatusCode)
+				assert.Equal(t, upstreamStatus, *entry.UpstreamStatusCode)
+				require.NotNil(t, entry.UpstreamErrorsJSON)
+				events, err := opscore.ParseOpsUpstreamErrors(*entry.UpstreamErrorsJSON)
+				require.NoError(t, err)
+				require.Len(t, events, 1)
+				assert.Equal(t, "earlier provider rejection", events[0].Message)
+				assert.Equal(t, "canceled", observed.State)
+				assert.NotContains(t, recorder.Body.String(), "error")
+			})
+		}
+	}
+}
+
+// TestOpsErrorLoggerMiddleware_CleanupCancelRetainsStreamFailure models a real
+// failure followed by connection cleanup cancellation. HTTP and WebSocket
+// markers remain visible even without a captured terminal frame or upstream event.
+func TestOpsErrorLoggerMiddleware_CleanupCancelRetainsStreamFailure(t *testing.T) {
+	for _, websocket := range []bool{false, true} {
+		t.Run(fmt.Sprint(websocket), func(t *testing.T) {
+			setupOpsErrorLogTestQueue(t, 2)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			router := gin.New()
+			router.Use(opsLoggerFixture(newOpsServiceFixture(nil, nil)))
+			router.POST("/v1/responses", func(c *gin.Context) {
+				if websocket {
+					SetOpenAIClientTransport(c, OpenAIClientTransportWS)
+					BeginOpsStreamTurn(c, 1)
+					c.Status(http.StatusSwitchingProtocols)
+				} else {
+					c.Status(http.StatusOK)
+				}
+				c.Writer.WriteHeaderNow()
+				MarkOpsStreamFailure(c, "upstream_error", "upstream_ws_read_error", "Upstream connection lost", http.StatusBadGateway)
+				cancel()
+			})
+			router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx))
+			require.Equal(t, int64(1), OpsErrorLogQueueLength())
+			entry := (<-opsErrorLogQueue).entry
+			assert.Equal(t, http.StatusBadGateway, entry.StatusCode)
+			assert.Equal(t, "Upstream connection lost", entry.ErrorMessage)
+			assert.Contains(t, entry.ErrorBody, "upstream_ws_read_error")
+			assert.False(t, entry.IsBusinessLimited)
+		})
+	}
+}
+
+// TestOpsErrorLoggerMiddleware_StreamTurnsKeepIndependentOrigins reuses one
+// WebSocket context for local transport, provider HTTP, and local execution
+// failures. Each retained turn keeps its own origin after final cleanup cancellation.
+func TestOpsErrorLoggerMiddleware_StreamTurnsKeepIndependentOrigins(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx = telemetry.WithRequestCapture(ctx, telemetry.RequestRecord{
+		State: "running", Attempts: []telemetry.RequestAttempt{{Number: 1, ProviderID: 31, Status: http.StatusOK}},
+	}, func(telemetry.RequestRecord) {})
+	router := gin.New()
+	router.Use(opsLoggerFixture(newOpsServiceFixture(nil, nil)))
+	router.POST("/v1/responses", func(c *gin.Context) {
+		SetOpenAIClientTransport(c, OpenAIClientTransportWS)
+		c.Status(http.StatusSwitchingProtocols)
+		c.Writer.WriteHeaderNow()
+		BeginOpsStreamTurn(c, 1)
+		c.Set(opsLocalForwardFailureKey, "network")
+		MarkOpsStreamFailure(c, "upstream_error", "upstream_stream_read_error", "transport interrupted", http.StatusBadGateway)
+		BeginOpsStreamTurn(c, 2)
+		require.Empty(t, c.GetString(opsLocalForwardFailureKey))
+		SetOpsUpstreamError(c, http.StatusTooManyRequests, "provider rate limit", "")
+		AppendOpsUpstreamError(c, opscore.OpsUpstreamErrorEvent{
+			ProviderID: 31, Kind: "http_error", UpstreamStatusCode: http.StatusTooManyRequests, Message: "provider rate limit",
+		})
+		MarkOpsStreamFailure(c, "rate_limit_error", "rate_limit_exceeded", "provider rate limit", http.StatusTooManyRequests)
+		BeginOpsStreamTurn(c, 3)
+		c.Set(opsLocalForwardFailureKey, "internal")
+		MarkOpsStreamFailure(c, "upstream_error", "local_conversion_failed", "local conversion failed", http.StatusBadGateway)
+		cancel()
+	})
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx))
+	require.Equal(t, int64(3), OpsErrorLogQueueLength())
+	first := (<-opsErrorLogQueue).entry
+	second := (<-opsErrorLogQueue).entry
+	third := (<-opsErrorLogQueue).entry
+	assert.Equal(t, "network", first.ErrorPhase)
+	assert.Equal(t, "gateway", first.ErrorSource)
+	require.NotNil(t, first.UpstreamStatusCode)
+	assert.Equal(t, http.StatusOK, *first.UpstreamStatusCode)
+	assert.Equal(t, "upstream", second.ErrorPhase)
+	assert.Equal(t, "upstream_http", second.ErrorSource)
+	require.NotNil(t, second.UpstreamStatusCode)
+	assert.Equal(t, http.StatusTooManyRequests, *second.UpstreamStatusCode)
+	assert.Equal(t, "internal", third.ErrorPhase)
+	assert.Equal(t, "gateway", third.ErrorSource)
+	assert.Nil(t, third.UpstreamStatusCode)
+	assert.Nil(t, third.UpstreamErrorMessage)
+}
+
+// TestOpsErrorLoggerMiddleware_LocalFailureDoesNotBorrowPreviousStatus ends a
+// retry sequence before another dispatch starts. The local failure has no
+// upstream status, while the earlier response stays in attempt history.
+func TestOpsErrorLoggerMiddleware_LocalFailureDoesNotBorrowPreviousStatus(t *testing.T) {
+	for _, previousStatus := range []int{http.StatusOK, http.StatusTooManyRequests} {
+		t.Run(fmt.Sprint(previousStatus), func(t *testing.T) {
+			setupOpsErrorLogTestQueue(t, 2)
+			var observed telemetry.RequestRecord
+			ctx := telemetry.WithRequestCapture(context.Background(), telemetry.RequestRecord{
+				State: "running", Attempts: []telemetry.RequestAttempt{{Number: 1, ProviderID: 31, Status: previousStatus}},
+			}, func(record telemetry.RequestRecord) { observed = record })
+			router := gin.New()
+			router.Use(opsLoggerFixture(newOpsServiceFixture(nil, nil)))
+			router.POST("/v1/responses", func(c *gin.Context) {
+				c.Set(OpsProviderIDKey, int64(31))
+				AppendOpsUpstreamError(c, opscore.OpsUpstreamErrorEvent{
+					ProviderID: 31, Kind: "retry", UpstreamStatusCode: previousStatus, Message: "earlier attempt",
+				}, telemetry.RequestAttemptRef{Number: 1, ProviderID: 31})
+				require.True(t, DefaultOpenAIErrorOutput().EnsureResponse(c, false, errors.New("request encoding failed")))
+			})
+			router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx))
+			require.Equal(t, int64(1), OpsErrorLogQueueLength())
+			entry := (<-opsErrorLogQueue).entry
+			assert.Equal(t, "internal", entry.ErrorPhase)
+			assert.Equal(t, "gateway", entry.ErrorSource)
+			assert.Nil(t, entry.UpstreamStatusCode)
+			assert.Nil(t, entry.UpstreamErrorMessage)
+			assert.Contains(t, *entry.UpstreamErrorsJSON, "earlier attempt")
+			assert.Equal(t, previousStatus, observed.Attempts[0].Status)
+		})
+	}
+}
+
+// TestOpsErrorLoggerMiddleware_CommittedRawTruncation retains the raw reader's
+// transport cause after meaningful output. Capturing the failure must keep the
+// observed HTTP 200 without appending another client frame after commitment.
+func TestOpsErrorLoggerMiddleware_CommittedRawTruncation(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	ctx := telemetry.WithRequestCapture(context.Background(), telemetry.RequestRecord{
+		State: "running", Attempts: []telemetry.RequestAttempt{{Number: 1, ProviderID: 31, Status: http.StatusOK}},
+	}, func(telemetry.RequestRecord) {})
+	router := gin.New()
+	router.Use(opsLoggerFixture(newOpsServiceFixture(nil, nil)))
+	output := "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		c.Set(OpsProviderIDKey, int64(31))
+		SetOpsRequestContext(c, "fixture", true)
+		c.Header("Content-Type", "text/event-stream")
+		_, err := c.Writer.WriteString(output)
+		require.NoError(t, err)
+		MarkResponseCommitted(c)
+		cause := errors.New("connection reset by peer")
+		provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{ID: 31, Platform: "openai"}}
+		RecordOpenAIRawTruncation(c, provider, "fixture-id", cause, "http_error")
+		require.False(t, DefaultOpenAIErrorOutput().EnsureResponse(c, true, openai.NewUpstreamStreamReadError(cause)))
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx))
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	entry := (<-opsErrorLogQueue).entry
+	assert.Equal(t, "network", entry.ErrorPhase)
+	assert.Equal(t, "gateway", entry.ErrorSource)
+	assert.Equal(t, http.StatusBadGateway, entry.StatusCode)
+	require.NotNil(t, entry.UpstreamStatusCode)
+	assert.Equal(t, http.StatusOK, *entry.UpstreamStatusCode)
+	assert.Equal(t, output, recorder.Body.String())
+}
+
+// TestOpsErrorLoggerMiddleware_ProviderTerminalPrecedesReadFailure records a
+// provider terminal error before reader shutdown fails. The delivered provider
+// error keeps its source and message instead of becoming a local transport error.
+func TestOpsErrorLoggerMiddleware_ProviderTerminalPrecedesReadFailure(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	router := gin.New()
+	router.Use(opsLoggerFixture(newOpsServiceFixture(nil, nil)))
+	router.POST("/v1/responses", func(c *gin.Context) {
+		AppendOpsUpstreamError(c, opscore.OpsUpstreamErrorEvent{
+			ProviderID: 31, Kind: "http_error", UpstreamStatusCode: http.StatusTooManyRequests, Message: "provider rate limit",
+		})
+		_, err := c.Writer.WriteString(": connected\n\n")
+		require.NoError(t, err)
+		DefaultOpenAIErrorOutput().StreamError(c, http.StatusTooManyRequests, "rate_limit_error", "provider rate limit", true)
+		require.False(t, DefaultOpenAIErrorOutput().EnsureResponse(c, true, openai.NewUpstreamStreamReadError(io.ErrUnexpectedEOF)))
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	entry := (<-opsErrorLogQueue).entry
+	assert.Equal(t, "upstream", entry.ErrorPhase)
+	assert.Equal(t, "upstream_http", entry.ErrorSource)
+	assert.Equal(t, "provider rate limit", entry.ErrorMessage)
+	assert.NotContains(t, recorder.Body.String(), openai.OpenAIUpstreamStreamReadErrorCode)
+}
+
+// TestOpsErrorLoggerMiddleware_StatuslessRequestFailure preserves structured
+// transport evidence when a mapper returns only formatted error text. Direct
+// output and fallback both retain network ownership without inventing an HTTP response.
+func TestOpsErrorLoggerMiddleware_StatuslessRequestFailure(t *testing.T) {
+	for _, fallback := range []bool{false, true} {
+		t.Run(fmt.Sprint(fallback), func(t *testing.T) {
+			setupOpsErrorLogTestQueue(t, 2)
+			ctx := telemetry.WithRequestCapture(context.Background(), telemetry.RequestRecord{
+				State: "running", Attempts: []telemetry.RequestAttempt{{Number: 1, ProviderID: 31, Status: http.StatusTooManyRequests}, {Number: 2, ProviderID: 31}},
+			}, func(telemetry.RequestRecord) {})
+			router := gin.New()
+			router.Use(opsLoggerFixture(newOpsServiceFixture(nil, nil)))
+			router.POST("/v1/responses", func(c *gin.Context) {
+				c.Set(OpsProviderIDKey, int64(31))
+				AppendOpsUpstreamError(c, opscore.OpsUpstreamErrorEvent{
+					ProviderID: 31, Kind: "http_error", UpstreamStatusCode: http.StatusTooManyRequests, Message: "earlier provider rejection",
+				}, telemetry.RequestAttemptRef{Number: 1, ProviderID: 31})
+				AppendOpsUpstreamError(c, opscore.OpsUpstreamErrorEvent{
+					ProviderID: 31, Kind: "request_error", Message: "connection reset by peer",
+				}, telemetry.RequestAttemptRef{Number: 2, ProviderID: 31})
+				if fallback {
+					require.True(t, DefaultOpenAIErrorOutput().EnsureResponse(c, false, errors.New("gemini request failed: connection reset by peer")))
+				} else {
+					DefaultOpenAIErrorOutput().WriteError(c, http.StatusBadGateway, "upstream_error", "gemini request failed")
+				}
+			})
+			router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx))
+			require.Equal(t, int64(1), OpsErrorLogQueueLength())
+			entry := (<-opsErrorLogQueue).entry
+			assert.Equal(t, "network", entry.ErrorPhase)
+			assert.Equal(t, "gateway", entry.ErrorSource)
+			assert.Equal(t, "provider", entry.ErrorOwner)
+			assert.Nil(t, entry.UpstreamStatusCode)
+			assert.Contains(t, *entry.UpstreamErrorsJSON, "earlier provider rejection")
+		})
+	}
+}
+
+// TestOpsErrorLoggerMiddleware_BufferedReadFailoverOrigin exercises actual
+// buffered reading through exhausted failover. The transport failure retains
+// HTTP 200, while a later provider rejection replaces only final attribution.
+func TestOpsErrorLoggerMiddleware_BufferedReadFailoverOrigin(t *testing.T) {
+	for _, laterRejection := range []bool{false, true} {
+		t.Run(fmt.Sprint(laterRejection), func(t *testing.T) {
+			setupOpsErrorLogTestQueue(t, 2)
+			ctx := telemetry.WithRequestCapture(context.Background(), telemetry.RequestRecord{
+				State: "running", Attempts: []telemetry.RequestAttempt{{Number: 1, ProviderID: 31, Status: http.StatusOK}},
+			}, func(telemetry.RequestRecord) {})
+			router := gin.New()
+			router.Use(opsLoggerFixture(newOpsServiceFixture(nil, nil)))
+			router.POST("/v1/chat/completions", func(c *gin.Context) {
+				c.Set(OpsProviderIDKey, int64(31))
+				resp := &http.Response{
+					StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+					Body: &openAICompatBufferedReadErrorCloser{err: io.ErrUnexpectedEOF},
+				}
+				_, err := newResponsesFixture(responsesFixtureInputs{}).Output.ChatBuffered(
+					resp, c, &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 31, Platform: "openai"}},
+					"fixture", "fixture", "fixture", time.Now(),
+				)
+				var failure *forwardcore.UpstreamFailoverError
+				require.ErrorAs(t, err, &failure)
+				require.Empty(t, c.GetString(opsLocalForwardFailureKey))
+				if laterRejection {
+					AppendOpsUpstreamError(c, opscore.OpsUpstreamErrorEvent{
+						ProviderID: 31, Kind: "http_error", UpstreamStatusCode: http.StatusTooManyRequests, Message: "provider rate limit",
+					})
+					DefaultOpenAIErrorOutput().WriteError(c, http.StatusTooManyRequests, "rate_limit_error", "provider rate limit")
+					return
+				}
+				DefaultOpenAIErrorOutput().WriteFailoverExhausted(c, ProjectOpenAIFailoverError(failure), false, nil, FailoverErrorHooks{
+					Upstream: func(c *gin.Context, status int, message string) { SetOpsUpstreamError(c, status, message, "") },
+				})
+			})
+			router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx))
+			require.Equal(t, int64(1), OpsErrorLogQueueLength())
+			entry := (<-opsErrorLogQueue).entry
+			require.NotNil(t, entry.UpstreamStatusCode)
+			if laterRejection {
+				assert.Equal(t, "upstream", entry.ErrorPhase)
+				assert.Equal(t, "upstream_http", entry.ErrorSource)
+				assert.Equal(t, http.StatusTooManyRequests, *entry.UpstreamStatusCode)
+			} else {
+				assert.Equal(t, "network", entry.ErrorPhase)
+				assert.Equal(t, "gateway", entry.ErrorSource)
+				assert.Equal(t, http.StatusBadGateway, entry.StatusCode)
+				assert.Equal(t, http.StatusOK, *entry.UpstreamStatusCode)
+			}
+		})
+	}
 }
 
 // setupOpsErrorLogTestQueue installs isolated synchronous submission state for

@@ -3,7 +3,6 @@ package gemini
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -30,8 +29,9 @@ import (
 //
 // Policy matches stop before status retry, scope-rejected 403 responses are
 // rebuilt and returned, and 429 invokes caller observation before waiting.
-// Transport retries use the same attempt count and an uninterruptible backoff
-// sleep. Final transport failure returns the caller-mapped error, while final
+// Transport retries use the same attempt count and context-aware backoff.
+// Cancellation stops before another attempt and retains its error identity.
+// Final transport failure returns the caller-mapped error, while final
 // HTTP failure retains captured bytes for protocol error mapping.
 func ExchangeOpenAI(ctx context.Context, options ExchangeOptions) (ExchangeResult, error) {
 	requestIDHeader := options.RequestIDHeader
@@ -40,16 +40,33 @@ func ExchangeOpenAI(ctx context.Context, options ExchangeOptions) (ExchangeResul
 	// including after caller body replacement. Captured HTTP error bytes survive
 	// stream closing before another request or final error mapping.
 	for attempt := 1; attempt <= options.MaxRetries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return ExchangeResult{}, err
+		}
 		upstreamReq, idHeader, err := options.Build(ctx)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return ExchangeResult{}, err
+		// Credential or payload construction can finish after cancellation. Release
+		// its unsent body before stopping so transport never records another attempt.
+		if cancelErr := geminiCancellationError(ctx, err); cancelErr != nil {
+			if upstreamReq != nil && upstreamReq.Body != nil {
+				_ = upstreamReq.Body.Close()
 			}
+			return ExchangeResult{}, cancelErr
+		}
+		if err != nil {
 			return ExchangeResult{}, options.BuildError(err)
 		}
 		requestIDHeader = idHeader
 
 		resp, err = options.Do(upstreamReq)
+		// Stop canceled exchanges before diagnostics or fallback estimates. A
+		// successful transport transfers body ownership here even if cancellation
+		// arrived with its response; error/response pairs remain owned by Do.
+		if cancelErr := geminiCancellationError(ctx, err); cancelErr != nil {
+			if err == nil && resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			return ExchangeResult{}, cancelErr
+		}
 		if err != nil {
 			safeErr := options.Sanitize(err.Error())
 			options.Observe(ExchangeNotice{
@@ -65,7 +82,9 @@ func ExchangeOpenAI(ctx context.Context, options ExchangeOptions) (ExchangeResul
 			// dispatch loop.
 			if attempt < options.MaxRetries {
 				logger.LegacyPrintf("service.gemini_chat_completions", "Gemini provider %d: upstream request failed, retry %d/%d: %v", options.ProviderID, attempt, options.MaxRetries, err)
-				SleepGeminiBackoff(attempt)
+				if err := SleepGeminiBackoff(ctx, attempt); err != nil {
+					return ExchangeResult{}, err
+				}
 				continue
 			}
 			options.SetError(0, safeErr, "")
@@ -84,6 +103,9 @@ func ExchangeOpenAI(ctx context.Context, options ExchangeOptions) (ExchangeResul
 		if resp.StatusCode >= 400 && options.ShouldRetry(resp.StatusCode) {
 			respBody := options.ReadError(resp)
 			_ = resp.Body.Close()
+			if err := ctx.Err(); err != nil {
+				return ExchangeResult{}, err
+			}
 			// Rebuild the consumed scope-rejection body and return it because another
 			// retry with the same bearer permissions cannot resolve the authorization
 			// requirement.
@@ -120,7 +142,9 @@ func ExchangeOpenAI(ctx context.Context, options ExchangeOptions) (ExchangeResul
 					Message:            upstreamMsg,
 				})
 				logger.LegacyPrintf("service.gemini_chat_completions", "Gemini provider %d: upstream status %d, retry %d/%d", options.ProviderID, resp.StatusCode, attempt, options.MaxRetries)
-				SleepGeminiBackoff(attempt)
+				if err := SleepGeminiBackoff(ctx, attempt); err != nil {
+					return ExchangeResult{}, err
+				}
 				continue
 			}
 			// Reconstruct the final captured error body because classification consumed

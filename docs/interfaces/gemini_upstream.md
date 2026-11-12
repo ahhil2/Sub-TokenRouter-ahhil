@@ -39,6 +39,8 @@ Gemini SDK 和 CLI 使用 `/v1beta/models`、`/v1beta/models/{model}` 和 `{mode
 
 GenerateContent、StreamGenerateContent 和 CountTokens 的 POST 动作，受分组的 Gemini 协议开关控制；模型列表的 GET 不受影响。分组可以开放哪些入口，见[统一协议能力](protocol_capabilities.md#group_protocol_routes)。
 
+Messages、Chat 和 Responses 转换同时生成内置搜索和客户端函数声明时，请求携带 `toolConfig.includeServerSideToolInvocations=true`。判定使用转换后实际保留的工具；只有搜索、只有函数或被丢弃的无效函数声明不会触发该选项。AI Studio 的搜索字段归一化保留这一配置。
+
 Responses 转换是正式支持的分支：非流式和 SSE 共用 Gemini 的上游执行、重试和响应适配，保留模型、reasoning、工具调用、usage、结束原因和首 Token 指标。上游失败时，只有在客户端收到第一个字节之前才能换提供商；流开始后，按 Responses SSE 的规则结束，不会改写成普通 JSON，也不会换提供商。
 
 Messages、Chat 和 Responses 转换先按最终服务与模型解析能力，再发送 thinking 控制。Gemini 2.5 的预算型条目使用 `thinkingBudget`，档位型条目使用 `thinkingLevel`；两个字段互斥。客户端的关闭、effort 和预算来自转换前的请求，明确的零预算会保留。原生 GenerateContent 入口按同一采样规则处理 `generationConfig` 和 `generation_config`，以及 `topP` 和 `top_p`。`reasoning=true` 与可调选项分开判断：选项缺失时继续转发客户端控制，空集合表示没有可配置控制。参数集合与管理员覆盖见[统一模型属性](model_catalog_and_marketplace.md#model_attributes)。
@@ -68,6 +70,8 @@ Antigravity 提供商可以和 Gemini 提供商在同一个分组里参与调度
 ## 错误与诊断
 
 OAuth refresh、Service Account token、project 和 tier 发现、上游请求的错误分别记录。401 和 403 需要区分凭据、project 或 region、API 未启用，还是策略拒绝；429 解析 reset 时间并更新限流；网络错误和 5xx 只在响应还没开始时才换提供商。
+
+提供商内的传输错误、429、5xx 和签名恢复重试都使用请求 context 控制退避。请求取消或自身截止时，等待立即结束，后续尝试停止，并把取消错误交给请求完成流程；`countTokens` 也不会将取消转为本地估算成功。请求 context 仍有效时，上游独立超时继续按上游失败处理。
 
 Gemini 原生入口返回 Google 格式的错误，Anthropic 和 OpenAI 入口返回对应客户端的格式。最终错误可以应用[网关错误响应策略](gateway_error_policy.md)，但 project、service account JSON、token、API key 和上游的内部响应，默认都不透传。排查问题时，核对 OAuth 变体、project、location 和 tier、最终的模型、thought 和 session 状态、配额 reset 时间和 attempt 链。
 

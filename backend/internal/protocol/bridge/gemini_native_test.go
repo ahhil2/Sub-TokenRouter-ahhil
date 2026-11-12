@@ -1,12 +1,15 @@
 package bridge
 
 import (
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-// Native tool conversion groups accepted client functions and retains a
+// gemini_native_test.go checks native request assembly, grouped client
+// functions, and built-in search configuration. Native conversion retains a
 // separate typed search declaration. Schema fixtures check recursive key
 // removal, type normalization, scalar enum spelling and representable integer
 // minimum conversion, keeping their asserted cases distinct from general
@@ -374,4 +377,63 @@ func TestConvertClaudeToolsToGeminiTools_PreservesWebSearchAlongsideFunctions(t 
 	googleSearch, ok := searchDecl["googleSearch"].(map[string]any)
 	require.True(t, ok)
 	require.Empty(t, googleSearch)
+}
+
+// TestNativeConvertClaudeMessagesMixedToolConfiguration converts complete
+// Messages requests through native assembly and AI Studio normalization. It
+// checks the required mixed-tool flag and verifies single-kind requests leave
+// that option absent after accepted declarations have been selected.
+func TestNativeConvertClaudeMessagesMixedToolConfiguration(t *testing.T) {
+	cases := []struct {
+		name          string // request scenario label
+		tools         string // client tool JSON
+		mixed         bool   // expected mixed-tool flag
+		functionCount int    // accepted function declarations
+		search        bool   // accepted built-in search
+	}{
+		{name: "functions and typed search", tools: `[{"name":"lookup","input_schema":{"type":"object"}},{"type":"web_search_20250305","name":"web_search"}]`, mixed: true, functionCount: 1, search: true},
+		{name: "custom function and search", tools: `[{"type":"custom","name":"lookup","custom":{"input_schema":{"type":"object"}}},{"type":"google_search","name":"search"}]`, mixed: true, functionCount: 1, search: true},
+		{name: "search before function", tools: `[{"type":"web_search_20250305","name":"search"},{"name":"lookup","input_schema":{"type":"object"}}]`, mixed: true, functionCount: 1, search: true},
+		{name: "functions only", tools: `[{"name":"lookup","input_schema":{"type":"object"}}]`, functionCount: 1},
+		{name: "function named web_search", tools: `[{"name":"web_search","input_schema":{"type":"object"}}]`, functionCount: 1},
+		{name: "search only", tools: `[{"type":"web_search_20250305","name":"web_search"}]`, search: true},
+		{name: "search and rejected custom function", tools: `[{"type":"web_search_20250305","name":"web_search"},{"type":"custom","name":"lookup"}]`, search: true},
+		{name: "empty tools", tools: `[]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(fmt.Sprintf(`{"messages":[{"role":"user","content":"fixture"}],"max_tokens":64,"tools":%s}`, tc.tools))
+			converted, err := NativeConvertClaudeMessagesToGeminiGenerateContent(NativeGeminiOptions{}, body)
+			require.NoError(t, err)
+			for _, aiStudio := range []bool{false, true} {
+				candidate := converted
+				searchKey := "googleSearch"
+				if aiStudio {
+					candidate = NativeNormalizeGeminiRequestForAIStudio(candidate)
+					searchKey = "google_search"
+				}
+				var request map[string]any
+				require.NoError(t, json.Unmarshal(candidate, &request))
+				if tc.mixed {
+					require.Equal(t, map[string]any{"includeServerSideToolInvocations": true}, request["toolConfig"])
+				} else {
+					require.NotContains(t, request, "toolConfig")
+				}
+				functions := 0
+				hasSearch := false
+				tools, _ := request["tools"].([]any)
+				for _, raw := range tools {
+					tool := raw.(map[string]any)
+					declarations, _ := tool["functionDeclarations"].([]any)
+					functions += len(declarations)
+					_, found := tool[searchKey]
+					hasSearch = hasSearch || found
+				}
+				require.Equal(t, tc.functionCount, functions)
+				require.Equal(t, tc.search, hasSearch)
+				require.Equal(t, map[string]any{"maxOutputTokens": float64(64)}, request["generationConfig"])
+				require.Equal(t, []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "fixture"}}}}, request["contents"])
+			}
+		})
+	}
 }

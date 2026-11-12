@@ -3,13 +3,16 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
 // openai_error_fallback.go decides whether forwarding failures still need
@@ -26,6 +29,15 @@ import (
 // separate communication predicate uses byte differences, a cyber marker and
 // recognized error prefixes as evidence; it infers prior delivery from those
 // observations rather than decoding the existing body.
+// Locally generated terminal output carries its failure phase separately from
+// upstream observations, so capturing that output cannot invent an upstream
+// HTTP rejection. Request cancellation ends presentation before another error
+// frame or provider failure can be inferred from the closed connection.
+
+// opsLocalForwardFailureKey identifies the origin of a synthesized forwarding
+// error. Ops capture uses its internal/network phase without replacing actual
+// upstream response evidence with the synthesized downstream status.
+const opsLocalForwardFailureKey = "ops_local_forward_failure"
 
 // EnsureResponse attempts a protocol failure response when the current writer
 // still needs one. A nil context or writer returns false. Both heartbeat
@@ -39,8 +51,9 @@ import (
 // supplies a request error and valid upstream status. Client-tool failures use
 // request-error output, and model-attribute failures retain their structured
 // status and reason; remaining errors receive the
-// generic 502 message. True reports attempted presentation,
-// not successful network delivery.
+// generic 502 message. Stream-read failures keep their stable transport code,
+// and canceled requests retain committed status or select 499 before output.
+// True reports attempted presentation, not successful network delivery.
 func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, err error) bool {
 	if c == nil || c.Writer == nil {
 		return false
@@ -53,6 +66,28 @@ func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, er
 	}
 	imageKeepalivePresent := OpenAIImagesJSONKeepalivePresent(c)
 	StopOpenAIImagesJSONKeepaliveCommitted(c)
+	if FailoverClientGone(c) {
+		return false
+	}
+	streamCode, streamMessage, streamReadFailure := openai.OpenAIUpstreamStreamReadErrorDetails(err)
+	if !streamReadFailure && err != nil && strings.HasPrefix(err.Error(), "stream read error: ") {
+		// Legacy readers retain their read cause through this wrapper. Keep the
+		// same typed classification available before committed output suppresses another error frame.
+		streamCode, streamMessage = openai.ClassifyUpstreamStreamReadError(err)
+		streamReadFailure = true
+	}
+	if streamReadFailure {
+		// A delivered terminal error retains its original provider evidence when
+		// a later reader shutdown also reports a transport interruption.
+		if previous, ok := GetOpsStreamError(c); ok &&
+			(GetOpenAIClientTransport(c) != OpenAIClientTransportWS || previous.Turn == c.GetInt(OpsStreamTurnKey)) {
+			return false
+		}
+		c.Set(opsLocalForwardFailureKey, "network")
+		if c.Writer.Written() {
+			MarkOpsStreamFailure(c, "upstream_error", streamCode, streamMessage, http.StatusBadGateway)
+		}
+	}
 	imageKeepalivePaddingOnly := false
 	imageKeepaliveResponseWritten := false
 	if imageKeepalivePresent {
@@ -77,19 +112,44 @@ func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, er
 	errType := "upstream_error"
 	message := "Upstream request failed"
 	status := http.StatusBadGateway
+	code := ""
+	localPhase := "internal"
 	if warning, ok := forwardcore.WarningFromError(err); ok && gatewayprovider.IsOpenAICyberWarningPayload(warning.ResponseBody, warning.Message) {
+		localPhase = ""
 		errType = "invalid_request_error"
 		message = gatewayprovider.ExtractOpenAICyberWarningMessage(warning.ResponseBody, warning.Message)
 		if warning.StatusCode >= 400 && warning.StatusCode <= 599 {
 			status = warning.StatusCode
 		}
+	} else if streamReadFailure {
+		code, message, localPhase = streamCode, streamMessage, "network"
+	} else if err != nil {
+		// A terminal transport mapper can retain its cause as text after recording
+		// a statusless request_error. Match that observation before assigning local ownership.
+		if value, ok := c.Get(OpsUpstreamErrorsKey); ok {
+			if events, ok := value.([]*ops.OpsUpstreamErrorEvent); ok {
+				for _, event := range slices.Backward(events) {
+					if event == nil {
+						continue
+					}
+					if event.Kind == "request_error" && event.UpstreamStatusCode == 0 &&
+						event.Message != "" && strings.HasSuffix(err.Error(), event.Message) {
+						localPhase = "network"
+					}
+					break
+				}
+			}
+		}
+	}
+	if localPhase != "" {
+		c.Set(opsLocalForwardFailureKey, localPhase)
 	}
 	// Any written SSE response needs an in-stream error, while image whitespace
 	// keeps JSON usable because padding alone contributes no completed response object.
 	if c.Writer.Written() && !imageKeepalivePaddingOnly {
 		streamStarted = true
 	}
-	h.StreamError(c, status, errType, message, streamStarted)
+	h.WriteStreamingErrorWithCode(c, status, errType, code, message, streamStarted, code != "")
 	return true
 }
 

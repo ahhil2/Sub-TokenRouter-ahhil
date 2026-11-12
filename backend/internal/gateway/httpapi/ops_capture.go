@@ -48,6 +48,9 @@ import (
 // attempt can replace stale top-level error fields. Queue implementations can
 // retain and prepare mutable entries, so submitters stop changing the captured
 // input afterward.
+// Locally synthesized forwarding errors retain their internal or network
+// source. Their downstream status cannot replace an observed upstream HTTP
+// status, and earlier upstream error events remain available as attempt history.
 
 // These keys identify request model, stream and provider observations, while
 // matching strings and capture budgets support final error extraction and filtering.
@@ -1099,6 +1102,8 @@ func (state *opsCaptureWriterState) shouldCapture() bool {
 // their wire status as diagnostics; marked stream failures use their own
 // severity/SLA rules. Metadata is captured synchronously before Enqueue, whose
 // implementation can retain and prepare the mutable entry after submission.
+// Cancellation retains its request outcome, and synthesized local errors use
+// observed attempt HTTP status independently of the downstream logical status.
 func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, access OpsObservationAccess) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		originalWriter := c.Writer
@@ -1118,13 +1123,11 @@ func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, a
 		if terminal, ok := w.capturedTerminalError(); ok {
 			captured = terminal
 		}
-		// Mark request failure telemetry from terminal evidence before monitoring and
-		// ingress filters, so filtering an Ops entry does not erase request outcome
-		// observation.
-		if captured.StreamFailure {
+		// Mark connected-request failure before monitoring filters, while retaining
+		// cancellation already observed independently of any attempted terminal frame.
+		if captured.StreamFailure && c.Request.Context().Err() == nil {
 			telemetry.UpdateRequest(c.Request.Context(), func(record *telemetry.RequestRecord) {
 				record.State = "failed"
-				record.ErrorCode = "stream_error"
 				record.ErrorCode = "stream_error"
 			})
 		}
@@ -1143,6 +1146,14 @@ func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, a
 		}
 
 		status := c.Writer.Status()
+		// Cancellation before any terminal error leaves no provider failure to
+		// infer. Retained stream markers still describe real failures observed
+		// before cleanup canceled the context.
+		if c.Request.Context().Err() != nil && !captured.StreamFailure && len(GetOpsStreamErrors(c)) == 0 &&
+			(status < http.StatusBadRequest || status == StatusClientClosedRequest) {
+			logOpsRecoveredUpstream(c, ops, status, queue, access)
+			return
+		}
 		body := w.capturedBytes()
 		parsed := parseOpsErrorResponse(body)
 		if !parsed.StreamFailure {
@@ -1274,17 +1285,18 @@ func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, a
 		}
 		applyOpsLatencyFieldsFromContext(c, entry)
 		applyOpsUpstreamFieldsFromContext(c, entry)
-		// Terminal failure details replace previous attempt status and message after
-		// context attribution, preventing an earlier recovered error from becoming
-		// this final stream summary.
-		if parsed.StreamFailure {
-			if message := strings.TrimSpace(parsed.Message); message != "" {
-				entry.UpstreamErrorMessage = &message
+		localFailure := c.GetString(opsLocalForwardFailureKey) != ""
+		if parsed.StreamFailure || localFailure || phase == "network" {
+			if parsed.StreamFailure && !localFailure && phase != "network" {
+				if message := strings.TrimSpace(parsed.Message); message != "" {
+					entry.UpstreamErrorMessage = &message
+				}
+				if status >= http.StatusBadRequest {
+					finalStatus := status
+					entry.UpstreamStatusCode = &finalStatus
+				}
 			}
-			if status >= 400 {
-				finalStatus := status
-				entry.UpstreamStatusCode = &finalStatus
-			}
+			applyOpsObservedUpstreamStatus(c, entry)
 		}
 		suppressOpsUpstreamAttributionForLocalModelConfiguration(c, entry)
 
@@ -1313,18 +1325,24 @@ func OpsErrorLoggerMiddleware(ops *opscore.OpsService, queue OpsErrorLogQueue, a
 	}
 }
 
-// logOpsRecoveredUpstream queues visible upstream diagnostics while retaining a
-// successful final wire status. Missing context/service or an error final
-// status is ignored. Hidden attempt events are filtered before choosing the
-// last remaining event for attribution.
+// logOpsRecoveredUpstream queues visible upstream diagnostics after success or
+// client cancellation. Missing context/service or other error final status is
+// ignored. Hidden attempt events are filtered before choosing the last
+// remaining event for attribution.
 //
 // A final provider-auth event changes the diagnostic phase, while usage_invalid
 // receives its own missing-usage message. No remaining upstream evidence
 // produces no entry. Request and Key metadata are captured before submission,
 // so successful client delivery stays separate from prior attempt health
 // evidence and cannot become an SLA failure merely because a retry was needed.
+// Canceled requests retain their committed status or 499 and exclude the
+// cancellation from SLA while keeping earlier upstream evidence queryable.
 func logOpsRecoveredUpstream(c *gin.Context, ops *opscore.OpsService, finalStatus int, queue OpsErrorLogQueue, access OpsObservationAccess) {
-	if c == nil || ops == nil || finalStatus >= 400 {
+	if c == nil || ops == nil {
+		return
+	}
+	canceled := c.Request != nil && c.Request.Context().Err() != nil
+	if finalStatus >= http.StatusBadRequest && !(canceled && finalStatus == StatusClientClosedRequest) {
 		return
 	}
 
@@ -1396,6 +1414,13 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *opscore.OpsService, finalStatu
 	}
 	if lastKind != "usage_invalid" && entry.UpstreamErrorMessage != nil && strings.TrimSpace(*entry.UpstreamErrorMessage) != "" {
 		entry.ErrorMessage += ": " + strings.TrimSpace(*entry.UpstreamErrorMessage)
+	}
+	if canceled {
+		entry.ErrorPhase, entry.ErrorType = "request", "api_error"
+		entry.ErrorOwner, entry.ErrorSource = "client", "client_request"
+		entry.IsBusinessLimited = true
+		entry.Severity = "P3"
+		entry.ErrorMessage = "Client canceled after an upstream attempt"
 	}
 	// Bound recovered summary bytes independently of the retained attempt list,
 	// keeping the diagnostic message within its persistence limit.
@@ -1484,8 +1509,8 @@ func logOpsStreamError(c *gin.Context, ops *opscore.OpsService, wireStatus int, 
 // positive; wire status supplies the fallback. Ordinary errors retain wire
 // status, while SLA failures can record their intended error status.
 //
-// Current context supplies request metadata, then a positive captured turn
-// replaces provider/upstream fields with its snapshot. This prevents later
+// Current context supplies request metadata, while a positive captured turn
+// supplies its local origin and upstream fields for classification. This prevents later
 // WebSocket state from rewriting the failure's attempt attribution. Key
 // identity and client IP are captured before enqueue, and the queued entry
 // remains mutable input owned by queue preparation after submission. A missing
@@ -1510,7 +1535,18 @@ func logOpsStreamErrorValue(c *gin.Context, ops *opscore.OpsService, wireStatus 
 		classifyStatus = wireStatus
 	}
 	normalizedType := opscore.NormalizeErrorType(streamErr.ErrType, streamErr.Code, streamErr.Message)
-	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, normalizedType, streamErr.Message, streamErr.Code, classifyStatus)
+	classificationContext := c
+	if streamErr.Turn > 0 {
+		// Classification reads captured origin and upstream evidence from this turn.
+		// Copying the context keeps later live turn state intact during error logging.
+		classificationContext = c.Copy()
+		classificationContext.Set(opsLocalForwardFailureKey, streamErr.LocalForwardPhase)
+		classificationContext.Set(OpsUpstreamStatusCodeKey, streamErr.UpstreamStatus)
+		classificationContext.Set(OpsUpstreamErrorMessageKey, streamErr.UpstreamMessage)
+		classificationContext.Set(OpsUpstreamErrorDetailKey, streamErr.UpstreamDetail)
+		classificationContext.Set(OpsUpstreamErrorsKey, streamErr.UpstreamErrors)
+	}
+	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(classificationContext, normalizedType, streamErr.Message, streamErr.Code, classifyStatus)
 	recordedStatus := wireStatus
 	if streamErr.CountTowardsSLA && streamErr.IntendedStatus >= 400 {
 		recordedStatus = streamErr.IntendedStatus
@@ -1617,6 +1653,8 @@ func logOpsStreamErrorValue(c *gin.Context, ops *opscore.OpsService, wireStatus 
 	// connection end.
 	if streamErr.Turn > 0 {
 		applyOpsStreamErrorSnapshot(entry, streamErr)
+	} else if c.GetString(opsLocalForwardFailureKey) != "" || phase == "network" {
+		applyOpsObservedUpstreamStatus(c, entry)
 	}
 
 	if apiKey != nil {
@@ -1645,8 +1683,9 @@ func logOpsStreamErrorValue(c *gin.Context, ops *opscore.OpsService, wireStatus 
 // replaces its ID, while absent snapshot status/message/detail clears those
 // optional upstream fields.
 //
-// The last nonnil event determines provider-auth precedence; other positive
-// status or event-list evidence marks upstream provider ownership. The event
+// Captured local origin or transport evidence selects internal/network ownership.
+// Otherwise the last nonnil event determines provider-auth precedence, and
+// positive status or event-list evidence marks upstream provider ownership. The event
 // slice is retained by reference until queue preparation serializes it.
 // Snapshot model text is trimmed and replaces current context attribution,
 // keeping later turn observations from filling missing evidence in this earlier
@@ -1684,7 +1723,14 @@ func applyOpsStreamErrorSnapshot(entry *opscore.OpsInsertErrorLogInput, streamEr
 			break
 		}
 	}
-	if lastStage == opscore.ErrorPhaseProviderAuth {
+	if streamErr.LocalForwardPhase != "" || opsUpstreamTransportFailure(streamErr.UpstreamErrors) {
+		entry.ErrorPhase, entry.ErrorOwner = "internal", "platform"
+		if streamErr.LocalForwardPhase == "network" || streamErr.LocalForwardPhase == "" && opsUpstreamTransportFailure(streamErr.UpstreamErrors) {
+			entry.ErrorPhase, entry.ErrorOwner = "network", "provider"
+		}
+		entry.ErrorSource = "gateway"
+		entry.IsBusinessLimited = false
+	} else if lastStage == opscore.ErrorPhaseProviderAuth {
 		entry.ErrorPhase = opscore.ErrorPhaseProviderAuth
 		entry.ErrorOwner = "provider"
 		entry.ErrorSource = "gateway"
@@ -1794,6 +1840,40 @@ func applyOpsUpstreamFieldsFromContext(c *gin.Context, entry *opscore.OpsInsertE
 			applyOpsUpstreamErrorEvents(entry, events)
 		}
 	}
+}
+
+// applyOpsObservedUpstreamStatus separates observed HTTP from terminal error
+// presentation. Local internal failures have no bound exchange, so their
+// upstream summary is cleared while attempt history stays available. Stream
+// and transport failures can use the latest dispatched attempt's HTTP status.
+//
+// The request capture is sampled under its existing lock. Provider mismatch
+// leaves the summary unassigned instead of borrowing another provider's
+// exchange; a missing status remains unknown for locally generated failures.
+func applyOpsObservedUpstreamStatus(c *gin.Context, entry *opscore.OpsInsertErrorLogInput) {
+	localPhase := c.GetString(opsLocalForwardFailureKey)
+	if localPhase != "" {
+		entry.UpstreamStatusCode = nil
+		entry.UpstreamErrorMessage = nil
+		entry.UpstreamErrorDetail = nil
+	}
+	if localPhase == "internal" || c.Request == nil {
+		return
+	}
+	// Error presentation can follow successful headers. Sample the last dispatch
+	// under the recorder lock without changing its HTTP status or lifecycle outcome.
+	telemetry.UpdateRequest(c.Request.Context(), func(record *telemetry.RequestRecord) {
+		for _, attempt := range slices.Backward(record.Attempts) {
+			if attempt.Number <= 0 {
+				continue
+			}
+			if (entry.ProviderID == nil || attempt.ProviderID == *entry.ProviderID) && attempt.Status > 0 {
+				status := attempt.Status
+				entry.UpstreamStatusCode = &status
+			}
+			break
+		}
+	})
 }
 
 // applyOpsUpstreamErrorEvents retains the supplied event list and selects its
@@ -2300,7 +2380,23 @@ func resolveOpsPlatform(_ *apikey.APIKey, actual string) string {
 // restriction and upstream context evidence. Request markers distinguish
 // routing/model configuration from actual provider-auth or inference failures;
 // the Ops classifier owns precedence among those supplied observations.
+// Local forwarding presentation supplies its own internal or network phase,
+// because earlier provider observations cannot establish that error's source.
 func classifyOpsErrorLog(c *gin.Context, errType, message, code string, status int) (phase string, isBusinessLimited bool, errorOwner string, errorSource string) {
+	localPhase := ""
+	transportFailure := false
+	if c != nil {
+		localPhase = c.GetString(opsLocalForwardFailureKey)
+		// A current local cause takes precedence over history. Otherwise the last
+		// structured observation distinguishes transport failure from an upstream HTTP rejection.
+		if localPhase == "" {
+			if value, ok := c.Get(OpsUpstreamErrorsKey); ok {
+				if events, ok := value.([]*opscore.OpsUpstreamErrorEvent); ok {
+					transportFailure = opsUpstreamTransportFailure(events)
+				}
+			}
+		}
+	}
 	return opscore.ClassifyRequestError(opscore.ErrorClassificationInput{
 		Type: errType, Message: message, Code: code, Status: status,
 		RoutingCapacityLimited:       isOpsRoutingCapacityLimited(c),
@@ -2309,7 +2405,21 @@ func classifyOpsErrorLog(c *gin.Context, errType, message, code string, status i
 		UpstreamError:                hasOpsUpstreamErrorContext(c),
 		UpstreamClientInvalidRequest: isOpsUpstreamClientInvalidRequest(c, errType, code, status),
 		ProviderAuthFailure:          hasOpsProviderAuthFailure(c),
+		LocalForwardFailure:          localPhase == "internal" || localPhase == "network",
+		UpstreamTransportFailure:     localPhase == "network" || transportFailure,
 	})
+}
+
+// opsUpstreamTransportFailure reports whether the latest structured event
+// describes a transport failure. Earlier transport events cannot classify a
+// later provider rejection, and nil observations do not replace usable evidence.
+func opsUpstreamTransportFailure(events []*opscore.OpsUpstreamErrorEvent) bool {
+	for _, event := range slices.Backward(events) {
+		if event != nil {
+			return event.Stage == "network" || event.Kind == "request_error" && event.UpstreamStatusCode == 0
+		}
+	}
+	return false
 }
 
 // isOpsUpstreamClientInvalidRequest recognizes the property-name-length

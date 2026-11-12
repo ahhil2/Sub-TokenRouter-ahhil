@@ -68,6 +68,11 @@ type openAIWSIdlePingUnsupportedConn struct {
 	openAIWSFakeConn
 }
 
+// openAIWSReaderDependentDialer returns one fixture transport for prewarm checks.
+type openAIWSReaderDependentDialer struct {
+	conn *openAIWSIdlePingUnsupportedConn // supplied reader-dependent test socket
+}
+
 // openAIWSBlockingConn delays reads under context while permitting immediate
 // writes and ping.
 type openAIWSBlockingConn struct {
@@ -3472,4 +3477,70 @@ func TestOpenAIWSConnPoolHeadersFactoryRunsAtDialAndStalePrewarmIsDiscarded(t *t
 	ap.mu.Lock()
 	require.Empty(t, ap.conns)
 	ap.mu.Unlock()
+}
+
+// TestPoolReaderDependentTransportDisablesSpeculativePrewarm acquires an idle
+// transport that needs a reader for health checks. Its successful lease keeps
+// the configured idle floor from creating unused handshake-only sockets.
+func TestPoolReaderDependentTransportDisablesSpeculativePrewarm(t *testing.T) {
+	pool, req := newWSReuseTestPool(4, 4)
+	defer pool.Close()
+	cfg := *pool.nativeOptions()
+	cfg.MinIdlePerProvider = 4
+	require.NoError(t, pool.UpdateOptions(cfg))
+	ap := pool.getOrCreateProviderPool(req.Provider.ID)
+	conn := NewWSConn("reader-dependent", req.Provider.ID, &openAIWSIdlePingUnsupportedConn{}, nil, nil, "")
+	conn.compatibility = wsCompatibilityForRequest(req)
+	ap.conns[conn.id] = conn
+	lease, err := pool.Acquire(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, lease.Reused())
+	lease.Release()
+	pool.prewarmWG.Wait()
+	state, ok := pool.SnapshotProviderState(req.Provider.ID)
+	require.True(t, ok)
+	require.Equal(t, 1, state.Connections)
+	require.Zero(t, pool.clientDialer.(*openAIWSCountingDialer).DialCount())
+	ap.mu.Lock()
+	disabled, creating := ap.prewarmDisabled, ap.creating
+	ap.mu.Unlock()
+	require.True(t, disabled)
+	require.Zero(t, creating)
+}
+
+// Dial supplies the configured reader-dependent socket and successful handshake.
+// The fixture caller owns the connection and checks that rejected speculative
+// results are closed before the batch returns.
+func (d *openAIWSReaderDependentDialer) Dial(context.Context, string, http.Header, string, *tlsfingerprint.Profile) (openai.WSClientConn, int, http.Header, error) {
+	return d.conn, http.StatusSwitchingProtocols, nil, nil
+}
+
+// TestPoolPrewarmRejectsReaderDependentDialResult discovers a reader requirement
+// after a speculative dial has started. The batch closes its result, returns
+// every reservation, and disables further speculative work for that target.
+func TestPoolPrewarmRejectsReaderDependentDialResult(t *testing.T) {
+	pool, req := newWSReuseTestPool(4, 4)
+	defer pool.Close()
+	cfg := *pool.nativeOptions()
+	cfg.MinIdlePerProvider = 4
+	require.NoError(t, pool.UpdateOptions(cfg))
+	conn := &openAIWSIdlePingUnsupportedConn{}
+	pool.SetClientDialerForTest(&openAIWSReaderDependentDialer{conn: conn})
+	ap := pool.getOrCreateProviderPool(req.Provider.ID)
+	ap.lastAcquire = CloneWSAcquireRequestPtr(&req)
+	ap.prewarmActive = true
+	ap.creating = 4
+	pool.prewarmConns(req.Provider.ID, req, 4)
+	conn.mu.Lock()
+	closed := conn.closed
+	conn.mu.Unlock()
+	require.True(t, closed)
+	ap.mu.Lock()
+	connections, creating := len(ap.conns), ap.creating
+	active, disabled := ap.prewarmActive, ap.prewarmDisabled
+	ap.mu.Unlock()
+	require.Zero(t, connections)
+	require.Zero(t, creating)
+	require.False(t, active)
+	require.True(t, disabled)
 }

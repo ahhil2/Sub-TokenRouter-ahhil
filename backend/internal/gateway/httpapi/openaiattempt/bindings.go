@@ -245,8 +245,6 @@ type openAIExecutionDependencies struct {
 	ensureAnthropicErrorResponse func(c *gin.Context, streamStarted bool) bool
 	// missing OpenAI error supplier
 	ensureOpenAIForwardErrorResponse func(c *gin.Context, streamStarted bool, err error) bool
-	// classified stream-read error supplier
-	ensureOpenAIStreamReadErrorResponse func(c *gin.Context, err error, streamStarted bool) bool
 	// Messages terminal recovery writer
 	handleAnthropicFailoverExhausted func(c *gin.Context, failoverErr *forwardcore.UpstreamFailoverError, streamStarted bool)
 	// OpenAI terminal recovery writer
@@ -299,7 +297,6 @@ func New(b Bindings) *Runtime {
 		updateCodexUsageSnapshotFromHeaders:                     b.Selection.UpdateCodexUsageSnapshotFromHeaders,
 		acquireResponsesProviderSlot:                            support.AcquireResponsesProviderSlot,
 		ensureAnthropicErrorResponse:                            support.EnsureAnthropicErrorResponse,
-		ensureOpenAIStreamReadErrorResponse:                     support.EnsureOpenAIStreamReadErrorResponse,
 		handleAnthropicFailoverExhausted:                        support.HandleAnthropicFailoverExhausted,
 		handleFailoverExhausted:                                 support.HandleFailoverExhausted,
 		handleFailoverExhaustedSimple:                           support.HandleFailoverExhaustedSimple,

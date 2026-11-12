@@ -19,7 +19,9 @@ import (
 // provider-owned but gateway-sourced, while an upstream HTTP error is
 // provider-owned and upstream-sourced. Severity first respects selected client
 // types, then uses status thresholds, keeping these reporting dimensions
-// distinct.
+// distinct. Local forwarding failure evidence takes precedence over earlier
+// provider observations, distinguishing internal execution and transport
+// interruptions from an upstream HTTP error response.
 
 // Error classification uses persisted phase labels, exact local error codes,
 // and lowercased message fragments to distinguish client policy limits from
@@ -87,6 +89,12 @@ type ErrorClassificationInput struct {
 	// UpstreamClientInvalidRequest: provider-reported invalid request condition.
 	// ProviderAuthFailure: observed provider credential failure.
 	UpstreamError, UpstreamClientInvalidRequest, ProviderAuthFailure bool
+	// LocalForwardFailure identifies a terminal error synthesized from a local
+	// execution failure. UpstreamTransportFailure selects network attribution for
+	// a local read failure or a current structured transport event; earlier
+	// upstream events retain their own history.
+	LocalForwardFailure      bool // synthesized forwarding failure
+	UpstreamTransportFailure bool // observed transport read failure
 }
 
 // isKnownOpsErrorType reports whether t exactly matches a recognized stored
@@ -232,10 +240,11 @@ func ClassifySeverity(errType string, status int) string {
 }
 
 // ClassifyRequestError returns phase, business-limit exclusion, owner, and
-// source from response metadata and gateway facts. LocalModelConfiguration
-// takes effect with ClientBusinessLimited and selects routing;
-// RoutingCapacityLimited ultimately forces routing and exclusion regardless of
-// other observations.
+// source from response metadata and gateway facts. Local forwarding or current
+// transport evidence selects internal/network before historical provider
+// observations. Otherwise LocalModelConfiguration takes effect with
+// ClientBusinessLimited and selects routing, while RoutingCapacityLimited
+// forces routing and exclusion over remaining observations.
 //
 // Otherwise the initial override order is provider authentication, upstream
 // client-invalid request, then broad upstream error. A client-business marker
@@ -246,6 +255,13 @@ func ClassifySeverity(errType string, status int) string {
 // provider credential failures retain provider ownership with gateway source.
 func ClassifyRequestError(input ErrorClassificationInput) (phase string, isBusinessLimited bool, errorOwner string, errorSource string) {
 	errType, message, code, status := input.Type, input.Message, input.Code, input.Status
+	if input.LocalForwardFailure || input.UpstreamTransportFailure {
+		phase = "internal"
+		if input.UpstreamTransportFailure {
+			phase = "network"
+		}
+		return phase, false, classifyOpsErrorOwner(phase, message), classifyOpsErrorSource(phase, message)
+	}
 	phase = classifyOpsPhase(errType, message, code)
 	routingCapacityLimited := input.RoutingCapacityLimited
 	clientBusinessLimited := input.ClientBusinessLimited

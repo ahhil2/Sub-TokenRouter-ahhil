@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -21,11 +22,66 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// Compatible text entries can dispatch through Chat or Responses independently
+// support_test.go verifies shared attempt diagnostics and cancellation across
+// compatible text entries that dispatch through Chat or Responses independently
 // of their inbound URL. The fixtures check result/context/default endpoint
 // precedence, request cancellation and explicit post-write recovery permission,
 // and proxy observations that expose selected connection metadata without
 // credential fields.
+
+// TestOtherFailureCanceledSkipsProviderFeedback ends requests before or after
+// downstream commitment. Each text protocol returns before invoking any bound
+// provider feedback, warning, or fallback dependency, preserving the selected
+// wire status and emitting one informational cancellation observation.
+func TestOtherFailureCanceledSkipsProviderFeedback(t *testing.T) {
+	for _, protocol := range []string{"chat", "responses", "messages"} {
+		for _, committed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%t", protocol, committed), func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+				if committed {
+					c.Status(http.StatusOK)
+					_, err := c.Writer.WriteString(": connected\n\n")
+					require.NoError(t, err)
+				}
+				core, logs := observer.New(zap.InfoLevel)
+				base := responsesAttemptBridge{
+					c: c, reqLog: zap.New(core), streamStarted: &committed,
+					provider: &gatewayprovider.ExecutionProvider{Record: providercore.Record{ID: 31}},
+				}
+				cancel()
+				// Unbound execution callbacks fail if cancellation reaches provider
+				// feedback or output, so successful return proves those side effects were bypassed.
+				require.NotPanics(t, func() {
+					err := fmt.Errorf("stream read error: %w", context.Canceled)
+					switch protocol {
+					case "chat":
+						bridge := openAIChatAttemptBridge{responsesAttemptBridge: base}
+						bridge.OtherFailure(err)
+					case "responses":
+						base.OtherFailure(err)
+						base.Failed()
+					case "messages":
+						bridge := openAIMessageAttemptBridge{responsesAttemptBridge: base}
+						bridge.OtherFailure(err)
+					}
+				})
+				wantStatus := gatewayhttp.StatusClientClosedRequest
+				if committed {
+					wantStatus = http.StatusOK
+				}
+				assert.Equal(t, wantStatus, c.Writer.Status())
+				assert.NotContains(t, recorder.Body.String(), "error")
+				require.Len(t, logs.All(), 1)
+				assert.Equal(t, zap.InfoLevel, logs.All()[0].Level)
+				assert.Contains(t, logs.All()[0].Message, "client_disconnected")
+			})
+		}
+	}
+}
 
 // TestResolveOpenAIUpstreamEndpointPrefersForwardResult varies inbound,
 // recorded, and returned endpoint evidence across providers. It checks the

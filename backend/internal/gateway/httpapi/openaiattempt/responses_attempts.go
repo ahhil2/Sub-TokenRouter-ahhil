@@ -484,9 +484,10 @@ func (b *responsesAttemptBridge) Switching(failure *textflow.AttemptFailure, swi
 	b.reqLog.Warn("openai.upstream_failover_switching", failoverSwitchFields...)
 }
 
-// OtherFailure presents local capability and client-tool errors before recording
-// any upstream failure feedback. For other errors it records Cyber warnings and
-// scheduling failure, then supplies missing Responses error output. It prefers
+// OtherFailure ends canceled requests and presents local capability and
+// client-tool errors before recording upstream failure feedback. Other errors
+// record Cyber warnings and scheduling failure before missing Responses output.
+// It prefers
 // warning evidence carried by the error chain; absent evidence sends the error
 // text to the warning recorder.
 //
@@ -496,6 +497,10 @@ func (b *responsesAttemptBridge) Switching(failure *textflow.AttemptFailure, swi
 // communicated error suppresses fallback. The selected output state is retained
 // for Failed to choose log severity.
 func (b *responsesAttemptBridge) OtherFailure(err error) {
+	if gatewayhttp.FailoverClientGone(b.c) {
+		b.reqLog.Info("openai.client_disconnected", zap.Error(err))
+		return
+	}
 	// Attribute admission and tool conversion can fail before transport. Present
 	// them once so rejected local input cannot reduce provider health scores.
 	_, toolInputError := errors.AsType[*bridge.ClientToolAdaptationError](err)
@@ -529,7 +534,12 @@ func (b *responsesAttemptBridge) OtherFailure(err error) {
 }
 
 // Failed logs the stored Responses forwarding failure at its selected severity.
+// Canceled requests were observed by their termination path and require no
+// additional failure log or attempted error response after client departure.
 func (b *responsesAttemptBridge) Failed() {
+	if gatewayhttp.FailoverClientGone(b.c) {
+		return
+	}
 	if gatewayhttp.ShouldLogOpenAIForwardFailureAsWarn(b.c, b.wroteFallback) {
 		b.reqLog.Warn("openai.forward_failed", b.fields...)
 		return

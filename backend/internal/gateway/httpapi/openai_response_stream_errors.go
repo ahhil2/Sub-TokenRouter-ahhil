@@ -433,6 +433,8 @@ func (p *OpenAIResponseOutput) ApplyStreamFailurePolicy(
 // with optional bounded detail. Empty messages use a standard failure
 // description, missing provider uses OpenAI identity, and nil contexts skip
 // Ops publication while still returning the normalized message.
+// Locally classified transport failures supply a network stage for the event;
+// upstream response.failed payloads retain their ordinary provider origin.
 func (p *OpenAIResponseOutput) RecordStreamError(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -467,6 +469,9 @@ func (p *OpenAIResponseOutput) RecordStreamError(
 			Kind:               kind,
 			Message:            message,
 			Detail:             detail,
+		}
+		if c.GetString(opsLocalForwardFailureKey) == "network" {
+			event.Stage = "network"
 		}
 		if provider != nil {
 			event.Platform = provider.Record.Platform

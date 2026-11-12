@@ -14,25 +14,27 @@ import (
 // contains some tool-call context. Preliminary validation asks whether an
 // output and any nonblank call context exist; that decision can accept
 // unrelated context. Moving or rebuilding a continuation needs a stronger
-// comparison in which every output ID has call or reference evidence.
+// comparison in which every client output ID has call or reference evidence.
+// Hosted tool-search results describe server execution and have no client call
+// to answer, so only their explicit server mode is excluded from these checks.
 //
 // Decoded-map scans require actual string IDs, while raw byte scans use gjson
 // string forms and borrowed request storage. The full raw coverage scan
-// accepts an input array or one object and examines all outputs. Coarse scans
-// can stop early, so their missing-ID and reference flags describe the items
+// accepts an input array or one object and examines all client outputs. Coarse
+// scans can stop early, so their missing-ID and reference flags describe the items
 // inspected under their individual rules; callers retain continuation state or
 // reject recovery using the appropriate result.
 
 // ToolContinuationSignals records decoded-array observations used by WebSocket
 // continuation inference. FunctionCallOutput field names cover all four
-// recognized Codex output types, and their flags have independent evidence
-// rules.
+// recognized Codex output types except server-executed tool search; their
+// flags have independent evidence rules.
 type ToolContinuationSignals struct {
-	// HasFunctionCallOutput records any recognized output, while
+	// HasFunctionCallOutput records an output requiring client call context, while
 	// HasFunctionCallOutputMissingCallID marks an output with no nonblank string
 	// call ID. Those observations remain independent of reference coverage for
 	// other outputs.
-	HasFunctionCallOutput              bool // recognized output item observed
+	HasFunctionCallOutput              bool // client output item observed
 	HasFunctionCallOutputMissingCallID bool // observed output lacks string ID
 	// HasToolCallContext means some recognized call has a nonblank string
 	// call_id; that call can be unrelated to the output IDs.
@@ -47,14 +49,15 @@ type ToolContinuationSignals struct {
 	FunctionCallOutputCallIDs     []string // unique trimmed output call IDs
 }
 
-// FunctionCallOutputValidation records coarse output/context evidence for
-// preliminary HTTP-style gates. Its scanners can stop early and do not
-// establish identity coverage for every output.
+// FunctionCallOutputValidation records coarse client-output/context evidence
+// for preliminary HTTP-style gates. Server-executed search results do not
+// contribute output flags. Scanners can stop early and do not establish
+// identity coverage for every client output.
 type FunctionCallOutputValidation struct {
 	// HasFunctionCallOutput and HasToolCallContext can end preliminary scanning
 	// once both are observed. Context means a recognized call's nonblank ID, so this
 	// combination does not establish all-output matching.
-	HasFunctionCallOutput bool // recognized output item observed
+	HasFunctionCallOutput bool // client output item observed
 	HasToolCallContext    bool // nonblank call context observed
 	// HasFunctionCallOutputMissingCallID records inspected missing IDs. The raw
 	// scan can set it before finding context; map validation checks it only on
@@ -66,12 +69,13 @@ type FunctionCallOutputValidation struct {
 	HasItemReferenceForAllCallIDs bool // nonblank outputs fully referenced
 }
 
-// ToolCallOutputContextCoverage reports raw-input identity matching before
-// callers discard an upstream continuation chain.
+// ToolCallOutputContextCoverage reports raw-input client identity matching
+// before callers discard an upstream continuation chain. Server-executed search
+// results contribute neither output presence nor a client call-ID requirement.
 type ToolCallOutputContextCoverage struct {
-	HasFunctionCallOutput bool // recognized output item observed
-	// ContextCoversAllCallIDs requires an output and a nonblank call_id on every
-	// output. Each distinct trimmed ID must match a call-context call_id or
+	HasFunctionCallOutput bool // client output item observed
+	// ContextCoversAllCallIDs requires a client output and a nonblank call_id on
+	// every client output. Each trimmed ID must match a call-context call_id or
 	// literal item_reference id from the same input.
 	ContextCoversAllCallIDs bool // every observed output ID matched
 }
@@ -142,8 +146,9 @@ func NeedsToolContinuation(reqBody map[string]any) bool {
 
 // AnalyzeToolContinuationSignals scans a decoded []any input array for output,
 // context, and reference evidence. Unsupported request/item shapes produce no
-// observation, and ID fields must be actual strings. Output IDs are trimmed,
-// deduplicated, and returned in unspecified order.
+// observation, and ID fields must be actual strings. Explicit server-executed
+// tool-search results contribute no client output signals. Output IDs are
+// trimmed, deduplicated, and returned in unspecified order.
 //
 // Any call with a nonblank ID establishes context presence, even if unrelated
 // to an output. Reference coverage compares the unique nonblank output IDs
@@ -170,13 +175,14 @@ func AnalyzeToolContinuationSignals(reqBody map[string]any) ToolContinuationSign
 			continue
 		}
 		itemType, _ := itemMap["type"].(string)
+		execution, _ := itemMap["execution"].(string)
 		switch {
 		case IsCodexToolCallContextItemType(itemType):
 			callID, _ := itemMap["call_id"].(string)
 			if strings.TrimSpace(callID) != "" {
 				signals.HasToolCallContext = true
 			}
-		case IsCodexToolCallOutputItemType(itemType):
+		case requiresToolCallOutputContext(itemType, execution):
 			signals.HasFunctionCallOutput = true
 			callID, _ := itemMap["call_id"].(string)
 			callID = strings.TrimSpace(callID)
@@ -222,7 +228,8 @@ func AnalyzeToolContinuationSignals(reqBody map[string]any) ToolContinuationSign
 // ValidateFunctionCallOutputContextBytes collects coarse flags from a raw
 // input array using gjson string forms. Empty or unsupported containers
 // produce zero flags, and complete-document validation belongs to the caller.
-// Keep body bytes unchanged during the synchronous borrowed-view scan.
+// Server-executed search results are excluded from client output checks. Keep
+// body bytes unchanged during the synchronous borrowed-view scan.
 //
 // The scan can stop after observing an output and some nonblank call context.
 // Missing output IDs encountered before that stop remain recorded; later items
@@ -249,8 +256,9 @@ func ValidateFunctionCallOutputContextBytes(body []byte) FunctionCallOutputValid
 			return true
 		}
 		itemType := item.Get("type").String()
+		execution := item.Get("execution").String()
 		switch {
-		case IsCodexToolCallOutputItemType(itemType):
+		case requiresToolCallOutputContext(itemType, execution):
 			result.HasFunctionCallOutput = true
 			callID := strings.TrimSpace(item.Get("call_id").String())
 			if callID == "" {
@@ -293,11 +301,11 @@ func ValidateFunctionCallOutputContextBytes(body []byte) FunctionCallOutputValid
 	return result
 }
 
-// AnalyzeToolCallOutputContextCoverageBytes checks all recognized output IDs
+// AnalyzeToolCallOutputContextCoverageBytes checks all client output IDs
 // against call or reference IDs in a raw input array or single object. At
 // least one output is required, every output needs a nonblank gjson
 // string-form call ID, and each distinct ID must occur in the combined context
-// set.
+// set. Server-executed search results have no client call-ID requirement.
 //
 // The full scan ignores item order and accepts either call_id on a recognized
 // call or id on a literal item_reference. Missing IDs or one unmatched output
@@ -322,8 +330,9 @@ func AnalyzeToolCallOutputContextCoverageBytes(body []byte) ToolCallOutputContex
 			return
 		}
 		itemType := item.Get("type").String()
+		execution := item.Get("execution").String()
 		switch {
-		case IsCodexToolCallOutputItemType(itemType):
+		case requiresToolCallOutputContext(itemType, execution):
 			coverage.HasFunctionCallOutput = true
 			callID := strings.TrimSpace(item.Get("call_id").String())
 			if callID == "" {
@@ -378,7 +387,8 @@ func AnalyzeToolCallOutputContextCoverageBytes(body []byte) ToolCallOutputContex
 // ValidateFunctionCallOutputContext collects preliminary flags from a decoded
 // input array. Its first pass can return after finding any output plus any
 // nonblank call context, or after proving one category absent. Unsupported
-// shapes contribute no evidence.
+// shapes contribute no evidence. Explicit server-executed search results are
+// excluded from both passes because they do not answer client tool calls.
 //
 // Only output-bearing requests with no call context receive the second pass
 // for missing IDs and references. That pass requires string IDs and compares
@@ -402,8 +412,9 @@ func ValidateFunctionCallOutputContext(reqBody map[string]any) FunctionCallOutpu
 			continue
 		}
 		itemType, _ := itemMap["type"].(string)
+		execution, _ := itemMap["execution"].(string)
 		switch {
-		case IsCodexToolCallOutputItemType(itemType):
+		case requiresToolCallOutputContext(itemType, execution):
 			result.HasFunctionCallOutput = true
 		case IsCodexToolCallContextItemType(itemType):
 			callID, _ := itemMap["call_id"].(string)
@@ -430,8 +441,9 @@ func ValidateFunctionCallOutputContext(reqBody map[string]any) FunctionCallOutpu
 			continue
 		}
 		itemType, _ := itemMap["type"].(string)
+		execution, _ := itemMap["execution"].(string)
 		switch {
-		case IsCodexToolCallOutputItemType(itemType):
+		case requiresToolCallOutputContext(itemType, execution):
 			callID, _ := itemMap["call_id"].(string)
 			callID = strings.TrimSpace(callID)
 			if callID == "" {
@@ -464,9 +476,9 @@ func ValidateFunctionCallOutputContext(reqBody map[string]any) FunctionCallOutpu
 }
 
 // HasFunctionCallOutput delegates decoded-array signal collection and reports
-// any recognized Codex output type. Nil requests and unsupported input
-// containers return false; the result is presence evidence, independent of IDs
-// or matching context.
+// a Codex output requiring client call context. Explicit server-executed search
+// results, nil requests, and unsupported input containers produce false. The
+// result is presence evidence, independent of IDs or matching context.
 func HasFunctionCallOutput(reqBody map[string]any) bool {
 	return AnalyzeToolContinuationSignals(reqBody).HasFunctionCallOutput
 }
@@ -554,4 +566,16 @@ func HasToolChoiceSignal(reqBody map[string]any) bool {
 	default:
 		return false
 	}
+}
+
+// requiresToolCallOutputContext reports whether an output needs client call
+// identity checks. Only explicit server execution exempts tool-search results;
+// omitted, unknown, or differently spelled modes retain the existing checks.
+func requiresToolCallOutputContext(itemType, execution string) bool {
+	if !IsCodexToolCallOutputItemType(itemType) {
+		return false
+	}
+	// Hosted search returns a null call_id because the server performs discovery;
+	// treating that result as a client reply rejects valid mixed tool histories.
+	return strings.TrimSpace(itemType) != "tool_search_output" || execution != "server"
 }

@@ -135,7 +135,9 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		result.Duration = time.Since(started)
 		if failure != nil {
 			result.FailureClass = "upstream"
-			result.Cancelled = ctx.Err() != nil || errors.Is(failure, context.Canceled) || errors.Is(failure, context.DeadlineExceeded)
+			// A transport deadline can expire while the client remains connected.
+			// Parent context expiry and cancellation identity determine canceled requests.
+			result.Cancelled = ctx.Err() != nil || errors.Is(failure, context.Canceled)
 		}
 	}()
 	var exchange ExchangeResult

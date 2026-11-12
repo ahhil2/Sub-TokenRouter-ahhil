@@ -109,6 +109,9 @@ type OpsStreamError struct {
 	// marked. WebSocket logging uses this value even after another turn replaces
 	// live request rule state.
 	SkipMonitoring bool
+	// LocalForwardPhase retains the synthesized failure's origin for this turn.
+	// Later turn setup clears the live marker without changing this snapshot.
+	LocalForwardPhase string
 	// ProviderID, UpstreamModel, UpstreamStatus, UpstreamMessage and
 	// UpstreamDetail capture the selected execution evidence when marking this
 	// failure. Later turn updates replace live context values while these scalar
@@ -237,7 +240,7 @@ func OpsClientBusinessLimitedReason(c *gin.Context) string {
 // provider/model state remain available for their own owners.
 //
 // Callers serialize this setup before recording events for the new turn. It
-// resets the current skip flag, upstream events, status, message and detail
+// resets the current skip flag, local origin, upstream events, status, message and detail
 // through separate Gin writes; it does not publish an atomic multi-key
 // snapshot. Unique ordered turn numbers keep the following first-marker check
 // scoped to the last retained turn while previous failure snapshots survive for
@@ -250,6 +253,7 @@ func BeginOpsStreamTurn(c *gin.Context, turn int) {
 	// Reset current rule and upstream-error keys before this serial turn runs,
 	// retaining earlier failure snapshots and other attribution until their owners update it.
 	c.Set(OpsSkipPassthroughKey, false)
+	c.Set(opsLocalForwardFailureKey, "")
 	c.Set(OpsUpstreamErrorsKey, []*ops.OpsUpstreamErrorEvent{})
 	c.Set(OpsUpstreamStatusCodeKey, 0)
 	c.Set(OpsUpstreamErrorMessageKey, "")
@@ -345,7 +349,9 @@ func markOpsStreamError(c *gin.Context, streamErr OpsStreamError) {
 // snapshotOpsStreamErrorContext captures provider and upstream evidence in one
 // failure value. Nil context or destination is ignored. Positive telemetry
 // provider identity and the supported Gin status/string values supply the
-// scalar fields.
+// scalar fields. Local forwarding origin is captured with those observations;
+// transport failures retain observed attempt HTTP while internal failures have
+// no bound upstream summary.
 //
 // Each upstream event struct is copied into new pointer storage, retaining nil
 // entries and order. Those independent values keep the captured turn's attempt
@@ -356,6 +362,7 @@ func snapshotOpsStreamErrorContext(c *gin.Context, streamErr *OpsStreamError) {
 	if c == nil || streamErr == nil {
 		return
 	}
+	streamErr.LocalForwardPhase = c.GetString(opsLocalForwardFailureKey)
 	if c.Request != nil {
 		if providerID, ok := c.Request.Context().Value(telemetry.ProviderID).(int64); ok && providerID > 0 {
 			streamErr.ProviderID = providerID
@@ -395,6 +402,22 @@ func snapshotOpsStreamErrorContext(c *gin.Context, streamErr *OpsStreamError) {
 				copyOfEvent := *event
 				streamErr.UpstreamErrors = append(streamErr.UpstreamErrors, &copyOfEvent)
 			}
+		}
+	}
+	if streamErr.LocalForwardPhase != "" || opsUpstreamTransportFailure(streamErr.UpstreamErrors) {
+		// Snapshot the same observed HTTP used by ordinary capture before a later
+		// WebSocket turn replaces the request's latest dispatched attempt.
+		entry := &ops.OpsInsertErrorLogInput{}
+		if streamErr.ProviderID > 0 {
+			entry.ProviderID = &streamErr.ProviderID
+		}
+		applyOpsObservedUpstreamStatus(c, entry)
+		streamErr.UpstreamStatus = 0
+		if entry.UpstreamStatusCode != nil {
+			streamErr.UpstreamStatus = *entry.UpstreamStatusCode
+		}
+		if streamErr.LocalForwardPhase != "" {
+			streamErr.UpstreamMessage, streamErr.UpstreamDetail = "", ""
 		}
 	}
 }
@@ -491,8 +514,9 @@ func SetOpsUpstreamError(c *gin.Context, upstreamStatusCode int, upstreamMessage
 // later queue preparation.
 //
 // Request telemetry retains bounded attempt outcome and provider evidence
-// before the event pointer is published in Gin. Header observers own identifiers;
-// errors never replace them with their separately collected Ops values.
+// before the event pointer is published in Gin. Header observers own identifiers
+// and observed HTTP status; semantic stream failures only fill an absent status
+// from their separately collected Ops values.
 // The first optional dispatch reference identifies an HTTP response or captured
 // result even after another attempt starts; a conflicting provider is rejected.
 // Authentication failures without an upstream status remain unnumbered beside
@@ -562,7 +586,12 @@ func AppendOpsUpstreamError(c *gin.Context, ev ops.OpsUpstreamErrorEvent, dispat
 				if attempt.Number == number && attempt.ProviderID == ev.ProviderID && (number > 0 || attempt.RequestID == ev.UpstreamRequestID) {
 					// Headers already selected the diagnostic ID before this error event.
 					// Ops may carry another upstream header, so it cannot overwrite that identity.
-					attempt.Outcome, attempt.Status = outcome, ev.UpstreamStatusCode
+					attempt.Outcome = outcome
+					// A stream error can carry a logical 502 after HTTP 200 headers.
+					// Keep the observed response status while recording its failed outcome separately.
+					if attempt.Status == 0 {
+						attempt.Status = ev.UpstreamStatusCode
+					}
 					attempt.Stage, attempt.Reason = ev.Stage, ev.Reason
 					matched = true
 					break

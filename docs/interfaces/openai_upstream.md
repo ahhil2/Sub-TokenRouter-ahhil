@@ -208,6 +208,8 @@ Responses 历史 Chat 格式的转换、工具 ID 清理、平台 schema 选择�
 
 最少和最多空闲连接数均支持 0。最多空闲连接数设为 0 时，归还的有效连接先供兼容等待者领取，没有等待者时关闭。预热每次拨号前和结果入池前检查当前需求、总容量及空闲上限。超出新限制的结果立即关闭，未使用的建连名额归还连接池。
 
+只有支持在没有业务读循环时检查空闲连接的传输，才按空闲目标提前拨号。需要读循环处理 ping 和关闭帧的传输按需建连，避免预建连接在首个业务请求到来之前已经被上游关闭。拨号结果入池前也检查这一能力；不满足时关闭该连接并释放名额。已完成业务请求的连接仍按普通复用规则处理。
+
 客户端连接数量和消息读取上限作用于新连接，超时和恢复参数按下一轮快照执行，轮间超时在下一次等待时读取。每次获取连接的等待预算按当前轮次快照计算，排队期间的唤醒和参数更新都使用入队时的截止时间。会话记录 TTL 作用于新写入和续期，已有记录自然过期。正在生成的回答使用该轮已经取得的参数。
 
 WS 入口、逐轮执行适配和 HTTP 转换在 `gateway/ws/httpapi`，会话与恢复规则在 `gateway/ws`，连接池、握手和 relay 在 `upstream/openai/ws`。app 创建共享拨号器和参数读取器，并在关闭连接资源前停止设置刷新。公开 HTTP Responses 请求固定走 HTTP/SSE。
@@ -239,6 +241,8 @@ WebSocket 连接池在拨号和普通复用时优先选择路由提示相同的�
 
 普通请求在提供商池中等待，连接归还、建连完成或容量变化时重新选择兼容连接。强制续接的请求等待指定连接。提供商的排队总上限为有效连接上限乘以 `queue_limit_per_conn`，强制续接还受指定连接的排队上限限制。等待新目标连接的请求也计入队列和等待时长。取消、超时和关闭会释放排队名额，反复唤醒计为同一次排队。
 
+上游读写在客户端收到输出之前失败，且该轮允许重放时，最多重试一次，并要求连接池重新拨号，跳过其他空闲连接。已经写出下行内容、请求取消或超时，以及必须留在指定连接上的严格续接，都不使用这条恢复路径。重试沿用该轮的准入结果。
+
 等待者退出后，剩余空闲连接由池的后台清理任务回收。等待者取得租约时也使用这条回收路径，多余空闲连接的关闭握手和租约交付分别执行。清理通知合并保存，关闭握手使用底层独立的超时。租约交付前发生取消时，连接先归还并唤醒其他等待者，再通知后台清理。池关闭时先唤醒等待者，再等待清理任务完成。
 
 WS 的报文、模型字段恢复和 usage 解析在 `protocol/openai`；OpenAI 的恢复载荷和供应商错误分类由 `upstream/openai` 提供。传输方式由 egress 根据提供商资格决定；入站的会话 Header、关闭码和读循环的连接适配属于网关 HTTP 层，技术诊断在网关的 provider 里。
@@ -260,6 +264,10 @@ Responses Lite 由 HTTP 的 `X-OpenAI-Internal-Codex-Responses-Lite: true`，或
 OpenAI OAuth 提供商处理 Anthropic 的 `count_tokens` 时，调用 Responses 的 `input_tokens` 端点。缺少 scope、端点不存在，或者上游代理在 API 之前返回 HTML 格式的 `403` 时，网关改用本地的 token 估算并返回成功。这类端点级的失败不会冷却、临时踢出或标错提供商；其他结构化的鉴权和上游错误，按正常的健康策略处理。
 
 ### namespace 和工具 ID
+
+工具结果的关联检查区分客户端执行结果和服务端工具搜索历史。`tool_search_output` 明确带有 `execution: "server"` 时，`call_id` 可以为 null 或省略，不参与客户端调用 ID 的缺失检查和上下文覆盖计算。`execution` 为 `client`、缺省或其他值时，继续校验调用 ID；普通 `function_call_output`、`custom_tool_call_output` 和 `mcp_tool_call_output` 也需要调用关联。WebSocket 续接与跨供应商恢复所用的共享续接信号及上下文覆盖检查也遵循此规则。
+
+HTTP 入口仅在 `input` 包含 `function_call_output` 时执行这项预校验。请求带有非空 `previous_response_id` 或内联工具调用上下文时，由后续上游处理继续验证历史。其余独立客户端工具结果需要非空 `call_id`，以及覆盖各调用 ID 的 `item_reference`。错误响应使用 HTTP 400 和 `invalid_request_error`，分别说明缺失调用 ID 或上下文。服务端工具搜索结果不为其他客户端结果提供调用关联。
 
 OpenAI OAuth 和 API Key 的普通 Responses 请求保留 `function_call`、`tool_call`、`custom_tool_call`、`mcp_tool_call` 历史项上的 `namespace`。工具可以在顶层 `tools`、历史的 `additional_tools.tools` 或 `tool_search_output.tools` 中声明，也可以由上游会话保存；本轮省略声明不影响已经执行的调用身份。普通消息等非调用项上残留的这个字段会被清理，转义的 JSON 键名使用同一规则。旧版 Compact 的字段白名单、namespace 清理和 OAuth 工具平铺仍由对应端点规则决定。
 
@@ -356,6 +364,8 @@ API Key passthrough 的池模式，把命中 `pool_mode_retry_status_codes` 的 
 已经有实际输出，或者重试用完、不能再重放请求时，SSE 和 WS HTTP bridge 只在发给客户端的副本里，把这两个致命错误码改成可以重试的 `server_error`，原始事件仍用于提供商策略和观测。客户端还没收到业务输出时，池模式提供商的其他瞬时流内处理错误，也可以在请求级的预算内重试同一个提供商。旧版 Compact 桥接的心跳注释不算业务输出：即使已经提交了 200 响应头，只要没有语义上的 SSE 载荷，最终失败时仍要追加 `response.failed`。OpenAI Responses 的标准流和透传流，如果只收到前导事件，以及完全不含 output、usage、error 的 `response.completed` 或 `response.done`，在还没向客户端写出业务内容时，按静默拒绝换提供商，不会记成一次 0/0 的成功；终态带有 usage、error、任何输出项，或者之前已经出现过语义输出时，不触发这条规则。
 
 实际输出一旦开始，网关就不再重放请求或换提供商。最终的错误还可以命中[网关错误响应策略](gateway_error_policy.md)，但规则不会把失败结算成成功。排查问题时，同时检查提供商类型、需要的 transport 和 capability、客户端限制、privacy status、模型映射、配额重置时间、代理和 TLS，以及 attempt 记录。
+
+WebSocket 升级后的最终上游读写失败也写入当前轮次的 Ops 错误，即使 HTTP 状态已经是 101。已有错误事件与关闭异常共用本轮的首个失败标记，避免重复记录；正常关闭和客户端取消结束会话，不补记上游故障。
 
 相关文档：[网关请求生命周期](../architecture/gateway_request_lifecycle.md)、[提供商调度与缓存一致性](../architecture/provider_scheduling_and_cache.md)、[模型目录与市场](model_catalog_and_marketplace.md)。
 

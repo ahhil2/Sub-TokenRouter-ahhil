@@ -3,7 +3,6 @@ package gemini
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -22,10 +21,10 @@ import (
 // For an eligible 400, signature handling precedes general error policy and
 // reconstructs the consumed response body when recovery stops. Other statuses
 // apply policy before status-based retry selection. Retry waits use
-// SleepGeminiBackoff, so caller cancellation is observed by request
-// construction or transport rather than interrupting that sleep. Responses
-// selected for the caller retain the chosen request-ID header name beside
-// them.
+// SleepGeminiBackoff with the request context, so cancellation interrupts
+// waiting and stops subsequent request construction or transport attempts.
+// Responses selected for the caller retain the chosen request-ID header name
+// beside them.
 
 // ExchangeNotice identifies an upstream exchange observation and its selected
 // diagnostic fields.
@@ -120,6 +119,8 @@ type ExchangeResult struct {
 // early, and stop retrying recognized scope failures. A downgrade conversion
 // on the final attempt can leave the previously closed response selected when
 // the loop ends; later body handling then observes that selected response.
+// Cancellation interrupts every retry delay and returns its error identity
+// before another request is constructed or dispatched.
 func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeResult, error) {
 	requestIDHeader := options.RequestIDHeader
 	var resp *http.Response
@@ -128,16 +129,33 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 	// including after caller body replacement. Captured HTTP error bytes survive
 	// stream closing before another request or final error mapping.
 	for attempt := 1; attempt <= options.MaxRetries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return ExchangeResult{}, err
+		}
 		upstreamReq, idHeader, err := options.Build(ctx)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return ExchangeResult{}, err
+		// Credential or payload construction can finish after cancellation. Release
+		// its unsent body before stopping so transport never records another attempt.
+		if cancelErr := geminiCancellationError(ctx, err); cancelErr != nil {
+			if upstreamReq != nil && upstreamReq.Body != nil {
+				_ = upstreamReq.Body.Close()
 			}
+			return ExchangeResult{}, cancelErr
+		}
+		if err != nil {
 			return ExchangeResult{}, options.BuildError(err)
 		}
 		requestIDHeader = idHeader
 
 		resp, err = options.Do(upstreamReq)
+		// Stop canceled exchanges before diagnostics or fallback estimates. A
+		// successful transport transfers body ownership here even if cancellation
+		// arrived with its response; error/response pairs remain owned by Do.
+		if cancelErr := geminiCancellationError(ctx, err); cancelErr != nil {
+			if err == nil && resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			return ExchangeResult{}, cancelErr
+		}
 		if err != nil {
 			safeErr := options.Sanitize(err.Error())
 			options.Observe(ExchangeNotice{
@@ -153,7 +171,9 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 			// dispatch loop.
 			if attempt < options.MaxRetries {
 				logger.LegacyPrintf("service.gemini_messages_compat", "Gemini provider %d: upstream request failed, retry %d/%d: %v", options.ProviderID, attempt, options.MaxRetries, err)
-				SleepGeminiBackoff(attempt)
+				if err := SleepGeminiBackoff(ctx, attempt); err != nil {
+					return ExchangeResult{}, err
+				}
 				continue
 			}
 			options.SetError(0, safeErr, "")
@@ -166,6 +186,9 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 		if resp.StatusCode == http.StatusBadRequest && signatureRetryStage < 2 {
 			respBody := options.ReadError(resp)
 			_ = resp.Body.Close()
+			if err := ctx.Err(); err != nil {
+				return ExchangeResult{}, err
+			}
 
 			if IsGeminiSignatureRelatedError(respBody) {
 				upstreamReqID := resp.Header.Get(requestIDHeader)
@@ -216,8 +239,10 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 					options.ReplaceBody(retryGeminiReq)
 					// Publish the converted body for the next Build call and consume this
 					// attempt slot. The shared counter still limits signature and ordinary
-					// retries together.
-					SleepGeminiBackoff(1)
+					// retries together; cancellation stops before the replacement is dispatched.
+					if err := SleepGeminiBackoff(ctx, 1); err != nil {
+						return ExchangeResult{}, err
+					}
 					continue
 				}
 			}
@@ -244,6 +269,9 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 		if resp.StatusCode >= 400 && options.ShouldRetry(resp.StatusCode) {
 			respBody := options.ReadError(resp)
 			_ = resp.Body.Close()
+			if err := ctx.Err(); err != nil {
+				return ExchangeResult{}, err
+			}
 			// A scope-rejected 403 requires authorization changes. Rebuild its captured
 			// body and return it instead of spending another delay on the same
 			// credential scope.
@@ -283,7 +311,9 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 				})
 
 				logger.LegacyPrintf("service.gemini_messages_compat", "Gemini provider %d: upstream status %d, retry %d/%d", options.ProviderID, resp.StatusCode, attempt, options.MaxRetries)
-				SleepGeminiBackoff(attempt)
+				if err := SleepGeminiBackoff(ctx, attempt); err != nil {
+					return ExchangeResult{}, err
+				}
 				continue
 			}
 			// Return a readable copy after exhausting retries because the original
