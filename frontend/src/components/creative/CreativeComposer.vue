@@ -1,8 +1,5 @@
 <template>
-  <div
-    ref="rootRef"
-    class="composer-shell canvas-island relative w-[min(600px,calc(100vw-2rem))] max-w-full"
-  >
+  <div ref="rootRef" class="composer-shell canvas-island relative w-full min-w-0">
     <Collapse :open="statusLine !== null" unmount-on-hide>
       <div
         v-if="statusLine"
@@ -37,283 +34,339 @@
     <textarea
       ref="textareaRef"
       v-model="prompt"
-      rows="2"
-      class="composer-textarea block w-full resize-none bg-transparent px-4 pb-1.5 pt-3.5 text-sm leading-relaxed text-gray-900 outline-none placeholder:text-gray-400 dark:text-dark-50 dark:placeholder:text-dark-400"
+      rows="4"
+      class="composer-textarea block w-full resize-none bg-transparent px-5 pb-2 pt-4 text-base leading-relaxed text-gray-900 outline-none placeholder:text-gray-400 dark:text-dark-50 dark:placeholder:text-dark-400"
       :class="studio.busy.value && 'opacity-60'"
+      :readonly="promptExpansion.busy.value"
+      :aria-label="t('creative.panel.prompt')"
       :placeholder="t('creative.panel.promptPlaceholder')"
       @keydown="onKeydown"
     ></textarea>
 
-    <div class="flex items-center gap-1 px-2 pb-2">
-      <span class="relative min-w-0">
-        <button
-          type="button"
-          class="composer-chip"
-          :class="openPanel === 'model' && 'composer-chip-active'"
-          :title="t('creative.composer.model')"
-          :aria-expanded="openPanel === 'model'"
-          @click="togglePanel('model', $event)"
-        >
-          <ModelIcon
-            v-if="selectedModelName"
-            :model="selectedModelName"
-            size="14px"
-            class="flex-shrink-0"
-          />
-          <Icon v-else name="sparkles" size="sm" class="flex-shrink-0" />
-          <span class="max-w-32 truncate">{{ modelChipLabel }}</span>
-          <Icon
-            name="chevronDown"
-            size="xs"
-            class="flex-shrink-0 opacity-60 transition-transform"
-            :class="openPanel === 'model' && 'rotate-180'"
-            :animate-on-hover="false"
-          />
-        </button>
-        <MotionTransition name="pop-float">
-          <div v-if="openPanel === 'model'" class="chip-popover" :style="popoverStyle">
-            <div class="max-h-menu overflow-y-auto p-1.5">
-              <p
-                v-if="showModelsEmptyHint"
-                class="px-2.5 py-2 text-xs text-gray-500 dark:text-dark-400"
-              >
-                {{ modelsEmptyHintText }}
-              </p>
-              <button
-                v-for="option in studio.models.value"
-                :key="creativeOptionKey(option)"
-                type="button"
-                class="composer-option"
-                :class="
-                  studio.selectedOptionKey.value === creativeOptionKey(option) &&
-                  'composer-option-active'
-                "
-                @click="selectModel(option)"
-              >
-                <ModelIcon :model="option.model" size="16px" class="flex-shrink-0" />
-                <span class="min-w-0 flex-1">
-                  <span class="block truncate text-sm font-medium">{{ option.model }}</span>
-                  <span
-                    class="block truncate text-xs font-normal text-gray-400 dark:text-dark-400"
-                    >{{ option.group_name }}</span
-                  >
-                </span>
-                <Icon
-                  v-if="studio.selectedOptionKey.value === creativeOptionKey(option)"
-                  name="check"
-                  size="sm"
-                  class="flex-shrink-0"
-                  :animate-on-hover="false"
-                />
-              </button>
-            </div>
-          </div>
-        </MotionTransition>
-      </span>
+    <p
+      v-if="promptExpansion.error.value"
+      role="alert"
+      class="px-5 pb-2 text-sm text-red-600 dark:text-red-400"
+    >
+      {{ promptExpansion.error.value }}
+    </p>
 
-      <span class="relative min-w-0">
-        <button
-          type="button"
-          class="composer-chip"
-          :class="openPanel === 'params' && 'composer-chip-active'"
-          :title="t('creative.composer.params')"
-          :aria-expanded="openPanel === 'params'"
-          @click="togglePanel('params', $event)"
-        >
-          <Icon name="sliders" size="sm" class="flex-shrink-0" />
-          <span class="max-w-40 truncate tabular-nums">{{ paramsChipLabel }}</span>
-          <Icon
-            name="chevronDown"
-            size="xs"
-            class="flex-shrink-0 opacity-60 transition-transform"
-            :class="openPanel === 'params' && 'rotate-180'"
-            :animate-on-hover="false"
-          />
-        </button>
-        <MotionTransition name="pop-float">
-          <div v-if="openPanel === 'params'" class="chip-popover" :style="popoverStyle">
-            <div class="max-h-[min(70vh,32rem)] space-y-4 overflow-y-auto p-3">
-              <div
-                v-if="!studio.selectedOption.value"
-                class="text-xs text-gray-500 dark:text-dark-400"
-              >
-                {{ t('creative.composer.selectModelFirst') }}
-              </div>
-              <template v-for="group in leadingParamGroups" :key="group.key">
-                <div>
-                  <p class="param-label">{{ group.label }}</p>
-                  <SettingsSegmented
-                    v-if="group.options.length <= SEGMENTED_MAX_OPTIONS"
-                    :model-value="group.value"
-                    :options="group.options"
-                    :ariaLabel="group.label"
-                    block
-                    @update:model-value="(value) => selectParam(group, value)"
-                  />
-                  <div v-else class="flex flex-wrap gap-1.5">
-                    <button
-                      v-for="option in group.options"
-                      :key="option.value"
-                      type="button"
-                      class="param-chip"
-                      :class="group.value === option.value && 'param-chip-active'"
-                      @click="group.select(option.value)"
-                    >
-                      {{ option.label }}
-                    </button>
-                  </div>
-                </div>
-              </template>
-              <div v-if="studio.outputFormatOptions.value.length > 1">
-                <p class="param-label">{{ t('creative.panel.outputFormat') }}</p>
-                <SettingsSegmented
-                  v-model="studio.outputFormat.value"
-                  :options="
-                    studio.outputFormatOptions.value.map((value) => ({
-                      value,
-                      label: value.toUpperCase(),
-                    }))
-                  "
-                  :ariaLabel="t('creative.panel.outputFormat')"
-                  block
-                />
-              </div>
-              <div v-if="studio.outputFormat.value === 'gif'" class="grid grid-cols-2 gap-3">
-                <label class="param-label">
-                  {{ t('creative.panel.frameCount') }}
-                  <input
-                    v-model.number="studio.frameCount.value"
-                    type="number"
-                    class="input mt-1"
-                    :min="studio.selectedOption.value?.gif_frame_count?.min ?? 2"
-                    :max="studio.selectedOption.value?.gif_frame_count?.max ?? 16"
-                    step="1"
-                  />
-                </label>
-                <label class="param-label">
-                  {{ t('creative.panel.frameDuration') }}
-                  <input
-                    v-model.number="studio.frameDurationMS.value"
-                    type="number"
-                    class="input mt-1"
-                    :min="studio.selectedOption.value?.gif_frame_duration_ms?.min ?? 20"
-                    :max="studio.selectedOption.value?.gif_frame_duration_ms?.max ?? 2000"
-                    step="10"
-                  />
-                </label>
-              </div>
-              <div v-if="studio.aspectRatioOptions.value.length">
-                <p class="param-label">{{ t('creative.panel.aspectRatio') }}</p>
-                <div class="flex flex-wrap gap-1.5">
-                  <button
-                    v-for="ratio in studio.aspectRatioOptions.value"
-                    :key="ratio"
-                    type="button"
-                    class="param-chip"
-                    :class="studio.aspectRatio.value === ratio && 'param-chip-active'"
-                    @click="setAspectRatio(ratio)"
+    <div class="flex items-center gap-2 px-3 pb-3" data-testid="creative-composer-toolbar">
+      <div
+        class="composer-controls flex min-w-0 flex-1 items-center gap-2 overflow-x-auto"
+        @scroll="layoutPopover(panelAnchor)"
+      >
+        <span class="relative shrink-0">
+          <button
+            type="button"
+            class="composer-chip"
+            :class="openPanel === 'model' && 'composer-chip-active'"
+            :title="t('creative.composer.model')"
+            :aria-expanded="openPanel === 'model'"
+            @click="togglePanel('model', $event)"
+          >
+            <ModelIcon
+              v-if="selectedModelName"
+              :model="selectedModelName"
+              size="14px"
+              class="flex-shrink-0"
+            />
+            <Icon v-else name="sparkles" size="sm" class="flex-shrink-0" />
+            <span class="max-w-32 truncate">{{ modelChipLabel }}</span>
+            <Icon
+              name="chevronDown"
+              size="xs"
+              class="flex-shrink-0 opacity-60 transition-transform"
+              :class="openPanel === 'model' && 'rotate-180'"
+              :animate-on-hover="false"
+            />
+          </button>
+          <Teleport v-if="rootRef" :to="rootRef">
+            <MotionTransition name="pop-float">
+              <div v-if="openPanel === 'model'" class="chip-popover" :style="popoverStyle">
+                <div class="max-h-menu overflow-y-auto p-1.5">
+                  <p
+                    v-if="showModelsEmptyHint"
+                    class="px-2.5 py-2 text-xs text-gray-500 dark:text-dark-400"
                   >
+                    {{ modelsEmptyHintText }}
+                  </p>
+                  <button
+                    v-for="option in studio.models.value"
+                    :key="creativeOptionKey(option)"
+                    type="button"
+                    class="composer-option"
+                    :class="
+                      studio.selectedOptionKey.value === creativeOptionKey(option) &&
+                      'composer-option-active'
+                    "
+                    @click="selectModel(option)"
+                  >
+                    <ModelIcon :model="option.model" size="16px" class="flex-shrink-0" />
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate text-sm font-medium">{{ option.model }}</span>
+                      <span
+                        class="block truncate text-xs font-normal text-gray-400 dark:text-dark-400"
+                        >{{ option.group_name }}</span
+                      >
+                    </span>
                     <Icon
-                      v-if="ratio === 'auto'"
-                      name="sparkles"
-                      size="xs"
-                      class="opacity-70"
-                      aria-hidden="true"
+                      v-if="studio.selectedOptionKey.value === creativeOptionKey(option)"
+                      name="check"
+                      size="sm"
+                      class="flex-shrink-0"
+                      :animate-on-hover="false"
                     />
-                    <span v-else class="ratio-preview" :style="ratioPreviewStyle(ratio)"></span>
-                    {{ ratio === 'auto' ? t('creative.composer.autoRatio') : ratio }}
                   </button>
                 </div>
               </div>
-              <template v-for="group in trailingParamGroups" :key="group.key">
-                <div>
-                  <p class="param-label">{{ group.label }}</p>
-                  <SettingsSegmented
-                    v-if="group.options.length <= SEGMENTED_MAX_OPTIONS"
-                    :model-value="group.value"
-                    :options="group.options"
-                    :ariaLabel="group.label"
-                    block
-                    @update:model-value="(value) => selectParam(group, value)"
-                  />
-                  <div v-else class="flex flex-wrap gap-1.5">
-                    <button
-                      v-for="option in group.options"
-                      :key="option.value"
-                      type="button"
-                      class="param-chip"
-                      :class="group.value === option.value && 'param-chip-active'"
-                      @click="group.select(option.value)"
-                    >
-                      {{ option.label }}
-                    </button>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </div>
-        </MotionTransition>
-      </span>
+            </MotionTransition>
+          </Teleport>
+        </span>
 
-      <span class="relative min-w-0">
+        <span class="relative shrink-0">
+          <button
+            type="button"
+            class="composer-chip"
+            :class="openPanel === 'params' && 'composer-chip-active'"
+            :title="t('creative.composer.params')"
+            :aria-expanded="openPanel === 'params'"
+            @click="togglePanel('params', $event)"
+          >
+            <Icon name="sliders" size="sm" class="flex-shrink-0" />
+            <span class="max-w-40 truncate tabular-nums">{{ paramsChipLabel }}</span>
+            <Icon
+              name="chevronDown"
+              size="xs"
+              class="flex-shrink-0 opacity-60 transition-transform"
+              :class="openPanel === 'params' && 'rotate-180'"
+              :animate-on-hover="false"
+            />
+          </button>
+          <Teleport v-if="rootRef" :to="rootRef">
+            <MotionTransition name="pop-float">
+              <div v-if="openPanel === 'params'" class="chip-popover" :style="popoverStyle">
+                <div class="max-h-[min(70vh,32rem)] space-y-4 overflow-y-auto p-3">
+                  <div
+                    v-if="!studio.selectedOption.value"
+                    class="text-xs text-gray-500 dark:text-dark-400"
+                  >
+                    {{ t('creative.composer.selectModelFirst') }}
+                  </div>
+                  <template v-for="group in leadingParamGroups" :key="group.key">
+                    <div>
+                      <p class="param-label">{{ group.label }}</p>
+                      <SettingsSegmented
+                        v-if="group.options.length <= SEGMENTED_MAX_OPTIONS"
+                        :model-value="group.value"
+                        :options="group.options"
+                        :ariaLabel="group.label"
+                        block
+                        @update:model-value="(value) => selectParam(group, value)"
+                      />
+                      <div v-else class="flex flex-wrap gap-1.5">
+                        <button
+                          v-for="option in group.options"
+                          :key="option.value"
+                          type="button"
+                          class="param-chip"
+                          :class="group.value === option.value && 'param-chip-active'"
+                          @click="group.select(option.value)"
+                        >
+                          {{ option.label }}
+                        </button>
+                      </div>
+                    </div>
+                  </template>
+                  <div v-if="studio.outputFormatOptions.value.length > 1">
+                    <p class="param-label">{{ t('creative.panel.outputFormat') }}</p>
+                    <SettingsSegmented
+                      v-model="studio.outputFormat.value"
+                      :options="
+                        studio.outputFormatOptions.value.map((value) => ({
+                          value,
+                          label: value.toUpperCase(),
+                        }))
+                      "
+                      :ariaLabel="t('creative.panel.outputFormat')"
+                      block
+                    />
+                  </div>
+                  <div v-if="studio.outputFormat.value === 'gif'" class="grid grid-cols-2 gap-3">
+                    <label class="param-label">
+                      {{ t('creative.panel.frameCount') }}
+                      <input
+                        v-model.number="studio.frameCount.value"
+                        type="number"
+                        class="input mt-1"
+                        :min="studio.selectedOption.value?.gif_frame_count?.min ?? 2"
+                        :max="studio.selectedOption.value?.gif_frame_count?.max ?? 16"
+                        step="1"
+                      />
+                    </label>
+                    <label class="param-label">
+                      {{ t('creative.panel.frameDuration') }}
+                      <input
+                        v-model.number="studio.frameDurationMS.value"
+                        type="number"
+                        class="input mt-1"
+                        :min="studio.selectedOption.value?.gif_frame_duration_ms?.min ?? 20"
+                        :max="studio.selectedOption.value?.gif_frame_duration_ms?.max ?? 2000"
+                        step="10"
+                      />
+                    </label>
+                  </div>
+                  <div v-if="studio.aspectRatioOptions.value.length">
+                    <p class="param-label">{{ t('creative.panel.aspectRatio') }}</p>
+                    <div class="flex flex-wrap gap-1.5">
+                      <button
+                        v-for="ratio in studio.aspectRatioOptions.value"
+                        :key="ratio"
+                        type="button"
+                        class="param-chip"
+                        :class="studio.aspectRatio.value === ratio && 'param-chip-active'"
+                        @click="setAspectRatio(ratio)"
+                      >
+                        <Icon
+                          v-if="ratio === 'auto'"
+                          name="sparkles"
+                          size="xs"
+                          class="opacity-70"
+                          aria-hidden="true"
+                        />
+                        <span v-else class="ratio-preview" :style="ratioPreviewStyle(ratio)"></span>
+                        {{ ratio === 'auto' ? t('creative.composer.autoRatio') : ratio }}
+                      </button>
+                    </div>
+                  </div>
+                  <template v-for="group in trailingParamGroups" :key="group.key">
+                    <div>
+                      <p class="param-label">{{ group.label }}</p>
+                      <SettingsSegmented
+                        v-if="group.options.length <= SEGMENTED_MAX_OPTIONS"
+                        :model-value="group.value"
+                        :options="group.options"
+                        :ariaLabel="group.label"
+                        block
+                        @update:model-value="(value) => selectParam(group, value)"
+                      />
+                      <div v-else class="flex flex-wrap gap-1.5">
+                        <button
+                          v-for="option in group.options"
+                          :key="option.value"
+                          type="button"
+                          class="param-chip"
+                          :class="group.value === option.value && 'param-chip-active'"
+                          @click="group.select(option.value)"
+                        >
+                          {{ option.label }}
+                        </button>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </MotionTransition>
+          </Teleport>
+        </span>
+
+        <span class="relative shrink-0">
+          <button
+            type="button"
+            class="composer-chip"
+            :class="openPanel === 'operation' && 'composer-chip-active'"
+            :title="t('creative.composer.operation')"
+            :aria-expanded="openPanel === 'operation'"
+            @click="togglePanel('operation', $event)"
+          >
+            <Icon :name="OPERATION_ICONS[studio.operation.value]" size="sm" class="flex-shrink-0" />
+            <span class="max-w-24 truncate">{{ operationChipLabel }}</span>
+            <Icon
+              name="chevronDown"
+              size="xs"
+              class="flex-shrink-0 opacity-60 transition-transform"
+              :class="openPanel === 'operation' && 'rotate-180'"
+              :animate-on-hover="false"
+            />
+          </button>
+          <Teleport v-if="rootRef" :to="rootRef">
+            <MotionTransition name="pop-float">
+              <div v-if="openPanel === 'operation'" class="chip-popover" :style="popoverStyle">
+                <div class="p-1.5">
+                  <p
+                    v-if="!studio.operationOptions.value.length"
+                    class="px-2.5 py-2 text-xs text-gray-500 dark:text-dark-400"
+                  >
+                    {{ t('creative.composer.selectModelFirst') }}
+                  </p>
+                  <button
+                    v-for="op in studio.operationOptions.value"
+                    :key="op"
+                    type="button"
+                    class="composer-option"
+                    :class="studio.operation.value === op && 'composer-option-active'"
+                    @click="selectOperation(op)"
+                  >
+                    <Icon :name="OPERATION_ICONS[op]" size="sm" class="flex-shrink-0" />
+                    <span class="min-w-0 flex-1">
+                      <span class="block text-sm font-medium">{{
+                        t(`creative.operations.${op}`, op)
+                      }}</span>
+                      <span class="block text-xs font-normal text-gray-400 dark:text-dark-400">{{
+                        t(`creative.operationsDesc.${op}`)
+                      }}</span>
+                    </span>
+                    <Icon
+                      v-if="studio.operation.value === op"
+                      name="check"
+                      size="sm"
+                      class="flex-shrink-0"
+                      :animate-on-hover="false"
+                    />
+                  </button>
+                </div>
+              </div>
+            </MotionTransition>
+          </Teleport>
+        </span>
+
         <button
           type="button"
-          class="composer-chip"
-          :class="openPanel === 'operation' && 'composer-chip-active'"
-          :title="t('creative.composer.operation')"
-          :aria-expanded="openPanel === 'operation'"
-          @click="togglePanel('operation', $event)"
+          class="composer-prompt-action"
+          data-testid="creative-prompt-expand"
+          :disabled="!promptExpansion.canExpand.value || studio.busy.value"
+          :title="
+            studio.capabilities.value.prompt_expansion_enabled
+              ? t('creative.prompt.price')
+              : t('creative.prompt.unconfigured')
+          "
+          @click="promptExpansion.expand"
         >
-          <Icon :name="OPERATION_ICONS[studio.operation.value]" size="sm" class="flex-shrink-0" />
-          <span class="max-w-24 truncate">{{ operationChipLabel }}</span>
           <Icon
-            name="chevronDown"
-            size="xs"
-            class="flex-shrink-0 opacity-60 transition-transform"
-            :class="openPanel === 'operation' && 'rotate-180'"
+            :name="promptExpansion.busy.value ? 'loader' : 'sparkles'"
+            size="sm"
+            :class="promptExpansion.busy.value && 'animate-spin'"
             :animate-on-hover="false"
           />
+          {{
+            t(promptExpansion.busy.value ? 'creative.prompt.expanding' : 'creative.prompt.expand')
+          }}
+          <span class="text-xs tabular-nums">￥0.015</span>
         </button>
-        <MotionTransition name="pop-float">
-          <div v-if="openPanel === 'operation'" class="chip-popover" :style="popoverStyle">
-            <div class="p-1.5">
-              <p
-                v-if="!studio.operationOptions.value.length"
-                class="px-2.5 py-2 text-xs text-gray-500 dark:text-dark-400"
-              >
-                {{ t('creative.composer.selectModelFirst') }}
-              </p>
-              <button
-                v-for="op in studio.operationOptions.value"
-                :key="op"
-                type="button"
-                class="composer-option"
-                :class="studio.operation.value === op && 'composer-option-active'"
-                @click="selectOperation(op)"
-              >
-                <Icon :name="OPERATION_ICONS[op]" size="sm" class="flex-shrink-0" />
-                <span class="min-w-0 flex-1">
-                  <span class="block text-sm font-medium">{{
-                    t(`creative.operations.${op}`, op)
-                  }}</span>
-                  <span class="block text-xs font-normal text-gray-400 dark:text-dark-400">{{
-                    t(`creative.operationsDesc.${op}`)
-                  }}</span>
-                </span>
-                <Icon
-                  v-if="studio.operation.value === op"
-                  name="check"
-                  size="sm"
-                  class="flex-shrink-0"
-                  :animate-on-hover="false"
-                />
-              </button>
-            </div>
-          </div>
-        </MotionTransition>
-      </span>
+        <button
+          type="button"
+          class="composer-prompt-action"
+          data-testid="creative-prompt-restore"
+          :disabled="!promptExpansion.canRestore.value"
+          :title="t('creative.prompt.restoreHint')"
+          @click="promptExpansion.restore"
+        >
+          <Icon name="undo" size="sm" />
+          {{ t('creative.prompt.restore') }}
+        </button>
+      </div>
 
-      <div class="ml-auto flex items-center gap-3">
+      <div class="ml-auto flex shrink-0 items-center gap-3">
         <i18n-t
           v-if="estimatedCostText !== null"
           keypath="creative.panel.estimatedCost"
@@ -332,7 +385,7 @@
           ref="sendButtonRef"
           type="button"
           class="composer-send"
-          :disabled="!studio.canGenerate.value"
+          :disabled="!studio.canGenerate.value || promptExpansion.busy.value"
           :title="t('creative.composer.send')"
           @click="emit('generate')"
         >
@@ -362,6 +415,7 @@ import Icon from '@/components/icons/Icon.vue'
 import type { IconName } from '@/components/icons/registry'
 import { useAppStore } from '@/stores/app'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
+import { useCreativePrompt } from '@/composables/useCreativePrompt'
 import type { CreativeCanvasGuide, useCreativeStudio } from '@/composables/useCreativeStudio'
 import { creativeOptionKey } from '@/composables/useCreativeStudio'
 import {
@@ -377,14 +431,17 @@ import { formatCreativeRunElapsed } from '@/utils/creativeRunTime'
  * directly to the supplied reactive studio and emits generation requests for
  * the parent to collect canvas inputs. Parameter popovers are sized and
  * positioned within the composer, with narrow layouts clamped against the
- * viewport.
+ * viewport. All actions share one bottom row; narrow screens scroll the controls
+ * while keeping the send button visible. Popovers mount outside the scrolling
+ * row so their menus remain fully accessible.
  *
  * One status line prioritizes explicit errors, briefly visible failed terminal
  * results, missing canvas input, and active task progress. Active tasks are
  * selected from history so another running request remains visible after the
  * most recently submitted task completes. Separate timers control elapsed-time
  * updates and terminal feedback, and both are cleared when the component
- * unmounts.
+ * unmounts. Paid prompt expansion uses its own request state and local undo
+ * snapshot; generation waits until expansion completes.
  */
 
 /**
@@ -463,7 +520,7 @@ const estimatedCostText = computed(() => {
  * TEXTAREA_MAX_HEIGHT, SEGMENTED_MAX_OPTIONS, and TERMINAL_STATUS_VISIBLE_MS
  * bound prompt expansion, choice layout, and temporary failure feedback.
  */
-const TEXTAREA_MAX_HEIGHT = 160
+const TEXTAREA_MAX_HEIGHT = 240
 const SEGMENTED_MAX_OPTIONS = 5
 const TERMINAL_STATUS_VISIBLE_MS = 5000
 
@@ -494,9 +551,10 @@ const openPanel = ref<'model' | 'params' | 'operation' | null>(null)
  * window dimensions change.
  */
 const popoverStyle = ref<{
-  left: string // chip-relative CSS pixel offset
+  left: string // composer-relative CSS pixel offset
+  bottom: string // distance above composer bottom
   width: string // horizontal dimension pixels
-}>({ left: '0px', width: '' })
+}>({ left: '0px', bottom: '0px', width: '' })
 let panelAnchor: HTMLElement | null = null
 
 /**
@@ -518,6 +576,9 @@ const prompt = computed({
     studio.prompt.value = value
   },
 })
+
+/** promptExpansion owns the paid request and its free local restoration action. */
+const promptExpansion = useCreativePrompt(studio.prompt, studio.capabilities)
 
 /**
  * StatusTone selects the visual treatment of the composer status message.
@@ -817,25 +878,27 @@ function togglePanel(panel: 'model' | 'params' | 'operation', event: MouseEvent)
 /**
  * layoutPopover sizes and positions the active popover within the composer. Its
  * width respects the composer and viewport limits; the computed left offset is
- * relative to the chip wrapper that owns absolute positioning.
+ * relative to the composer shell, where the popover is mounted outside the
+ * scrolling controls. Scrolling recalculates the anchor position to keep the
+ * visible menu attached to its trigger.
  */
 function layoutPopover(anchor: HTMLElement | null): void {
   const root = rootRef.value
-  const chipSpan = anchor?.parentElement
-  if (!root || !chipSpan) return
+  if (!root || !anchor) return
   const rootWidth = root.clientWidth
   /**
    * Keep popover width within the composer and viewport allowance.
    */
   const width = Math.min(320, rootWidth, window.innerWidth - 56)
-  const chipOffset = chipSpan.offsetLeft
+  const rootBounds = root.getBoundingClientRect()
+  const anchorBounds = anchor.getBoundingClientRect()
+  const chipOffset = anchorBounds.left - rootBounds.left
   const left = Math.min(Math.max(chipOffset, 0), Math.max(rootWidth - width, 0))
-  /**
-   * Convert the clamped composer-space position to the chip wrapper's local
-   * offset, including negative offsets when right-edge chips need leftward
-   * placement.
-   */
-  popoverStyle.value = { left: `${left - chipOffset}px`, width: `${width}px` }
+  popoverStyle.value = {
+    left: `${left}px`,
+    bottom: `${rootBounds.bottom - anchorBounds.top}px`,
+    width: `${width}px`,
+  }
 }
 
 useEventListener(window, 'resize', () => layoutPopover(panelAnchor))
@@ -896,7 +959,7 @@ function ratioPreviewStyle(ratio: string): {
 function onKeydown(event: KeyboardEvent): void {
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
     event.preventDefault()
-    if (studio.canGenerate.value) emit('generate')
+    if (studio.canGenerate.value && !promptExpansion.busy.value) emit('generate')
   }
 }
 
@@ -944,14 +1007,25 @@ defineExpose({ sendButtonRef, fillPrompt })
 }
 
 .composer-textarea {
-  max-height: 160px;
+  min-height: 120px;
+  max-height: 240px;
   overflow-y: auto;
 }
 
+/* Horizontal scrolling keeps the bottom controls on one row on narrow screens. */
+.composer-controls {
+  scrollbar-width: thin;
+}
+
 .composer-chip {
-  @apply inline-flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-control px-2.5 text-xs font-medium text-gray-600 transition-colors;
+  @apply inline-flex h-10 min-w-0 max-w-full items-center gap-2 rounded-control px-3 text-sm font-medium text-gray-600 transition-colors;
   @apply hover:bg-gray-100 hover:text-gray-900;
   @apply dark:text-dark-100 dark:hover:bg-dark-800 dark:hover:text-white;
+}
+
+.composer-prompt-action {
+  @apply inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-control px-3 text-sm font-medium text-primary-700 transition-colors hover:bg-primary-500/8;
+  @apply disabled:cursor-not-allowed disabled:text-gray-400 dark:text-primary-500 dark:disabled:text-dark-500;
 }
 
 .composer-chip-active {
@@ -959,7 +1033,7 @@ defineExpose({ sendButtonRef, fillPrompt })
   @apply dark:text-primary-500 dark:hover:bg-primary-500/15 dark:hover:text-primary-500;
 }
 
-/* These initial dimensions are replaced by layoutPopover when opened. Position remains relative to the chip wrapper while the computed bounds keep content inside the composer. */
+/* These initial dimensions are replaced by layoutPopover when opened. Popovers mount in the composer shell so horizontal control scrolling cannot clip their contents. */
 .chip-popover {
   @apply absolute bottom-full left-0 z-30 mb-2 w-[min(320px,calc(100vw-3.5rem))] overflow-hidden rounded-surface border border-primary-900/10 bg-white shadow-lg;
   @apply dark:border-dark-600 dark:bg-dark-900;
@@ -1011,7 +1085,7 @@ defineExpose({ sendButtonRef, fillPrompt })
 }
 
 .composer-send {
-  @apply inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary-600 text-white transition-colors hover:bg-primary-700;
+  @apply inline-flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-primary-600 text-white transition-colors hover:bg-primary-700;
   @apply disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400;
   @apply dark:disabled:bg-dark-700 dark:disabled:text-dark-500;
 }

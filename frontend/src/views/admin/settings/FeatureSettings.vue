@@ -63,6 +63,39 @@
     </SettingsSection>
 
     <SettingsSection>
+      <SettingRow
+        id="creative-prompt-group"
+        field
+        :label="t('admin.settings.features.creative.promptGroup')"
+        :hint="t('admin.settings.features.creative.promptPriceHint')"
+      >
+        <Select
+          v-model="form.creative_prompt_group_id"
+          :options="creativePromptGroupOptions"
+          :aria-label="t('admin.settings.features.creative.promptGroup')"
+        />
+      </SettingRow>
+      <SettingsNotice v-if="creativePromptGroupsError" tone="warning">
+        {{ t('admin.settings.features.creative.promptGroupsError') }}
+      </SettingsNotice>
+      <div>
+        <label for="creative-prompt-model" class="input-label">
+          {{ t('admin.settings.features.creative.promptModel') }}
+        </label>
+        <input
+          id="creative-prompt-model"
+          v-model="form.creative_prompt_model"
+          class="input"
+          type="text"
+          maxlength="200"
+          :disabled="!form.creative_prompt_group_id"
+          :placeholder="t('admin.settings.features.creative.promptModelPlaceholder')"
+        />
+        <p class="input-hint">{{ t('admin.settings.features.creative.promptModelHint') }}</p>
+      </div>
+    </SettingsSection>
+
+    <SettingsSection>
       <RuleListEditor
         :items="form.creative_model_settings"
         title-style="section"
@@ -368,6 +401,8 @@ const props = defineProps<{
 // the page state that hydration, validation, and shared saving also consume.
 const {
   creativeOperationChoices,
+  creativePromptGroupOptions,
+  creativePromptGroupsError,
   creativeModelCandidates,
   creativeModelCandidatesLoading,
   creativeModelCandidatesError,

@@ -87,7 +87,7 @@ describe('CreativeComposer 提示词高度', () => {
       expect(studio.applyRunParams('long')).toBe(true)
       await nextTick()
       expect(textarea.element.value).toBe(longPrompt)
-      expect(textarea.element.style.height).toBe('160px')
+      expect(textarea.element.style.height).toBe('240px')
 
       expect(studio.applyRunParams('short')).toBe(true)
       await nextTick()

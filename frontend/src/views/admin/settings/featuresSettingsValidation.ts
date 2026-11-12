@@ -5,7 +5,7 @@ import type { SettingsForm } from './settingsState'
 import type { CreativeModelSetting } from '@/api/admin/settings'
 
 /**
- * featuresSettingsValidation.ts validates creative worker capacity and selected models for
+ * featuresSettingsValidation.ts validates creative worker capacity and image and text models for
  * the bulk settings coordinator. Worker validation publishes an accepted whole count to
  * the draft, while model normalization returns a separate list; null results report errors
  * that stop request construction at the corresponding validation phase.
@@ -17,7 +17,10 @@ import type { CreativeModelSetting } from '@/api/admin/settings'
  * in the feature serializer only after both validation steps succeed.
  */
 export function createFeaturesSettingsValidation(
-  form: Pick<SettingsForm, 'creative_worker_count'>,
+  form: Pick<
+    SettingsForm,
+    'creative_worker_count' | 'creative_prompt_group_id' | 'creative_prompt_model'
+  >,
   actions: Pick<ReturnType<typeof useFeaturesSettings>, 'normalizeCreativeModelSettingsForSave'>,
 ) {
   // Validation feedback uses the page locale and toast store, while controller
@@ -49,12 +52,23 @@ export function createFeaturesSettingsValidation(
   }
 
   /**
-   * normalizeModelSettings asks the feature controller to normalize selected models
-   * and operations. It returns that normalized list for request serialization, or
-   * reports the model-settings validation error and returns null when selection is
-   * invalid; the editable model rows remain available for correction.
+   * normalizeModelSettings validates the optional prompt expansion route and asks
+   * the feature controller to normalize image models and operations. Invalid text
+   * or image selections report their corresponding error and return null; valid
+   * image rows are returned for serialization while both drafts remain editable.
    */
   function normalizeModelSettings(): CreativeModelSetting[] | null {
+    const groupID = Number(form.creative_prompt_group_id) || 0
+    const model = form.creative_prompt_model?.trim() ?? ''
+    if (
+      !Number.isSafeInteger(groupID) ||
+      groupID < 0 ||
+      (groupID > 0 && (!model || Array.from(model).length > 200 || /[*?]/.test(model)))
+    ) {
+      appStore.showError(t('admin.settings.features.creative.promptInvalid'))
+      return null
+    }
+
     const normalizedCreativeModelSettings = normalizeCreativeModelSettingsForSave()
 
     if (!normalizedCreativeModelSettings) {

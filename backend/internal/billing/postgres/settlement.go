@@ -1086,14 +1086,25 @@ func (r *SettlementStore) applyUsageBillingEffects(ctx context.Context, tx *sql.
 	result.BillingAllocations = allocations
 	result.SubscriptionAmountUSD = subscriptionAmount
 
-	// Completed upstream usage needs a full monetary settlement. The planner caps
-	// subscription counters, and uncovered base uses the wallet rate even when
-	// the payer's available balance becomes debt.
+	// Ordinary upstream usage settles its complete cost, including wallet debt.
+	// Fixed-price deliveries additionally request the locked availability check
+	// below, so rejected deliveries roll back the entire financial transaction.
 	balanceAmount := remainingAmount
 	if usageBillingUsesBaseAmount(cmd) {
 		balanceAmount = remainingAmount * usageBillingNonNegativeRate(cmd.BalanceRateMultiplier)
 	}
 	if balanceAmount > 0 {
+		if cmd.RequireAvailableBalance {
+			// The payer row is already locked by applyOnce. Checking its available
+			// balance here keeps fixed-price deliveries from overdrawing under concurrency.
+			var available float64
+			if err := tx.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1 AND deleted_at IS NULL", cmd.UserID).Scan(&available); err != nil {
+				return err
+			}
+			if available < billing.QuantizeUsageBillingAmount(balanceAmount) {
+				return billing.ErrTaskInsufficientBalance
+			}
+		}
 		newBalance, deductedAmount, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, balanceAmount)
 		if err != nil {
 			return err
@@ -2250,4 +2261,16 @@ func incrementUsageBillingProviderQuota(ctx context.Context, tx *sql.Tx, provide
 // remain the storage caller's responsibility before allocation.
 func settlementSubscriptionSnapshot(row usageBillingSubscriptionRow) billing.SettlementSubscription {
 	return billing.SettlementSubscription{ID: row.ID, PlanID: row.PlanID, StartsAt: row.StartsAt, ExpiresAt: row.ExpiresAt, DailyWindowStart: usageBillingNullableTimePtr(row.DailyWindowStart), WeeklyWindowStart: usageBillingNullableTimePtr(row.WeeklyWindowStart), MonthlyWindowStart: usageBillingNullableTimePtr(row.MonthlyWindowStart), DailyLimitUSD: usageBillingNullableFloat64Ptr(row.DailyLimitUSD), WeeklyLimitUSD: usageBillingNullableFloat64Ptr(row.WeeklyLimitUSD), MonthlyLimitUSD: usageBillingNullableFloat64Ptr(row.MonthlyLimitUSD), DailyUsageUSD: row.DailyUsageUSD, WeeklyUsageUSD: row.WeeklyUsageUSD, MonthlyUsageUSD: row.MonthlyUsageUSD, PlanGroupRateMultipliers: parseInt64Float64JSONMap(row.PlanGroupRateMultipliersRaw)}
+}
+
+// HasSettlement reports whether a request already has a live or archived charge.
+// The caller uses a globally scoped request identity, independent of later Key
+// or settings changes. Financial settlement still performs its transactional claim.
+func (r *SettlementStore) HasSettlement(ctx context.Context, requestID string) (bool, error) {
+	var found bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (
+  SELECT 1 FROM usage_billing_dedup WHERE request_id = $1
+  UNION ALL SELECT 1 FROM usage_billing_dedup_archive WHERE request_id = $1
+ )`, requestID).Scan(&found)
+	return found, err
 }

@@ -164,7 +164,9 @@ func (s *CNProviderTest) executeAdaptiveAnthropic(c *TestRun, value *providercor
 			// The endpoint has already returned an authentication failure. Attempt its
 			// provider-state write, then keep the upstream diagnostic when storage
 			// itself reports an error.
-			_ = s.Store.SetError(ctx, value.ID, errMsg)
+			// Private user generation can receive echoed prompt text in an error body.
+			// Sanitize the persistent diagnostic before the provider state write occurs.
+			_ = s.Store.SetError(ctx, value.ID, providercore.TextGenerationDiagnostic(ctx, errMsg))
 		}
 		return (TestStreamOutput{}).Error(c, errMsg)
 	}
@@ -235,7 +237,9 @@ func (s *CNProviderTest) executeAdaptiveResponses(c *TestRun, value *providercor
 			// The endpoint has already returned an authentication failure. Attempt its
 			// provider-state write, then keep the upstream diagnostic when storage
 			// itself reports an error.
-			_ = s.Store.SetError(ctx, value.ID, errMsg)
+			// Private user generation can receive echoed prompt text in an error body.
+			// Sanitize the persistent diagnostic before the provider state write occurs.
+			_ = s.Store.SetError(ctx, value.ID, providercore.TextGenerationDiagnostic(ctx, errMsg))
 		}
 		return (TestStreamOutput{}).Error(c, errMsg)
 	}

@@ -25,6 +25,8 @@ export function buildFeaturesSettingsPayload(
     | 'affiliate_admin_recharge_enabled'
     | 'team_enabled'
     | 'creative_enabled'
+    | 'creative_prompt_group_id'
+    | 'creative_prompt_model'
     | 'risk_control_enabled'
     | 'cyber_session_block_enabled'
     | 'cyber_session_block_ttl_seconds'
@@ -43,6 +45,8 @@ export function buildFeaturesSettingsPayload(
   | 'creative_enabled'
   | 'creative_model_settings'
   | 'creative_worker_count'
+  | 'creative_prompt_group_id'
+  | 'creative_prompt_model'
   | 'risk_control_enabled'
   | 'cyber_session_block_enabled'
   | 'cyber_session_block_ttl_seconds'
@@ -83,6 +87,9 @@ export function buildFeaturesSettingsPayload(
     creative_model_settings: normalizedCreativeModelSettings,
 
     creative_worker_count: normalizedCreativeWorkerCount,
+
+    creative_prompt_group_id: Number(form.creative_prompt_group_id) || 0,
+    creative_prompt_model: form.creative_prompt_group_id ? form.creative_prompt_model.trim() : '',
 
     risk_control_enabled: form.risk_control_enabled,
 

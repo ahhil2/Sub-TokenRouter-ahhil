@@ -1,13 +1,14 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { saveAs } from 'file-saver'
 import CreativeCanvas from '@/components/creative/CreativeCanvas.vue'
 import { CREATIVE_OUTPUT_DRAG_MIME, serializeCreativeOutputDrag } from '@/utils/creativeDrag'
 import { outputAssetKey, type LocalAsset } from '@/utils/creativeLocalStore'
 
 /**
  * CreativeCanvas.drag.spec.ts exercises external image drops, history output
- * placement, wheel navigation, touch zoom, and anchor positioning through the
- * mounted canvas component. Fabric and image decoding are lightweight fixtures,
+ * placement, selected-image downloads, wheel navigation, touch zoom, and anchor
+ * positioning through the mounted canvas component. Fabric and image decoding are lightweight fixtures,
  * while the tests dispatch browser events and inspect resulting transforms,
  * asset calls, and object metadata. The suite checks interaction calculations
  * and event routing without performing pixel rendering.
@@ -35,6 +36,8 @@ const storeMocks = vi.hoisted(() => ({
   loadSceneJson: vi.fn(),
   saveSceneJson: vi.fn(),
 }))
+
+vi.mock('file-saver', () => ({ saveAs: vi.fn() }))
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
@@ -450,6 +453,7 @@ function mountCanvas() {
 
 describe('CreativeCanvas 拖放', () => {
   beforeEach(() => {
+    vi.mocked(saveAs).mockClear()
     fabricState.main = null
     fabricState.mask = null
     fabricState.images = []
@@ -506,6 +510,97 @@ describe('CreativeCanvas 拖放', () => {
       scaleX: 0.25,
       scaleY: 0.25,
     })
+    wrapper.unmount()
+  })
+
+  /**
+   * A selected image exposes a download action below its pixels. Using that
+   * action saves the original bytes and keeps pointer input inside the control.
+   */
+  it('在选中图片下方下载原文件，并阻止按钮事件传入画布', async () => {
+    const wrapper = mountCanvas()
+    expect(wrapper.find('.canvas-media-download').exists()).toBe(false)
+    const source = new File(['source pixels'], 'source.png', { type: 'image/png' })
+    await drop(wrapper, {
+      types: ['Files'],
+      files: [source],
+      getData: vi.fn(() => ''),
+    })
+
+    const button = wrapper.find('.canvas-media-download')
+    expect(button.attributes('aria-label')).toBe('creative.canvas.downloadSelected')
+    expect((button.element as HTMLElement).style.left).toBe('200px')
+    expect((button.element as HTMLElement).style.top).toBe('187px')
+    const canvasPointer = vi.fn()
+    wrapper.find('.dot-grid').element.addEventListener('pointerdown', canvasPointer)
+    await button.trigger('pointerdown')
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(canvasPointer).not.toHaveBeenCalled()
+    expect(saveAs).toHaveBeenCalledWith(source, expect.stringMatching(/^creative-image-\d+\.png$/))
+    expect(fabricState.main.active).toBe(fabricState.images[0])
+    wrapper.unmount()
+  })
+
+  /**
+   * Canvas navigation changes the selected image's screen coordinates after a
+   * render. Its download action follows the viewport and disappears on deselection.
+   */
+  it('下载按钮跟随画布缩放平移，并在取消选择时隐藏', async () => {
+    const wrapper = mountCanvas()
+    await drop(wrapper, {
+      types: ['Files'],
+      files: [new File(['image'], 'source.png', { type: 'image/png' })],
+      getData: vi.fn(() => ''),
+    })
+    fabricState.main.viewportTransform = [2, 0, 0, 2, 20, 30]
+    fabricState.main.emit('after:render', {})
+    await flushPromises()
+    const button = wrapper.find('.canvas-media-download').element as HTMLElement
+    expect(button.style.left).toBe('420px')
+    expect(button.style.top).toBe('392px')
+
+    fabricState.main.discardActiveObject()
+    fabricState.main.emit('selection:cleared', {})
+    await flushPromises()
+    expect(wrapper.find('.canvas-media-download').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  /**
+   * Fabric selection updates report changed members rather than the full group.
+   * Download controls follow the complete selection when members are added or removed.
+   */
+  it('多选时隐藏单图下载，移除选中项后定位到剩余图片', async () => {
+    const wrapper = mountCanvas()
+    await drop(wrapper, {
+      types: ['Files'],
+      files: [
+        new File(['first'], 'first.png', { type: 'image/png' }),
+        new File(['second'], 'second.png', { type: 'image/png' }),
+      ],
+      getData: vi.fn(() => ''),
+    })
+    const [first, second] = fabricState.images
+    const activeObjects = vi.spyOn(fabricState.main, 'getActiveObjects')
+    activeObjects.mockReturnValue([first, second])
+    fabricState.main.emit('selection:updated', { selected: [second] })
+    await flushPromises()
+    expect(wrapper.find('.canvas-media-download').exists()).toBe(false)
+    expect(
+      wrapper
+        .find('.canvas-toolbar button[title="creative.canvas.downloadSelected"]')
+        .attributes('disabled'),
+    ).toBeDefined()
+
+    activeObjects.mockReturnValue([first])
+    fabricState.main.active = first
+    fabricState.main.emit('selection:updated', { selected: [], deselected: [second] })
+    await flushPromises()
+    const button = wrapper.find('.canvas-media-download').element as HTMLElement
+    expect(button.style.left).toBe('200px')
+    expect(button.style.top).toBe('187px')
     wrapper.unmount()
   })
 

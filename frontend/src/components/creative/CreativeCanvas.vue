@@ -34,6 +34,21 @@
         <Icon v-else name="square" size="xs" fill="currentColor" :animate-on-hover="false" />
       </button>
     </MotionTransition>
+    <button
+      v-if="selectedDownloadPosition"
+      type="button"
+      class="canvas-media-download canvas-island"
+      :style="selectedDownloadPosition"
+      :title="t('creative.canvas.downloadSelected')"
+      :aria-label="t('creative.canvas.downloadSelected')"
+      @pointerdown.stop
+      @mousedown.stop
+      @touchstart.stop
+      @click.stop="downloadSelected"
+    >
+      <Icon name="download" size="md" />
+      <span>{{ t('creative.history.download') }}</span>
+    </button>
     <div
       v-if="dropTargetActive"
       class="pointer-events-none absolute inset-2 z-[2] rounded-surface border-2 border-dashed border-primary-500/70 bg-primary-500/5"
@@ -42,16 +57,17 @@
     </div>
 
     <div
-      class="canvas-toolbar canvas-island absolute top-3 z-10 flex max-sm:w-fit max-sm:max-w-[calc(100%-8rem)] max-sm:flex-wrap max-sm:justify-center -translate-x-1/2 items-center gap-1 rounded-full p-1"
+      class="canvas-toolbar canvas-island absolute top-3 z-10 flex max-sm:w-max max-sm:max-w-[calc(100%-8rem)] max-sm:flex-wrap max-sm:justify-center -translate-x-1/2 items-center gap-2 rounded-full p-2"
       :class="isInpaint && 'max-sm:rounded-dialog'"
     >
       <button
         type="button"
         class="canvas-tool-btn"
         :title="t('creative.panel.uploadSource')"
+        :aria-label="t('creative.panel.uploadSource')"
         @click="fileInputRef?.click()"
       >
-        <Icon name="upload" size="sm" />
+        <Icon name="upload" size="lg" />
       </button>
       <input
         ref="fileInputRef"
@@ -66,9 +82,10 @@
         class="canvas-tool-btn"
         :disabled="!selectedImage"
         :title="t('creative.canvas.downloadSelected')"
+        :aria-label="t('creative.canvas.downloadSelected')"
         @click="downloadSelected"
       >
-        <Icon name="download" size="sm" />
+        <Icon name="download" size="lg" />
       </button>
 
       <span class="canvas-tool-divider"></span>
@@ -77,9 +94,11 @@
         class="canvas-tool-btn"
         :class="boxSelectMode && 'canvas-tool-btn-active'"
         :title="t('creative.canvas.boxSelect')"
+        :aria-label="t('creative.canvas.boxSelect')"
+        :aria-pressed="boxSelectMode"
         @click="setBoxSelectMode(!boxSelectMode)"
       >
-        <Icon name="selection" size="sm" class="h-4 w-4" stroke-dasharray="3 2" />
+        <Icon name="selection" size="lg" class="h-6 w-6" stroke-dasharray="3 2" />
       </button>
 
       <MotionTransition name="canvas-toolbar-extension">
@@ -94,7 +113,7 @@
             "
             @click="togglePainting"
           >
-            <Icon name="edit" size="sm" />
+            <Icon name="edit" size="lg" />
           </button>
           <button
             type="button"
@@ -103,7 +122,7 @@
             :title="t('creative.canvas.clearMask')"
             @click="clearMask"
           >
-            <Icon name="eraser" size="sm" />
+            <Icon name="eraser" size="lg" />
           </button>
           <button
             type="button"
@@ -112,7 +131,7 @@
             :title="t('creative.canvas.undoMask')"
             @click="undoMask"
           >
-            <Icon name="undo" size="sm" class="h-4 w-4" />
+            <Icon name="undo" size="lg" class="h-6 w-6" />
           </button>
           <div class="flex flex-none items-center gap-1.5 px-1">
             <input
@@ -135,7 +154,7 @@
             :title="t('creative.canvas.shapeRound')"
             @click="setBrushShape('round')"
           >
-            <Icon name="circle" size="sm" class="h-4 w-4" />
+            <Icon name="circle" size="lg" class="h-6 w-6" />
           </button>
           <button
             type="button"
@@ -144,7 +163,7 @@
             :title="t('creative.canvas.shapeSquare')"
             @click="setBrushShape('square')"
           >
-            <Icon name="square" size="sm" class="h-4 w-4" />
+            <Icon name="square" size="lg" class="h-6 w-6" />
           </button>
         </div>
       </MotionTransition>
@@ -155,9 +174,10 @@
         class="canvas-tool-btn"
         :disabled="selectedObjectCount === 0"
         :title="t('creative.canvas.removeSelected')"
+        :aria-label="t('creative.canvas.removeSelected')"
         @click="removeSelected"
       >
-        <Icon name="trash" size="sm" />
+        <Icon name="trash" size="lg" />
       </button>
     </div>
 
@@ -226,6 +246,8 @@ import {
  * image identity and lifetime state. Selected GIFs replace their poster with a
  * decoded frame canvas during playback, preserving Fabric transforms and scene
  * stacking. Playback ends on deselection, removal, page hiding, or disposal.
+ * A single selected image exposes an HTML download control below its transformed
+ * bounds; rendering updates keep that control attached during canvas navigation.
  */
 
 /**
@@ -668,6 +690,14 @@ const brushShape = ref<BrushShape>('round')
  */
 const selectedImage = shallowRef<FabricObject | null>(null)
 /**
+ * selectedDownloadPosition anchors a single selected image's download button in
+ * viewport pixels, while an empty or grouped selection hides that control.
+ */
+const selectedDownloadPosition = ref<{
+  left: string // horizontal viewport CSS pixels
+  top: string // vertical viewport CSS pixels
+} | null>(null)
+/**
  * GIF playback belongs to the selected image. The generation invalidates pending
  * asset reads, while the poster restores the persistent image before releasing
  * its temporary frame canvas. Control position follows Fabric's rendered scene.
@@ -1085,7 +1115,10 @@ function onDrop(event: DragEvent): void {
  */
 function bindCanvasEvents(): void {
   if (!canvas) return
-  canvas.on('after:render', syncGIFControlPosition)
+  canvas.on('after:render', () => {
+    syncGIFControlPosition()
+    syncSelectedDownloadPosition()
+  })
   canvas.on('mouse:down', (event) => {
     if (!canvas) return
     if (painting.value) {
@@ -1202,16 +1235,8 @@ function bindCanvasEvents(): void {
     syncImageCount()
     scheduleSceneSave()
   })
-  canvas.on('selection:created', (event) => {
-    selectedObjectCount.value = canvas?.getActiveObjects().length || event.selected?.length || 0
-    syncEditRefFromSelection(event.selected)
-    onImageSelected(event.selected?.length === 1 ? pickImage(event.selected[0]) : null)
-  })
-  canvas.on('selection:updated', (event) => {
-    selectedObjectCount.value = canvas?.getActiveObjects().length || event.selected?.length || 0
-    syncEditRefFromSelection(event.selected)
-    onImageSelected(event.selected?.length === 1 ? pickImage(event.selected[0]) : null)
-  })
+  canvas.on('selection:created', syncActiveSelection)
+  canvas.on('selection:updated', syncActiveSelection)
   /**
    * Fabric clears selection when brush drawing begins; keep the inpaint anchor
    * during painting so the active mask target survives that event.
@@ -1620,6 +1645,18 @@ function syncImageCount(): void {
   imageCount.value = canvas
     ? canvas.getObjects().filter((object) => objectData(object).kind === 'image').length
     : 0
+}
+
+/**
+ * syncActiveSelection derives image controls from Fabric's complete selection.
+ * Selection update events contain only changed members, so reading the active
+ * objects keeps grouped selections from exposing actions for one added image.
+ */
+function syncActiveSelection(): void {
+  const selected = canvas?.getActiveObjects() ?? []
+  selectedObjectCount.value = selected.length
+  syncEditRefFromSelection(selected)
+  onImageSelected(selected.length === 1 ? pickImage(selected[0]) : null)
 }
 
 /**
@@ -3056,6 +3093,31 @@ async function canvasImagePoster(blob: Blob): Promise<Blob> {
 }
 
 /**
+ * syncSelectedDownloadPosition places the download control below one image.
+ * Fabric's bounding rectangle includes the object's scaling and rotation; the
+ * viewport transform then converts that scene geometry into screen pixels.
+ * Each rendered frame refreshes the position, covering object movement, pan,
+ * zoom, and resize. The control stays upright and uses a constant screen-space
+ * gap so scaling the image does not change its touch target or separation.
+ */
+function syncSelectedDownloadPosition(): void {
+  const selected = selectedImage.value
+  if (!canvas || !(selected instanceof FabricImage) || canvas.getActiveObjects().length !== 1) {
+    selectedDownloadPosition.value = null
+    return
+  }
+  const bounds = selected.getBoundingRect()
+  const centerX = bounds.left + bounds.width / 2
+  const bottom = bounds.top + bounds.height
+  const [a, b, c, d, tx, ty] = canvas.viewportTransform
+  // Twelve screen pixels separate the control from the image's selection handles.
+  selectedDownloadPosition.value = {
+    left: `${a * centerX + c * bottom + tx}px`,
+    top: `${b * centerX + d * bottom + ty + 12}px`,
+  }
+}
+
+/**
  * syncGIFControlPosition anchors playback controls inside the selected GIF.
  * The play button and loading spinner sit at its center; once frames play, the
  * compact stop button moves inward from its upper-left corner, where it covers
@@ -3180,6 +3242,7 @@ async function toggleSelectedGIF(): Promise<void> {
 watch(selectedImage, () => {
   if (gifPlaybackTarget.value && gifPlaybackTarget.value !== selectedImage.value) stopGIFPlayback()
   syncGIFControlPosition()
+  syncSelectedDownloadPosition()
 })
 </script>
 
@@ -3221,8 +3284,21 @@ watch(selectedImage, () => {
   transition: left var(--motion-layout) var(--motion-ease);
 }
 
+/* Larger toolbar targets stay usable with touch input and make each action legible. */
 .canvas-toolbar .canvas-tool-btn {
+  @apply h-11 w-11 shrink-0;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500;
   border-radius: 9999px;
+}
+
+/* The media action sits below the selected image and stays above Fabric's canvas layers. */
+.canvas-media-download {
+  @apply absolute inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-4 text-sm font-medium;
+  @apply text-gray-700 hover:bg-white dark:text-dark-100 dark:hover:bg-dark-800;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500;
+  z-index: 2; /* check-ui-allow: Canvas-local download control stacking. */
+  translate: -50% 0;
+  touch-action: manipulation;
 }
 
 /*

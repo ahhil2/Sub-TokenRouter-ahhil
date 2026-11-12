@@ -251,6 +251,8 @@ Grok 的媒体、搜索和 Voice 有各自的计价维度：
 <a id="usage_settlement"></a>
 ## 用量结算
 
+创作台提示词扩写使用固定钱包收费，并在结算命令设置 `RequireAvailableBalance`。该模式在持有用户行锁后检查可用余额，不足时回滚计费凭据及所有资金变更；普通网关已完成用量继续沿用允许余额欠费的结算规则。具体价格、重试和结果留存见[提示词扩写与还原](creative_studio.md#prompt_expansion)。
+
 `gateway/completion.Recorder` 负责归一化供应商用量、选择模型和请求 ID、构造 Usage Log；资金预检、查价、分配和提交后的资金处理由 billing 负责。`Eligibility.Check` 只处理资金准入，`gateway/admission.FundingAdmission` 固定它和 scheduler RPM 的顺序：资金检查通过后才累计 RPM；Qoder 等待结束后只复查资金。
 
 用户的日、周、月平台额度已经移除，系统里没有授予、预检、结算累加和后台刷新这项额度的逻辑。余额、订阅、团队、Key 限额和提供商上游额度各自生效。

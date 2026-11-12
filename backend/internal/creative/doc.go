@@ -6,6 +6,7 @@
 // Reading entry points:
 //   - public.go: lists available models, validates requests, and creates runs.
 //   - worker.go: consumes queued runs, calls providers, and advances state.
+//   - prompt.go: expands descriptions with recoverable fixed-price wallet settlement.
 //   - results.go: saves outputs, settles charges, and handles failed runs.
 //
 // File groups:

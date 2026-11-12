@@ -25,6 +25,7 @@ TokenRouter 创作台（Creative Studio）提供面向个人用户的图片生�
 - [审核无留存](#审核无留存)：说明创作台送审的无媒体留存模式。
 - [提供商说明](#提供商说明)：openai、grok、gemini 三个平台各自如何执行。
 - [前端本地存储](#前端本地存储)：IndexedDB、输出取回流程，以及什么情况下素材会丢失。
+- [提示词扩写与还原](#prompt_expansion)：说明固定费用、模型设置、重试和免费还原。
 - [配置](#配置)、[运维检查清单](#运维检查清单)和[安全检查清单](#安全检查清单)：说明运行时启用条件与验证要求。
 
 ## API 路由
@@ -41,6 +42,7 @@ provider.Target 负责实际平台分派。app 直接绑定原生选择器与 ga
 GET  /api/v1/creative/models
 GET  /api/v1/creative/capabilities
 POST /api/v1/creative/runs
+POST /api/v1/creative/prompt/expand
 GET  /api/v1/creative/runs
 GET  /api/v1/creative/runs/active?limit=100&cursor=<opaque>
 GET  /api/v1/creative/runs/{id}
@@ -48,7 +50,7 @@ GET  /api/v1/creative/runs/{id}/outputs/{index}/content
 POST /api/v1/creative/runs/{id}/outputs/{index}/ack
 ```
 
-除 `GET /creative/models` 与 `GET /creative/capabilities` 外，以上任务创建、历史、活动、详情、输出读取和 ack 路由都必须携带 `X-Creative-Workspace-ID` 请求头。请求头必须是非空 UUID；服务端会规范化为小写，缺失返回 `400 CREATIVE_WORKSPACE_REQUIRED`，格式非法返回 `400 CREATIVE_WORKSPACE_INVALID`。工作区 ID 是浏览器数据分区标识，不替代 JWT 用户权限校验；同源标签页共享同一个值，不同浏览器、无痕窗口或清除站点数据后会使用不同值。
+除 `GET /creative/models` 与 `GET /creative/capabilities` 外，以上扩写、任务创建、历史、活动、详情、输出读取和 ack 路由都必须携带 `X-Creative-Workspace-ID` 请求头。请求头必须是非空 UUID；服务端会规范化为小写，缺失返回 `400 CREATIVE_WORKSPACE_REQUIRED`，格式非法返回 `400 CREATIVE_WORKSPACE_INVALID`。工作区 ID 是浏览器数据分区标识，不替代 JWT 用户权限校验；同源标签页共享同一个值，不同浏览器、无痕窗口或清除站点数据后会使用不同值。
 
 `GET /creative/models` 返回当前用户可用分组与图片模型的组合。每项除分组、模型、操作、尺寸和图片单价（`price_512`、`price_1k`、`price_2k`、`price_4k`）外，还按具体模型返回 `aspect_ratios`、`qualities`、`output_formats`、`output_compression`、`background_options`、`thinking_levels`、`max_output_count` 与 `max_reference_images`；不支持的集合返回空数组，压缩范围返回对象或 `null`。
 
@@ -240,6 +242,19 @@ GIF 原始字节保存在 IndexedDB，历史列表直接播放动画。画布默
 - 什么情况下会丢失：历史自动恢复只适用于服务端仍为 `succeeded`、输出未 ack 且 transient 尚未过期的任务；服务端已 ack、transient 已过期或本地保存失败后仍无对应 blob 的输出显示“素材缺失”。本地配额不足时提示用户下载备份；清理浏览器站点数据会清空全部本地素材并创建新的工作区，且没有任何跨设备同步。
 - 历史参数来源：操作、尺寸、比例和输出张数取服务端返回的任务字段；提示词、分组名、画质、背景、思考强度和参考图张数只来自本机的 `run:<runId>` 记录。记录在创建任务成功后写入，参数快照在发请求前取；写入或读取失败只记日志，任务提交和历史刷新照常进行。本机没有记录的任务（例如记录被裁剪）显示“本机没有这次任务的提示词记录”。
 - 幂等重试：创建任务失败重试复用同一 Idempotency-Key，成功后重置。
+
+<a id="prompt_expansion"></a>
+## 提示词扩写与还原
+
+创作面板的“AI 扩写”使用管理员在“系统设置 → 功能开关 → 创作台”配置的 `creative_prompt_group_id` 和 `creative_prompt_model`。两个字段同时清空时关闭扩写。用户需要当前分组访问权限；分组必须处于活动状态并允许文本协议。调用复用提供商模型映射、协议路线、URL 校验和传输，并占用用户与提供商并发槽位。提示词审核使用 `NoMediaRetention`，供应商诊断回调在扩写请求内关闭。
+
+`POST /api/v1/creative/prompt/expand` 接收 JSON `{ "prompt": "描述", "media_type": "image" }`，`media_type` 为 `image` 或 `video`。请求必须携带 JWT、`X-Creative-Workspace-ID` 和非空 `Idempotency-Key`（最多 255 字节）。输入与输出均不得超过创作台 `max_prompt_chars` 个 Unicode code point。服务端执行最长 90 秒，返回 `{ "prompt": "扩写结果", "cost_cny": 0.015 }`，位于常规响应 envelope 的 `data` 中。
+
+每次成功扩写收取 ￥0.015，按首轮执行时的 `usd_exchange_rate` 换算为钱包美元并保留八位小数。未设置有效汇率时采用 7；该费用不套用用户、分组或订阅倍率，直接从可用余额结算。提交时先检查余额，最终结算在同一个数据库事务内锁定用户、复核余额、扣款并保存计费幂等凭据。失败、空白或超长的上游输出不扣费；并发扣款使余额不足时拒绝交付，已生成结果可在临时有效期内用相同键重试结算。
+
+扩写结果与首轮计费快照在 Redis 保留 30 分钟，先保存结果再扣款。相同用户、工作区和幂等键重试会复用结果及价格；输入变化返回 `CREATIVE_IDEMPOTENCY_CONFLICT`，执行中返回 `CREATIVE_PROMPT_BUSY`。数据库提交后连接中断时，重试沿用相同计费命令，不再扣款。结果过期但持久计费凭据存在时返回 `CREATIVE_PROMPT_EXPIRED`；新的有意扩写使用新键。数据库持久记录只包含用量、金额、模型和身份，提示词原文及扩写文本只存在于临时存储。
+
+“提示词还原”在浏览器恢复第一次成功扩写前的原文，不调用模型、不收费。连续扩写保留同一份原文；还原后清空快照。扩写期间的迟到响应不得覆盖用户后来编辑或切换工作区后的提示词。创作面板显示固定费用，上方工具栏使用更大的点击区域，画布中选中的图片或动态 GIF 在自身下方显示下载入口，下载保留原始文件字节。当前创作台的生成输出为图片和 GIF，视频扩写参数仅用于提示词文本，不增加视频生成能力。
 
 ## 配置
 

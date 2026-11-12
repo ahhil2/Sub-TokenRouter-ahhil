@@ -192,6 +192,15 @@ export default {
         enabledHint: 'When off, related page entries are hidden and direct URL access is blocked.',
       },
       creative: {
+        promptGroup: 'AI expansion group',
+        promptDisabled: 'Disable AI expansion',
+        promptModel: 'Prompt expansion model',
+        promptPriceHint: 'Each successful expansion costs CNY 0.015. Restoring the prompt is free.',
+        promptModelPlaceholder: 'Text model name, for example gpt-5.5',
+        promptModelHint:
+          'Use a text model available in the selected group. Disabling expansion clears its model setting.',
+        promptGroupsError: 'Could not load groups. The saved group remains selected.',
+        promptInvalid: 'Select a valid group and enter a text model name without wildcards.',
         title: 'Creative Studio',
         description: 'Control whether the user-facing Creative Studio page is available.',
         enabled: 'Enable Creative Studio',

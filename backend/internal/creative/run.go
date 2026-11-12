@@ -698,10 +698,12 @@ type CreativeModelsResponse struct {
 // CreativeCapabilitiesResponse exposes server upload byte limits and
 // Unicode-code-point prompt limits to clients.
 type CreativeCapabilitiesResponse struct {
-	MaxPromptChars     int   `json:"max_prompt_chars"`      // Unicode code points
-	MaxAssetBytes      int64 `json:"max_asset_bytes"`       // bytes
-	MaxTotalInputBytes int64 `json:"max_total_input_bytes"` // bytes
-	MaxMaskBytes       int64 `json:"max_mask_bytes"`        // bytes
+	PromptExpansionEnabled  bool    `json:"prompt_expansion_enabled"`   // configured prompt expansion availability
+	PromptExpansionPriceCNY float64 `json:"prompt_expansion_price_cny"` // yuan per successful expansion
+	MaxPromptChars          int     `json:"max_prompt_chars"`           // Unicode code points
+	MaxAssetBytes           int64   `json:"max_asset_bytes"`            // bytes
+	MaxTotalInputBytes      int64   `json:"max_total_input_bytes"`      // bytes
+	MaxMaskBytes            int64   `json:"max_mask_bytes"`             // bytes
 	// accepted uploaded image MIME labels
 	AllowedMIMETypes []string `json:"allowed_mime_types"`
 }

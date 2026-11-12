@@ -374,6 +374,8 @@ export function createSettingsForm() {
     creative_enabled: true,
     creative_model_settings: [] as CreativeModelSetting[],
     creative_worker_count: 128,
+    creative_prompt_group_id: 0,
+    creative_prompt_model: '',
     risk_control_enabled: false,
     cyber_session_block_enabled: false,
     cyber_session_block_ttl_seconds: 3600,

@@ -48,6 +48,8 @@ const (
 // CreativeHandler serves authenticated creative model, task, and output
 // operations through HTTP.
 type CreativeHandler struct {
+	// prompt is bound before serving and shares the public studio feature gate.
+	prompt *creative.PromptExpander // fixed-price prompt expansion service
 	// enter optionally registers this request before authentication and returns
 	// a nonnil completion callback, which the handler defers until response exit.
 	enter   func() (func(), error) // optional request activity admission
@@ -157,7 +159,7 @@ func (h *CreativeHandler) ListModels(c *gin.Context) {
 	response.Success(c, got.Data)
 }
 
-// ListCapabilities returns server input limits after requiring an
+// ListCapabilities returns input limits and prompt price and availability for an
 // authenticated user. The route needs no workspace header, and an installed
 // activity gate covers the response until the deferred completion callback
 // runs.
@@ -175,7 +177,10 @@ func (h *CreativeHandler) ListCapabilities(c *gin.Context) {
 		response.Unauthorized(c, "User not authenticated")
 		return
 	}
-	response.Success(c, h.service.GetCapabilities(c.Request.Context()))
+	capabilities := h.service.GetCapabilities(c.Request.Context())
+	capabilities.PromptExpansionEnabled = h.prompt.Available(c.Request.Context())
+	capabilities.PromptExpansionPriceCNY = creative.PromptExpansionPriceCNY
+	response.Success(c, capabilities)
 }
 
 // CreateRun bounds and parses multipart uploads, then submits normalized

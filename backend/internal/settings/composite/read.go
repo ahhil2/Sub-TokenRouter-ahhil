@@ -140,14 +140,16 @@ func (s *Snapshot) ApplyAuditAdminReadSettings(value *audit.AdminReadSettings) {
 	s.AuditLogRetentionDays = value.AuditLogRetentionDays
 }
 
-// ApplyCreativeAdminReadSettings transfers Creative access, worker count, and
-// model selections from a nonnil read result. The model slice and its nested
-// operation lists remain the same references used by that result until callers
-// choose a separate copy.
+// ApplyCreativeAdminReadSettings transfers Creative access, worker count, image
+// model selections, and prompt routing from a nonnil read result. The model
+// slice and its nested operation lists remain the same references used by that
+// result until callers choose a separate copy.
 func (s *Snapshot) ApplyCreativeAdminReadSettings(value *creative.AdminReadSettings) {
 	s.CreativeEnabled = value.CreativeEnabled
 	s.CreativeModelSettings = value.CreativeModelSettings
 	s.CreativeWorkerCount = value.CreativeWorkerCount
+	s.CreativePromptGroupID = value.CreativePromptGroupID
+	s.CreativePromptModel = value.CreativePromptModel
 }
 
 // ApplyModerationAdminReadSettings assigns parsed risk-center and session-blocking

@@ -7,7 +7,18 @@ export default {
   creative: {
     title: '创作台',
     description: '使用 AI 模型生成与编辑图片，素材仅保存在当前浏览器。',
+    prompt: {
+      expand: 'AI 扩写',
+      expanding: '扩写中…',
+      restore: '提示词还原',
+      restoreHint: '恢复首次扩写前的提示词，不收费。',
+      price: '每次成功扩写收费 ￥0.015，失败不收费。',
+      unconfigured: '管理员尚未配置扩写模型。',
+      failed: '提示词扩写失败，请重试。',
+      changed: '提示词已变更，本次扩写结果未覆盖当前内容。',
+    },
     panel: {
+      prompt: '提示词',
       outputFormat: '输出格式',
       frameCount: '帧数',
       frameDuration: '每帧时长（毫秒）',

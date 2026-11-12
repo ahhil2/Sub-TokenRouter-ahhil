@@ -95,6 +95,9 @@ type UsageBillingCommand struct {
 	// positive. The request fingerprint omits this field; callers retain the
 	// captured final-group selection.
 	GroupID *int64 // optional final funding group
+	// RequireAvailableBalance rejects a wallet charge that exceeds current funds.
+	// Fixed-price tools set this flag before delivery; ordinary usage permits debt.
+	RequireAvailableBalance bool // strict wallet availability check
 	// BillableAmountUSD and BaseAmountUSD select the allocation basis. A positive
 	// BaseAmountUSD drives rate-dependent source coverage; otherwise
 	// BillableAmountUSD supplies the monetary amount directly.
@@ -475,6 +478,9 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 	)
 	// Include image subdivisions when reported. Historical settlements with zero
 	// cache and frame counts keep their fingerprints so recovery can replay them.
+	if c.RequireAvailableBalance {
+		raw += "|require_available_balance"
+	}
 	if c.ImageCacheReadTokens > 0 {
 		raw += fmt.Sprintf("|image_cache:%d", c.ImageCacheReadTokens)
 	}

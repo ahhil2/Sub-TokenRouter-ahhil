@@ -329,7 +329,9 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 			// The upstream has already rejected authentication. Attempt provider error
 			// persistence, but retain that rejection as the returned probe failure even
 			// when its state write fails.
-			_ = s.Store.SetError(ctx, value.ID, errMsg)
+			// Private user generation can receive echoed prompt text in an error body.
+			// Sanitize the persistent diagnostic before the provider state write occurs.
+			_ = s.Store.SetError(ctx, value.ID, providercore.TextGenerationDiagnostic(ctx, errMsg))
 		}
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
@@ -406,7 +408,9 @@ func (s *OpenAIProviderTest) executeChat(
 			// The upstream has already rejected authentication. Attempt provider error
 			// persistence, but retain that rejection as the returned probe failure even
 			// when its state write fails.
-			_ = s.Store.SetError(ctx, value.ID, errMsg)
+			// Private user generation can receive echoed prompt text in an error body.
+			// Sanitize the persistent diagnostic before the provider state write occurs.
+			_ = s.Store.SetError(ctx, value.ID, providercore.TextGenerationDiagnostic(ctx, errMsg))
 		}
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
@@ -581,7 +585,9 @@ func (s *OpenAIProviderTest) executeNativeCompaction(c *TestRun, value *provider
 			// The upstream has already rejected authentication. Attempt provider error
 			// persistence, but retain that rejection as the returned probe failure even
 			// when its state write fails.
-			_ = s.Store.SetError(ctx, value.ID, errMsg)
+			// Private user generation can receive echoed prompt text in an error body.
+			// Sanitize the persistent diagnostic before the provider state write occurs.
+			_ = s.Store.SetError(ctx, value.ID, providercore.TextGenerationDiagnostic(ctx, errMsg))
 		}
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
@@ -756,7 +762,9 @@ func (s *OpenAIProviderTest) executeLegacyCompact(c *TestRun, value *providercor
 			// The upstream has already rejected authentication. Attempt provider error
 			// persistence, but retain that rejection as the returned probe failure even
 			// when its state write fails.
-			_ = s.Store.SetError(ctx, value.ID, errMsg)
+			// Private user generation can receive echoed prompt text in an error body.
+			// Sanitize the persistent diagnostic before the provider state write occurs.
+			_ = s.Store.SetError(ctx, value.ID, providercore.TextGenerationDiagnostic(ctx, errMsg))
 		}
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}

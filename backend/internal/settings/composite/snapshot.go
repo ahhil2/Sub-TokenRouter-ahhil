@@ -213,6 +213,8 @@ type Snapshot struct {
 	HomeFeaturedModels          string                          // saved featured model JSON
 	CreativeModelSettings       []creative.CreativeModelSetting // Creative group/model operation selections
 	CreativeWorkerCount         int                             // configured Creative task worker count
+	CreativePromptGroupID       int64                           // prompt routing group identifier
+	CreativePromptModel         string                          // prompt assistance model name
 
 	DefaultConcurrency int     // default registration concurrency allowance
 	DefaultBalance     float64 // default registration balance grant amount

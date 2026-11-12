@@ -195,7 +195,9 @@ func (s *CNProviderTest) Execute(
 			// Record native Messages authentication rejection when storage is
 			// configured. A failed state write does not replace the upstream failure
 			// already being returned by the probe.
-			_ = s.Store.SetError(ctx, value.ID, errMsg)
+			// Private user generation can receive echoed prompt text in an error body.
+			// Sanitize the persistent diagnostic before the provider state write occurs.
+			_ = s.Store.SetError(ctx, value.ID, providercore.TextGenerationDiagnostic(ctx, errMsg))
 		}
 		return (TestStreamOutput{}).Error(c, errMsg)
 	}

@@ -2713,6 +2713,50 @@ describe('admin SettingsView payment visible method controls', () => {
     )
   })
 
+  /**
+   * An administrator loads an expansion route and edits its text model.
+   * Bulk saving retains the configured group and trims the model sent to the backend.
+   */
+  it('loads and saves the creative prompt expansion model', async () => {
+    getSettings.mockResolvedValue({
+      ...baseSettingsResponse,
+      creative_prompt_group_id: 12,
+      creative_prompt_model: 'gpt-5.5',
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('#settings-tab-features').trigger('click')
+    await flushPromises()
+    const input = wrapper.get('#creative-prompt-model')
+    expect((input.element as HTMLInputElement).value).toBe('gpt-5.5')
+    await input.setValue(' gpt-5.6 ')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ creative_prompt_group_id: 12, creative_prompt_model: 'gpt-5.6' }),
+    )
+  })
+
+  /**
+   * A configured expansion group requires a concrete text model name.
+   * The page rejects wildcard input before any settings update request is sent.
+   */
+  it('rejects wildcard prompt expansion models', async () => {
+    getSettings.mockResolvedValue({
+      ...baseSettingsResponse,
+      creative_prompt_group_id: 12,
+      creative_prompt_model: 'gpt-5.5',
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('#settings-tab-features').trigger('click')
+    await flushPromises()
+    await wrapper.get('#creative-prompt-model').setValue('gpt-*')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(updateSettings).not.toHaveBeenCalled()
+  })
+
   // A Gemini creative model has generation and stale inpainting saved in its
   // settings. Saving removes unsupported inpainting while retaining generation
   // for the same model.

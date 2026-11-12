@@ -184,7 +184,9 @@ func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, 
 			// The forbidden reply is already the probe failure. Attempt to retain
 			// provider error state, but return that reply even when its storage update
 			// fails.
-			_ = s.Store.SetError(ctx, value.ID, errMsg)
+			// Private user generation can receive echoed prompt text in an error body.
+			// Sanitize the persistent diagnostic before the provider state write occurs.
+			_ = s.Store.SetError(ctx, value.ID, providercore.TextGenerationDiagnostic(ctx, errMsg))
 		}
 
 		return (TestStreamOutput{}).Error(c, errMsg)
@@ -277,7 +279,9 @@ func (s *AnthropicProviderTest) executeVertex(c *TestRun, ctx context.Context, v
 			// The forbidden reply is already the probe failure. Attempt to retain
 			// provider error state, but return that reply even when its storage update
 			// fails.
-			_ = s.Store.SetError(ctx, value.ID, errMsg)
+			// Private user generation can receive echoed prompt text in an error body.
+			// Sanitize the persistent diagnostic before the provider state write occurs.
+			_ = s.Store.SetError(ctx, value.ID, providercore.TextGenerationDiagnostic(ctx, errMsg))
 		}
 		return (TestStreamOutput{}).Error(c, errMsg)
 	}

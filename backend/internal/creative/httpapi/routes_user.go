@@ -5,19 +5,20 @@ import "github.com/gin-gonic/gin"
 // routes_user.go registers authenticated creative model, task, and output
 // routes.
 // Creative tasks are exposed under the authenticated dashboard route group.
-// Creation also passes through the supplied heavy-request limiter, while model
+// Creation and prompt expansion pass through the heavy-request limiter; model
 // reads, task queries, binary output delivery, and acknowledgment use their
 // individual handler scope checks.
 
 // RegisterUserRoutes mounts creative endpoints under a group with
 // caller-installed authentication and audit middleware. The supplied heavy
-// handler precedes CreateRun alone; callers configure the endpoint service
+// handler precedes creation and prompt expansion; callers configure the endpoint service
 // before registering these routes.
 func RegisterUserRoutes(authenticated *gin.RouterGroup, endpoint *CreativeHandler, heavy gin.HandlerFunc) {
 	creative := authenticated.Group("/creative")
 	{
 		creative.GET("/capabilities", endpoint.ListCapabilities)
 		creative.GET("/models", endpoint.ListModels)
+		creative.POST("/prompt/expand", heavy, endpoint.ExpandPrompt)
 		creative.POST("/runs", heavy, endpoint.CreateRun)
 		creative.GET("/runs/active", endpoint.ListActiveRuns)
 		creative.GET("/runs", endpoint.ListRuns)

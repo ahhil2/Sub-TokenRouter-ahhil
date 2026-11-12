@@ -105,6 +105,12 @@ func DiffSettings(before *composite.Snapshot, after *composite.Snapshot, beforeA
 	if !reflect.DeepEqual(before.CreativeModelSettings, after.CreativeModelSettings) {
 		changed = append(changed, "creative_model_settings")
 	}
+	if before.CreativePromptGroupID != after.CreativePromptGroupID {
+		changed = append(changed, "creative_prompt_group_id")
+	}
+	if before.CreativePromptModel != after.CreativePromptModel {
+		changed = append(changed, "creative_prompt_model")
+	}
 	if before.CreativeWorkerCount != after.CreativeWorkerCount {
 		changed = append(changed, "creative_worker_count")
 	}

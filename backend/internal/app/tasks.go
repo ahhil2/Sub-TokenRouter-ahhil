@@ -109,8 +109,9 @@ func provideBatchRegistry(cfg *config.Config) *batchimage.Registry[batchimagepro
 // provideCreativeHTTP constructs the creative handler and binds task admission.
 // activity must be nonnil, and construction finishes before serving requests;
 // the handler releases admitted activity after its response handling returns.
-func provideCreativeHTTP(s *creative.Public, activity *taskRequestActivity) *creativehttp.CreativeHandler {
+func provideCreativeHTTP(s *creative.Public, prompt *creative.PromptExpander, activity *taskRequestActivity) *creativehttp.CreativeHandler {
 	h := creativehttp.NewCreativeHandler(s)
+	h.BindPromptExpansion(prompt)
 	h.BindActivity(activity.Enter)
 	return h
 }

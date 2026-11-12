@@ -433,6 +433,7 @@ async function onClearLocalData(): Promise<void> {
 /* Subtract the desktop history reserve from both centering and maximum width so the composer stays inside the visible canvas region. */
 .creative-composer-dock {
   left: calc((100% - var(--creative-history-reserve, 0px)) / 2);
+  width: 960px;
   max-width: calc(100% - var(--creative-history-reserve, 0px) - 1.5rem);
   transition:
     left var(--motion-layout) var(--motion-ease),

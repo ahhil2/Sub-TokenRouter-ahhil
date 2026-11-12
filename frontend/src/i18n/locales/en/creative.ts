@@ -7,7 +7,18 @@ export default {
   creative: {
     title: 'Creative Studio',
     description: 'Generate and edit images with AI models; assets stay in this browser only.',
+    prompt: {
+      expand: 'AI expand',
+      expanding: 'Expanding…',
+      restore: 'Restore prompt',
+      restoreHint: 'Restore the prompt from before expansion, free of charge.',
+      price: 'Each successful expansion costs CNY 0.015. Failed attempts are free.',
+      unconfigured: 'The administrator has not configured an expansion model.',
+      failed: 'Prompt expansion failed. Please retry.',
+      changed: 'The prompt changed while expanding. Your current text was kept.',
+    },
     panel: {
+      prompt: 'Prompt',
       outputFormat: 'Output format',
       frameCount: 'Frame count',
       frameDuration: 'Frame delay (ms)',

@@ -203,6 +203,40 @@ export interface CreativeCapabilities {
   max_total_input_bytes: number // Maximum combined input bytes.
   max_mask_bytes: number // Maximum mask bytes.
   allowed_mime_types: string[] // Accepted image MIME types.
+  prompt_expansion_enabled?: boolean // Administrator-configured prompt expansion availability.
+  prompt_expansion_price_cny?: number // Fixed expansion price, CNY.
+}
+
+/** CreativeExpandedPrompt contains the expanded text and its fixed CNY charge. */
+export interface CreativeExpandedPrompt {
+  prompt: string // Expanded generation prompt text.
+  cost_cny: number // Successful expansion cost, CNY.
+}
+
+/**
+ * expandCreativePrompt submits a paid expansion within the caller's workspace.
+ * Retain the idempotency key when retrying an unresolved request so a completed
+ * operation can return its cached result with the same charge.
+ */
+export async function expandCreativePrompt(
+  prompt: string,
+  workspaceId: string,
+  idempotencyKey: string,
+  signal?: AbortSignal,
+): Promise<CreativeExpandedPrompt> {
+  const { data } = await apiClient.post<CreativeExpandedPrompt>(
+    '/creative/prompt/expand',
+    { prompt, media_type: 'image' },
+    {
+      timeout: 120000,
+      signal,
+      headers: {
+        'X-Creative-Workspace-ID': workspaceId,
+        'Idempotency-Key': idempotencyKey,
+      },
+    },
+  )
+  return data
 }
 
 /**
@@ -232,6 +266,8 @@ export async function getCreativeCapabilities(): Promise<CreativeCapabilities> {
    * retaining a supplied MIME array for input validation.
    */
   return {
+    prompt_expansion_enabled: data?.prompt_expansion_enabled === true,
+    prompt_expansion_price_cny: Number(data?.prompt_expansion_price_cny) || 0.015,
     max_prompt_chars: Number(data?.max_prompt_chars) || 8000,
     max_asset_bytes: Number(data?.max_asset_bytes) || 33554432,
     max_total_input_bytes: Number(data?.max_total_input_bytes) || 67108864,

@@ -1472,6 +1472,18 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.CreativeModelSettings
 		}(),
+		CreativePromptGroupID: func() int64 {
+			if req.CreativePromptGroupID != nil {
+				return *req.CreativePromptGroupID
+			}
+			return previousSettings.CreativePromptGroupID
+		}(),
+		CreativePromptModel: func() string {
+			if req.CreativePromptModel != nil {
+				return *req.CreativePromptModel
+			}
+			return previousSettings.CreativePromptModel
+		}(),
 		CreativeWorkerCount: func() int {
 			if req.CreativeWorkerCount != nil {
 				return *req.CreativeWorkerCount
@@ -1884,6 +1896,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	fields["creative_enabled"], _ = json.Marshal(settings.CreativeEnabled)
 	fields["creative_worker_count"], _ = json.Marshal(settings.CreativeWorkerCount)
 	fields["creative_model_settings"], _ = json.Marshal(settings.CreativeModelSettings)
+	fields["creative_prompt_group_id"], _ = json.Marshal(settings.CreativePromptGroupID)
+	fields["creative_prompt_model"], _ = json.Marshal(settings.CreativePromptModel)
 	fields["api_key_acl_trust_forwarded_ip"], _ = json.Marshal(settings.APIKeyACLTrustForwardedIP)
 	fields["forwarded_client_ip_headers"], _ = json.Marshal(settings.ForwardedClientIPHeaders)
 	if err := mergeNormalizedSettingsFields(fields, settings.BillingAdminSettings(), sentFields); err != nil {

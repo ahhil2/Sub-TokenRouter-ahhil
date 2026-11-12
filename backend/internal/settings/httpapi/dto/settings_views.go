@@ -190,6 +190,8 @@ type SystemSettings struct {
 	HomeFeaturedModels          []string                        `json:"home_featured_models"`            // ordered featured model identifier list
 	CreativeModelSettings       []creative.CreativeModelSetting `json:"creative_model_settings"`         // Creative group/model operation selections
 	CreativeWorkerCount         int                             `json:"creative_worker_count"`           // configured Creative task worker count
+	CreativePromptGroupID       int64                           `json:"creative_prompt_group_id"`        // prompt routing group identifier
+	CreativePromptModel         string                          `json:"creative_prompt_model"`           // prompt assistance model name
 
 	DefaultConcurrency                   int                                      `json:"default_concurrency"`                     // default registration concurrency allowance
 	DefaultBalance                       float64                                  `json:"default_balance"`                         // default registration balance grant amount

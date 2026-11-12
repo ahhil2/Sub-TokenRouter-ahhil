@@ -218,6 +218,11 @@ type UpdateSettingsRequest struct {
 	// CreativeWorkerCount retains the prior count when nil. A supplied count
 	// must be positive before the handler can prepare it for the task publisher.
 	CreativeWorkerCount *int `json:"creative_worker_count"` // configured Creative task worker count
+	// CreativePromptGroupID and CreativePromptModel retain saved values when nil.
+	// The merged pair must identify one route or contain zero and empty values
+	// together to disable prompt assistance for subsequent requests.
+	CreativePromptGroupID *int64  `json:"creative_prompt_group_id"` // prompt routing group identifier
+	CreativePromptModel   *string `json:"creative_prompt_model"`    // prompt assistance model name
 
 	DefaultConcurrency           int     `json:"default_concurrency"`              // default registration concurrency allowance
 	DefaultBalance               float64 `json:"default_balance"`                  // default registration balance grant amount

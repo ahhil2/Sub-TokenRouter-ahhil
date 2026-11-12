@@ -439,7 +439,7 @@ func newCompositeSettingsHTTPFixture(repo settingscore.Repository, cfg *config.C
 }
 
 // TestSettingsFieldOwnership enumerates static participants and the flattened
-// update request type. It checks unique ownership, all 283 request fields are
+// update request type. It checks unique ownership, all 285 request fields are
 // represented, and no participant declares an extra field outside that request.
 func TestSettingsFieldOwnership(t *testing.T) {
 	defaults := scheduler.DefaultAdminSettingsDefaults()
@@ -472,7 +472,7 @@ func TestSettingsFieldOwnership(t *testing.T) {
 		delete(owners, name)
 		count++
 	}
-	require.Equal(t, 283, count, "HTTP 字段变化需要同步字段登记")
+	require.Equal(t, 285, count, "HTTP 字段变化需要同步字段登记")
 	require.Empty(t, owners, "参与者不应声明不存在的输入字段")
 }
 
@@ -2202,4 +2202,26 @@ func TestUpdateSettingsRejectsDeprecatedAdvancedSchedulerFields(t *testing.T) {
 			require.Contains(t, rec.Body.String(), field)
 		})
 	}
+}
+
+// TestUpdateSettingsCreativePromptPartialSemantics updates the prompt route
+// through the administrator HTTP handler. Omitted fields retain their pair and invalid updates leave storage unchanged.
+func TestUpdateSettingsCreativePromptPartialSemantics(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
+	rec := doUpdateSettings(t, h, map[string]any{"creative_prompt_group_id": 12, "creative_prompt_model": "text-model"}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "12", repo.values[creative.SettingKeyCreativePromptGroupID])
+	rec = doUpdateSettings(t, h, map[string]any{"creative_prompt_model": "text-updated"}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "12", repo.values[creative.SettingKeyCreativePromptGroupID])
+	rec = doUpdateSettings(t, h, map[string]any{"risk_control_enabled": true, "creative_prompt_model": nil}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "text-updated", repo.values[creative.SettingKeyCreativePromptModel])
+	rec = doUpdateSettings(t, h, map[string]any{"creative_prompt_group_id": -1}, nil)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "12", repo.values[creative.SettingKeyCreativePromptGroupID])
+	rec = doUpdateSettings(t, h, map[string]any{"creative_prompt_group_id": 0, "creative_prompt_model": ""}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "0", repo.values[creative.SettingKeyCreativePromptGroupID])
+	require.Equal(t, "", repo.values[creative.SettingKeyCreativePromptModel])
 }

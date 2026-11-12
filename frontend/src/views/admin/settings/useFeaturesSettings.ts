@@ -41,6 +41,8 @@ export type FeaturesSettingsForm = Pick<
   | 'creative_enabled'
   | 'creative_model_settings'
   | 'creative_worker_count'
+  | 'creative_prompt_group_id'
+  | 'creative_prompt_model'
   | 'cyber_session_block_enabled'
   | 'cyber_session_block_ttl_seconds'
   | 'risk_control_enabled'
@@ -80,6 +82,49 @@ export function useFeaturesSettings(form: FeaturesSettingsForm, activeTab: Ref<S
   // successful lookup records readiness until the controller's page is discarded.
   let creativeModelCandidatesLoaded = false
   let creativeModelCandidatesRequest: Promise<void> | null = null
+
+  // Prompt routing groups load separately because image model candidates omit
+  // text-only groups that administrators may select for paid prompt expansion.
+  const creativePromptGroups = ref<
+    Array<{
+      value: number // Routing group numeric identifier.
+      label: string // Administrator-visible group display name.
+    }>
+  >([])
+  const creativePromptGroupsError = ref(false)
+  let creativePromptGroupsLoaded = false
+
+  /** creativePromptGroupOptions includes disabled mode and an unavailable saved group. */
+  const creativePromptGroupOptions = computed(() => {
+    const options = [
+      { value: 0, label: t('admin.settings.features.creative.promptDisabled') },
+      ...creativePromptGroups.value,
+    ]
+    const current = form.creative_prompt_group_id
+    if (current > 0 && !options.some((item) => item.value === current)) {
+      options.push({ value: current, label: `#${current}` })
+    }
+    return options
+  })
+
+  /**
+   * loadCreativePromptGroups retrieves active routing groups for the expansion
+   * selector. Failure leaves a saved selection visible and allows the next tab
+   * visit to retry its catalog lookup.
+   */
+  async function loadCreativePromptGroups(): Promise<void> {
+    if (creativePromptGroupsLoaded) return
+    creativePromptGroupsError.value = false
+    try {
+      const groups = await adminAPI.groups.getOptions()
+      creativePromptGroups.value = groups.map((group) => ({ value: group.id, label: group.name }))
+      creativePromptGroupsLoaded = true
+    } catch {
+      // Keep the persisted choice available when catalog lookup fails so saving
+      // unrelated settings cannot accidentally remove the administrator's routing choice.
+      creativePromptGroupsError.value = true
+    }
+  }
 
   // Status snapshots drive the usage display independently from draft edits;
   // the timer exists only while the features tab is active.
@@ -175,6 +220,7 @@ export function useFeaturesSettings(form: FeaturesSettingsForm, activeTab: Ref<S
     (tab) => {
       if (tab === 'features') {
         startCreativeWorkerStatusPolling()
+        void loadCreativePromptGroups()
       } else {
         stopCreativeWorkerStatusPolling()
       }
@@ -455,6 +501,8 @@ export function useFeaturesSettings(form: FeaturesSettingsForm, activeTab: Ref<S
   }
   return {
     creativeOperationChoices,
+    creativePromptGroupOptions,
+    creativePromptGroupsError,
     creativeModelCandidates,
     creativeModelCandidatesLoading,
     creativeModelCandidatesError,

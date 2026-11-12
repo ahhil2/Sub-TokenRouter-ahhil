@@ -576,6 +576,7 @@
   "POST /api/v1/auth/send-verify-code",
   "POST /api/v1/auth/validate-invitation-code",
   "POST /api/v1/auth/validate-promo-code",
+  "POST /api/v1/creative/prompt/expand",
   "POST /api/v1/creative/runs",
   "POST /api/v1/creative/runs/:id/outputs/:index/ack",
   "POST /api/v1/keys",

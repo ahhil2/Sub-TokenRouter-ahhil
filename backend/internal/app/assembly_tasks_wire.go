@@ -19,6 +19,7 @@ import (
 var tasksAssemblyProviders = wire.NewSet(
 	provideTaskActivity,
 	provideCreativePublic,
+	provideCreativePrompt,
 	provideCreativeWorkerRuntime,
 	provideBatchPricing,
 	provideBatchPublic,

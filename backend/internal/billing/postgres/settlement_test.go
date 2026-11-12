@@ -18,6 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
+// settlement_test.go checks SQL funding order, limits, and transaction outcomes.
 // Task reservations require available funds before submission, while completed
 // ordinary usage can create wallet debt after a pinned grant is capped. SQL
 // mocks check the selected statements, their transaction completion and
@@ -897,4 +898,26 @@ func TestIncrementUsageBillingProviderQuota_ReturnedState(t *testing.T) {
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
+}
+
+// TestStrictWalletSettlementRollsBackInsufficientFunds models a fixed-price
+// delivery with too little available balance. The financial claim rolls back before deduction.
+func TestStrictWalletSettlementRollsBackInsufficientFunds(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	store := &SettlementStore{db: db}
+	command := &billing.UsageBillingCommand{RequestID: "prompt", APIKeyID: 9, UserID: 1, BillableAmountUSD: 0.002, APIKeyBillingMode: billing.APIKeyBillingModeBalance, RequireAvailableBalance: true}
+	mock.ExpectBegin()
+	mock.ExpectQuery(usageBillingClaimSQL).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectQuery(usageBillingArchiveSQL).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(usageBillingUserLockSQL).WithArgs(int64(1)).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectQuery("SELECT balance FROM users").WithArgs(int64(1)).WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(0.001))
+	mock.ExpectRollback()
+	mock.ExpectClose()
+	_, err = store.Apply(t.Context(), command)
+	require.ErrorIs(t, err, billing.ErrTaskInsufficientBalance)
 }

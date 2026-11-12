@@ -138,12 +138,20 @@ func Prepare(ctx context.Context, settings *Snapshot, options PrepareOptions) (m
 	settings.UsageRankingLimit = usageRanking.Limit
 	maps.Copy(updates, rankingValues)
 
-	creativeSettings, creativeValues, err := creative.PrepareAdminSettings(creative.AdminSettings{CreativeEnabled: settings.CreativeEnabled, CreativeWorkerCount: settings.CreativeWorkerCount, CreativeModelSettings: settings.CreativeModelSettings})
+	creativeSettings, creativeValues, err := creative.PrepareAdminSettings(creative.AdminSettings{
+		CreativeEnabled:       settings.CreativeEnabled,
+		CreativeWorkerCount:   settings.CreativeWorkerCount,
+		CreativeModelSettings: settings.CreativeModelSettings,
+		CreativePromptGroupID: settings.CreativePromptGroupID,
+		CreativePromptModel:   settings.CreativePromptModel,
+	})
 	if err != nil {
 		return nil, err
 	}
 	settings.CreativeModelSettings = creativeSettings.CreativeModelSettings
 	settings.CreativeWorkerCount = creativeSettings.CreativeWorkerCount
+	settings.CreativePromptGroupID = creativeSettings.CreativePromptGroupID
+	settings.CreativePromptModel = creativeSettings.CreativePromptModel
 	maps.Copy(updates, creativeValues)
 
 	promotionValues, preparedPromotion := promotion.PrepareAdminSettings(promotion.AdminSettings{PromoCodeEnabled: settings.PromoCodeEnabled, InvitationCodeEnabled: settings.InvitationCodeEnabled, AffiliateEnabled: settings.AffiliateEnabled, AffiliateRebateRate: settings.AffiliateRebateRate, AffiliateRebateFreezeHours: settings.AffiliateRebateFreezeHours, AffiliateRebateDurationDays: settings.AffiliateRebateDurationDays, AffiliateRebatePerInviteeCap: settings.AffiliateRebatePerInviteeCap, AdminRechargeRebateEnabled: settings.AdminRechargeRebateEnabled})

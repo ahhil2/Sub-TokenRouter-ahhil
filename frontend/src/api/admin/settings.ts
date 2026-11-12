@@ -916,6 +916,8 @@ export interface SystemSettings {
   creative_enabled: boolean // Configured creative enabled.
   creative_model_settings: CreativeModelSetting[] // Creative model settings.
   creative_worker_count: number // Creative worker count.
+  creative_prompt_group_id: number // Expansion routing group identifier.
+  creative_prompt_model: string // Configured expansion model name.
   risk_control_enabled: boolean // Risk control enabled.
   cyber_session_block_enabled: boolean // Cyber session block enabled.
   cyber_session_block_ttl_seconds: number // Cyber session block ttl seconds.
@@ -1254,6 +1256,8 @@ export interface UpdateSettingsRequest {
   team_enabled?: boolean // Requested team enabled.
   creative_enabled?: boolean // Requested creative enabled.
   creative_worker_count?: number // Creative worker count.
+  creative_prompt_group_id?: number // Expansion routing group identifier.
+  creative_prompt_model?: string // Configured expansion model name.
   risk_control_enabled?: boolean // Risk control enabled.
   cyber_session_block_enabled?: boolean // Cyber session block enabled.
   cyber_session_block_ttl_seconds?: number // Cyber session block ttl seconds.

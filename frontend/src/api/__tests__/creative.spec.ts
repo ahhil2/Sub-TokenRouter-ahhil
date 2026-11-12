@@ -19,6 +19,7 @@ import {
   getCreativeRuns,
   getCreativeActiveRuns,
   getCreativeCapabilities,
+  expandCreativePrompt,
 } from '@/api/creative'
 
 /**
@@ -59,6 +60,24 @@ describe('creative API', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  /**
+   * Paid expansion sends the current workspace and a caller-retained retry key.
+   * The client supplies prompt intent while the administrator's model and fee
+   * remain server-controlled, and the returned text and CNY price reach callers.
+   */
+  it('submits expansion with workspace and idempotency headers', async () => {
+    adapter.mockResolvedValue(jsonResponse({ prompt: '窗边的猫', cost_cny: 0.015 }))
+    expect(await expandCreativePrompt('一只猫', WORKSPACE_ID, 'expand-once')).toEqual({
+      prompt: '窗边的猫',
+      cost_cny: 0.015,
+    })
+    const config = adapter.mock.calls[0][0] as InternalAxiosRequestConfig
+    expect(config.url).toBe('/creative/prompt/expand')
+    expect(JSON.parse(config.data)).toEqual({ prompt: '一只猫', media_type: 'image' })
+    expect(config.headers.get('X-Creative-Workspace-ID')).toBe(WORKSPACE_ID)
+    expect(config.headers.get('Idempotency-Key')).toBe('expand-once')
   })
 
   describe('createCreativeRun', () => {
@@ -226,6 +245,8 @@ describe('creative API', () => {
         }),
       )
       expect(await getCreativeCapabilities()).toEqual({
+        prompt_expansion_enabled: false,
+        prompt_expansion_price_cny: 0.015,
         max_prompt_chars: 9000,
         max_asset_bytes: 12,
         max_total_input_bytes: 20,

@@ -173,6 +173,8 @@ func buildSystemSettingsResponse(
 		CreativeEnabled:                                  settings.CreativeEnabled,
 		CreativeModelSettings:                            settings.CreativeModelSettings,
 		CreativeWorkerCount:                              settings.CreativeWorkerCount,
+		CreativePromptGroupID:                            settings.CreativePromptGroupID,
+		CreativePromptModel:                              settings.CreativePromptModel,
 		RiskControlEnabled:                               settings.RiskControlEnabled,
 		CyberSessionBlockEnabled:                         settings.CyberSessionBlockEnabled,
 		CyberSessionBlockTTLSeconds:                      settings.CyberSessionBlockTTLSeconds,
