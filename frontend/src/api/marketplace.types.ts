@@ -8,7 +8,7 @@ import type { ModelModality } from '@/api/models.types'
 // through each advertised group.
 
 // MarketplacePricingMode identifies the unit selected for a public model quote.
-export type MarketplacePricingMode = 'token' | 'image' | 'video' | 'unknown'
+export type MarketplacePricingMode = 'token' | 'per_request' | 'image' | 'video' | 'unknown'
 
 // MarketplacePriceStatus distinguishes an available public price from an unpriced model.
 export type MarketplacePriceStatus = 'priced' | 'unpriced'
@@ -50,6 +50,9 @@ export interface MarketplaceTimePricing {
 // modifiers.
 export interface MarketplaceModelPricing {
   independent_pricing?: boolean
+  // per_request_price is a fixed charge with applicable server-side multipliers already
+  // included. Zero declares a free request; absence means no fixed quote is available.
+  per_request_price?: number // Quoted amount per request.
   // video_prices includes quoted resolutions only; zero declares free video seconds. Each
   // amount already includes the group multiplier used by this public quote.
   video_prices?: Record<string, number> // Prices by video resolution.

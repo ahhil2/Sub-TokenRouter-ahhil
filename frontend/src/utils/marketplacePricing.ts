@@ -3,10 +3,10 @@ import type { MarketplaceModelPricing } from '@/api/marketplace.types'
 /**
  * marketplacePricing.ts classifies public quotes and lists available video units.
  * Explicit zero amounts remain visible as free prices, while absent or invalid amounts
- * cannot make a media quote priced. Named video resolutions remain separate from the
- * optional default price so consumers can identify each row's applicability.
+ * cannot make a request or media quote priced. Named video resolutions remain separate
+ * from the optional default price so consumers can identify each row's applicability.
  *
- * Classification combines price status, pricing mode, and valid media amounts. Video
+ * Classification combines price status, pricing mode, and valid unit amounts. Video
  * entries filter blank labels and invalid amounts before numeric label sorting, then
  * append a valid default. Distinct row keys separate a resolution literally named
  * default from the actual default row, preserving their identities when Vue updates a
@@ -66,15 +66,18 @@ export function videoPricingEntries(pricing: MarketplaceModelPricing): VideoPric
  * unavailable status returns unpriced even when amount fields remain populated, and
  * token mode is accepted directly after the status check.
  *
- * Image and video modes additionally require at least one finite nonnegative unit
+ * Request, image, and video modes additionally require a finite nonnegative unit
  * price. This distinguishes zero-cost quotes from missing or invalid amounts: a free
- * media unit is priced, while a media mode with no usable quote remains unpriced.
+ * unit is priced, while a request or media mode with no usable quote remains unpriced.
  * Unknown modes also remain unpriced.
  */
 export function pricingKind(
   pricing: MarketplaceModelPricing,
-): 'token' | 'image' | 'video' | 'unpriced' {
+): 'token' | 'per_request' | 'image' | 'video' | 'unpriced' {
   if (pricing.price_status !== 'priced') return 'unpriced'
+  if (pricing.pricing_mode === 'per_request' && isUnitPrice(pricing.per_request_price)) {
+    return 'per_request'
+  }
   if (pricing.pricing_mode === 'video' && videoPricingEntries(pricing).length > 0) return 'video'
   if (pricing.pricing_mode === 'image' && hasImagePricing(pricing)) return 'image'
   if (pricing.pricing_mode === 'token') return 'token'

@@ -175,8 +175,8 @@ import type {
 // ModelPricingPanel.vue presents public model prices inside an expandable
 // marketplace card. Backend quotes already contain the group multiplier; the
 // display adds the selected balance unit and billing unit. Token pricing chooses
-// a context interval, speed tier, reasoning tier, and time period, while image
-// and video rows retain their own units and zero-price handling.
+// a context interval, speed tier, reasoning tier, and time period, while request,
+// image, and video rows retain their own units and zero-price handling.
 //
 // Selection state belongs to the mounted panel and survives collapsing its
 // content. Available intervals and periods clamp stale selection indexes when
@@ -378,6 +378,23 @@ function videoPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
   }))
 }
 
+// perRequestPricingRows formats a fixed charge with the translated request unit.
+// Missing or invalid amounts produce no rows, while a declared zero remains
+// visible as a free request in the expanded price details.
+function perRequestPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
+  const price = pricing.per_request_price
+  if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) {
+    return []
+  }
+  return [
+    {
+      key: 'per_request',
+      label: t('marketplace.perRequestPrice'),
+      value: `${formatPrice(price)} ${t('marketplace.perRequest')}`,
+    },
+  ]
+}
+
 // imagePricingRows emits supported image-resolution prices, including finite zero values.
 // Negative, missing, and nonfinite values are omitted. Rows keep the fixed
 // resolution order and per-image unit without time or reasoning multipliers.
@@ -427,8 +444,12 @@ const activeSource = computed<MarketplaceModelPricing | MarketplacePricingInterv
 )
 
 // standardRows dispatches to the quote's billing mode before applying token
-// fallback rules; named video dimensions and image resolutions keep separate rows.
+// fallback rules; request charges, video dimensions, and image resolutions keep
+// their own amount fields and billing units.
 const standardRows = computed<PricingRow[]>(() => {
+  if (pricingKind(props.model.pricing) === 'per_request') {
+    return perRequestPricingRows(props.model.pricing)
+  }
   if (pricingKind(props.model.pricing) === 'video') {
     return videoPricingRows(props.model.pricing)
   }

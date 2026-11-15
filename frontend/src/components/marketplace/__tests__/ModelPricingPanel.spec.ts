@@ -5,8 +5,8 @@ import type { MarketplaceModel, MarketplaceModelPricing } from '@/api/marketplac
 
 // ModelPricingPanel.spec.ts checks displayed public quotes through the mounted
 // pricing controls. Fixtures isolate token intervals, speed and effort tiers,
-// timezone periods, image dimensions, and video prices, while deterministic
-// translation output exposes labels, units, and interpolation arguments.
+// timezone periods, fixed request charges, image dimensions, and video prices.
+// Deterministic translation output exposes labels, units, and interpolation arguments.
 
 vi.mock('@/composables/useBalanceDisplay', () => ({
   // useBalanceDisplay supplies the fixed unit name used by price assertions.
@@ -122,6 +122,51 @@ const unpricedPricing: MarketplaceModelPricing = {
 }
 
 describe('ModelPricingPanel', () => {
+  // An independent request quote supplies a paid amount or an explicit free amount.
+  // Expansion shows the request unit and explanation while token and media controls
+  // remain absent.
+  it.each([
+    [0.25, '0.2500'],
+    [0, '0.0000'],
+  ])('shows a fixed request price of %s with its billing unit', async (price, formatted) => {
+    const wrapper = mountPanel(
+      marketplaceModel('fixed-video', {
+        pricing_mode: 'per_request',
+        price_status: 'priced',
+        independent_pricing: true,
+        per_request_price: price,
+      }),
+    )
+
+    await wrapper.get('[data-testid="model-pricing-toggle"]').trigger('click')
+
+    const rows = wrapper.get('[data-testid="pricing-rows"]')
+    expect(rows.text()).toContain('marketplace.perRequestPrice')
+    expect(rows.text()).toContain(`${formatted} 点 marketplace.perRequest`)
+    expect(wrapper.text()).toContain('marketplace.independentPricingHint')
+    expect(rows.text()).not.toContain('marketplace.perSecond')
+    expect(rows.text()).not.toContain('marketplace.perImage')
+    expect(rows.text()).not.toContain('marketplace.input')
+    expect(wrapper.find('[data-testid="pricing-fast-switch"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="pricing-interval-switch"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  // Request mode can arrive with a missing, negative, or nonfinite quote amount.
+  // The panel hides its disclosure in each case so unavailable prices cannot appear free.
+  it.each([undefined, -1, NaN, Infinity])('hides an invalid fixed request price of %s', (price) => {
+    const wrapper = mountPanel(
+      marketplaceModel('missing-request', {
+        pricing_mode: 'per_request',
+        price_status: 'priced',
+        per_request_price: price,
+      }),
+    )
+
+    expect(wrapper.find('[data-testid="model-pricing-toggle"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('explains independent prices in the expanded details', async () => {
     const wrapper = mountPanel(
       marketplaceModel('custom-image', {

@@ -156,7 +156,8 @@ import type { MarketplaceGroup } from '@/api/marketplace.types'
  * complete filter state.
  */
 
-type PricingFilter = 'all' | 'token' | 'image' | 'video' | 'unpriced'
+// PricingFilter identifies the quote category selected through the parent page.
+type PricingFilter = 'all' | 'token' | 'per_request' | 'image' | 'video' | 'unpriced'
 
 defineProps<{
   providers: { value: string; label: string; count: number }[]

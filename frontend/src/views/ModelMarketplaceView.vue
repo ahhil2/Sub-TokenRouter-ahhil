@@ -412,8 +412,8 @@ import { useAppStore, useAuthStore } from '@/stores'
 /**
  * ModelMarketplaceView.vue presents available model prices with provider, routing-
  * group, and pricing-mode filters. Price displays use the public marketplace response,
- * including independent-price indicators and video resolution entries, while selected
- * filters determine the visible model groups.
+ * including independent-price indicators, fixed request charges, and video resolution
+ * entries, while selected filters determine the visible model groups.
  */
 
 // motionRoute supplies the route identity used by the public page's reveal directive.
@@ -422,7 +422,7 @@ const motionRoute = useMotionRoute()
 // VisibleMarketplaceGroup retains the public group shape after client-side model filtering.
 type VisibleMarketplaceGroup = MarketplaceGroup
 // PricingFilter selects the public quote category shown in marketplace results.
-type PricingFilter = 'all' | 'token' | 'image' | 'video' | 'unpriced'
+type PricingFilter = 'all' | 'token' | 'per_request' | 'image' | 'video' | 'unpriced'
 
 // PricingRow pairs a stable summary identity with its translated category and amount.
 interface PricingRow {
@@ -555,6 +555,7 @@ watch(brandFilteredGroups, (availableGroups) => {
 const pricingSelectOptions = computed<{ value: PricingFilter; label: string }[]>(() => [
   { value: 'all', label: t('marketplace.allTypes') },
   { value: 'token', label: t('marketplace.tokenPricing') },
+  { value: 'per_request', label: t('marketplace.perRequestPricing') },
   { value: 'image', label: t('marketplace.imagePricing') },
   { value: 'video', label: t('marketplace.videoPricing') },
   { value: 'unpriced', label: t('marketplace.unpriced') },
@@ -958,7 +959,7 @@ function compactIntervalTokenPricingRows(pricing: MarketplacePricingInterval): P
 /**
  * compactPricingRows selects summary rows with units matching the public quote.
  * Unpriced models return no rows. Token context ranges use compact summaries,
- * while image and video models expose their available unit prices.
+ * while request and media models expose their available unit prices.
  */
 function compactPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
   const kind = pricingKind(pricing)
@@ -967,6 +968,9 @@ function compactPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
   }
   if (kind === 'token') {
     return compactTokenPricingRows(pricing)
+  }
+  if (kind === 'per_request') {
+    return perRequestPricingRows(pricing)
   }
   if (kind === 'image') {
     return imagePricingRows(pricing)
@@ -988,6 +992,23 @@ function videoPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
     label: item.resolution ?? t('marketplace.defaultVideoPrice'),
     value: `${formatPrice(item.price)} ${t('marketplace.perSecond')}`,
   }))
+}
+
+// perRequestPricingRows formats a fixed charge with the translated request unit.
+// Missing or invalid amounts produce no rows, while a declared zero remains
+// visible as a free request in the model card summary.
+function perRequestPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
+  const price = pricing.per_request_price
+  if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) {
+    return []
+  }
+  return [
+    {
+      key: 'per_request',
+      label: t('marketplace.perRequestPrice'),
+      value: `${formatPrice(price)} ${t('marketplace.perRequest')}`,
+    },
+  ]
 }
 
 // imagePricingRows emits the declared finite, nonnegative image-resolution prices.

@@ -3,6 +3,7 @@ package pricing
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -213,19 +214,86 @@ func TestDefaultBillingModeIgnoresModelSpelling(t *testing.T) {
 	}
 }
 
-// TestPerRequestDisplayRequiresDeclaredImageDimensions compares generic
-// per-request prices with an explicitly labeled free image tier. Display keeps
-// unit evidence separate from model spelling and accepts case-insensitive labels.
-func TestPerRequestDisplayRequiresDeclaredImageDimensions(t *testing.T) {
+// TestPerRequestDisplayKeepsDeclaredUnits compares generic per-request prices
+// with an explicitly labeled free image tier. Model spelling cannot change the
+// declared request unit, while case-insensitive image labels preserve compatibility.
+func TestPerRequestDisplayKeepsDeclaredUnits(t *testing.T) {
 	zero := 0.0
 	generic := &ResolvedPricing{Mode: BillingModePerRequest, Source: PricingSourceConfig, DefaultPerRequestPricePresent: true}
-	if _, ok := DisplayPricingFromResolved("gpt-image-unregistered", 1, generic); ok {
-		t.Fatal("a model name converted an unlabeled per-request price into image units")
-	}
+	result, ok := DisplayPricingFromResolved("gpt-image-unregistered", 1, generic)
+	require.True(t, ok)
+	require.Equal(t, "per_request", result.PricingMode)
+	require.Equal(t, "priced", result.PriceStatus)
+	require.NotNil(t, result.PerRequestPrice)
+	require.Zero(t, *result.PerRequestPrice)
+	require.Empty(t, result.ImagePriceSizes)
 	image := &ResolvedPricing{Mode: BillingModePerRequest, Source: PricingSourceConfig, RequestTiers: []PricingInterval{{TierLabel: "1k", PerRequestPrice: &zero}}}
-	result, ok := DisplayPricingFromResolved("canvas", 1, image)
-	if !ok || result.PriceStatus != "priced" || len(result.ImagePriceSizes) != 1 || result.ImagePriceSizes[0] != "1K" || result.ImagePrice1K != 0 {
-		t.Fatalf("explicit free image tier lost its dimension or zero price: %+v", result)
+	result, ok = DisplayPricingFromResolved("canvas", 1, image)
+	require.True(t, ok)
+	require.Equal(t, "image", result.PricingMode)
+	require.Equal(t, "priced", result.PriceStatus)
+	require.Equal(t, []string{"1K"}, result.ImagePriceSizes)
+	require.Zero(t, result.ImagePrice1K)
+	require.Nil(t, result.PerRequestPrice)
+}
+
+// TestPerRequestDisplayRequiresOneFixedAmount checks defaults against every
+// declared label and context tier. Missing or variable amounts stay unavailable,
+// and invalid arithmetic cannot escape into a numeric public quote.
+func TestPerRequestDisplayRequiresOneFixedAmount(t *testing.T) {
+	zero, paid, other, doubled := 0.0, 0.25, 0.5, 0.5
+	negative, notANumber, infinite, huge := -0.25, math.NaN(), math.Inf(1), math.MaxFloat64
+	for _, tc := range []struct {
+		name         string            // named availability or arithmetic case
+		defaultPrice *float64          // supplied default, including explicit zero
+		tiers        []PricingInterval // configured labeled or context amounts
+		rate         float64           // display multiplier applied after resolution
+		want         *float64          // nil means no fixed public price
+	}{
+		{name: "paid default", defaultPrice: &paid, rate: 2, want: &doubled},
+		{name: "free default", defaultPrice: &zero, rate: 2, want: &zero},
+		{name: "free group", defaultPrice: &paid, rate: 0, want: &zero},
+		{name: "missing default", rate: 1},
+		{name: "label without default", tiers: []PricingInterval{{TierLabel: "720p", PerRequestPrice: &paid}}, rate: 1},
+		{name: "context without default", tiers: []PricingInterval{{MinTokens: 100, PerRequestPrice: &paid}}, rate: 1},
+		{name: "same labeled amount", defaultPrice: &paid, tiers: []PricingInterval{{TierLabel: "720p", PerRequestPrice: &paid}}, rate: 2, want: &doubled},
+		{name: "same context amount", defaultPrice: &paid, tiers: []PricingInterval{{MinTokens: 100, PerRequestPrice: &paid}}, rate: 2, want: &doubled},
+		{name: "same mixed amounts", defaultPrice: &paid, tiers: []PricingInterval{{TierLabel: "720p", PerRequestPrice: &paid}, {MinTokens: 100, PerRequestPrice: &paid}}, rate: 2, want: &doubled},
+		{name: "free uniform tiers", defaultPrice: &zero, tiers: []PricingInterval{{TierLabel: "720p", PerRequestPrice: &zero}, {MinTokens: 100, PerRequestPrice: &zero}}, rate: 2, want: &zero},
+		{name: "different labeled amount", defaultPrice: &paid, tiers: []PricingInterval{{TierLabel: "720p", PerRequestPrice: &other}}, rate: 1},
+		{name: "different context amount", defaultPrice: &paid, tiers: []PricingInterval{{MinTokens: 100, PerRequestPrice: &other}}, rate: 1},
+		{name: "negative default", defaultPrice: &negative, rate: 1},
+		{name: "negative default and rate", defaultPrice: &negative, rate: -1},
+		{name: "nonfinite default", defaultPrice: &notANumber, rate: 1},
+		{name: "infinite default", defaultPrice: &infinite, rate: 1},
+		{name: "negative output", defaultPrice: &paid, rate: -1},
+		{name: "nonfinite output", defaultPrice: &paid, rate: math.NaN()},
+		{name: "infinite output", defaultPrice: &paid, rate: math.Inf(1)},
+		{name: "overflow output", defaultPrice: &huge, rate: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolved := &ResolvedPricing{Mode: BillingModePerRequest, Source: PricingSourceConfig, RequestTiers: tc.tiers}
+			if tc.defaultPrice != nil {
+				resolved.DefaultPerRequestPrice = *tc.defaultPrice
+				resolved.DefaultPerRequestPricePresent = true
+			}
+			quote, ok := DisplayPricingFromResolved("request-model", tc.rate, resolved)
+			if tc.want == nil {
+				require.False(t, ok)
+				require.Nil(t, quote.PerRequestPrice)
+				return
+			}
+			require.True(t, ok)
+			require.Equal(t, "per_request", quote.PricingMode)
+			require.Equal(t, "priced", quote.PriceStatus)
+			require.NotNil(t, quote.PerRequestPrice)
+			require.Equal(t, *tc.want, *quote.PerRequestPrice)
+			require.Empty(t, quote.ImagePriceSizes)
+			require.Nil(t, quote.VideoPricePerSecond)
+			resolved.Source = PricingSourceCatalog
+			_, ok = DisplayPricingFromResolved("request-model", tc.rate, resolved)
+			require.False(t, ok, "generic request display requires a configured card")
+		})
 	}
 }
 

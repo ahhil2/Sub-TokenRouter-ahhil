@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -231,34 +232,102 @@ func TestPublicQuoteIndependentPricingMatchesSettlement(t *testing.T) {
 	}
 }
 
-// TestPublicQuoteIndependentRequestRequiresDisplayDimensions checks unlabeled
-// independent per-request prices. The public quote does not infer image units
-// from a model name, while settlement still charges the configured independent
-// amount for every request, including an explicitly free default.
-func TestPublicQuoteIndependentRequestRequiresDisplayDimensions(t *testing.T) {
+// TestPublicQuoteFixedRequestMatchesSettlement checks fixed per-request cards
+// with independent and ordinary pricing. Free, default-only, and uniform-tier
+// quotes match settlement after card and group multipliers without inferring
+// image or per-second units from the model name.
+func TestPublicQuoteFixedRequestMatchesSettlement(t *testing.T) {
 	groupID := int64(1)
-	for _, rate := range []float64{0, 0.18, 3} {
-		for _, unit := range []float64{0, 0.065} {
-			calculator := NewCalculator(nil, CalculatorOptions{})
-			card := &ModelPricingEntry{
-				BillingMode: pricing.BillingModePerRequest, PerRequestPrice: requestTestPrice(unit),
-				PriceMultiplier: requestTestPrice(2), IndependentPricing: true,
+	for _, tc := range []struct {
+		name       string                    // named configured-card fixture
+		model      string                    // spelling cannot change request units
+		unit       float64                   // configured USD per request
+		multiplier float64                   // configured price multiplier
+		tiers      []pricing.PricingInterval // optional uniform price tiers
+	}{
+		{name: "free default", model: "custom-image", multiplier: 2},
+		{name: "paid default", model: "custom-image", unit: 0.065, multiplier: 2},
+		{name: "video named default", model: "muse-video", unit: 0.25, multiplier: 1},
+		{name: "uniform labeled and context tiers", model: "request-model", unit: 0.25, multiplier: 2, tiers: []pricing.PricingInterval{
+			{TierLabel: "720p", PerRequestPrice: requestTestPrice(0.25)},
+			{MinTokens: 100, PerRequestPrice: requestTestPrice(0.25)},
+		}},
+	} {
+		for _, independent := range []bool{false, true} {
+			for _, rate := range []float64{0, 0.18, 3} {
+				t.Run(fmt.Sprintf("%s/independent=%t/rate=%g", tc.name, independent, rate), func(t *testing.T) {
+					calculator := NewCalculator(nil, CalculatorOptions{})
+					card := &ModelPricingEntry{
+						BillingMode: pricing.BillingModePerRequest, PerRequestPrice: requestTestPrice(tc.unit),
+						PriceMultiplier: requestTestPrice(tc.multiplier), IndependentPricing: independent, Intervals: tc.tiers,
+					}
+					resolver := NewPriceResolver(mediaPriceCards{card: card}, calculator, nil, nil)
+					input := PricingInput{Model: tc.model, GroupID: &groupID}
+					quote := resolver.PublicQuote(context.Background(), PublicQuoteInput{PricingInput: input, RateMultiplier: rate})
+					effectiveRate := rate
+					if independent {
+						effectiveRate = 1
+					}
+					require.Equal(t, independent, quote.IndependentPricing)
+					require.Equal(t, "per_request", quote.PricingMode)
+					require.Equal(t, "priced", quote.PriceStatus)
+					require.NotNil(t, quote.PerRequestPrice)
+					require.InDelta(t, tc.unit*tc.multiplier*effectiveRate, *quote.PerRequestPrice, 1e-12)
+					require.Empty(t, quote.ImagePriceSizes)
+					require.Nil(t, quote.VideoPricePerSecond)
+					for _, usage := range []struct {
+						label   string // requested default or labeled price
+						context int    // observed context for interval selection
+					}{{}, {label: "720p"}, {context: 200}} {
+						cost, err := calculator.CalculateCostUnified(CostInput{
+							Ctx: context.Background(), Model: input.Model, GroupID: &groupID,
+							RequestCount: 3, RateMultiplier: rate, Resolver: resolver,
+							SizeTier: usage.label, Tokens: UsageTokens{InputTokens: usage.context},
+						})
+						require.NoError(t, err)
+						require.Equal(t, independent, cost.IndependentPricing)
+						require.InDelta(t, tc.unit*tc.multiplier*3, cost.TotalCost, 1e-12)
+						require.InDelta(t, *quote.PerRequestPrice*3, cost.ActualCost, 1e-12)
+					}
+				})
 			}
-			resolver := NewPriceResolver(mediaPriceCards{card: card}, calculator, nil, nil)
-			input := PricingInput{Model: "custom-image", GroupID: &groupID}
-			quote := resolver.PublicQuote(context.Background(), PublicQuoteInput{PricingInput: input, RateMultiplier: rate})
-			require.True(t, quote.IndependentPricing)
-			require.Equal(t, "unpriced", quote.PriceStatus)
-			require.Empty(t, quote.ImagePriceSizes)
-			cost, err := calculator.CalculateCostUnified(CostInput{
-				Ctx: context.Background(), Model: input.Model, GroupID: &groupID,
-				RequestCount: 3, RateMultiplier: rate, Resolver: resolver,
-			})
-			require.NoError(t, err)
-			require.True(t, cost.IndependentPricing)
-			require.InDelta(t, unit*2*3, cost.TotalCost, 1e-12)
-			require.InDelta(t, cost.TotalCost, cost.ActualCost, 1e-12)
 		}
+	}
+}
+
+// TestPublicQuoteVariableRequestRemainsUnpriced resolves cards without one
+// declared request amount. Selected cards retain independent-pricing metadata
+// while missing defaults and differing tiers withhold a misleading fixed quote;
+// completely empty cards remain ignored by the resolver.
+func TestPublicQuoteVariableRequestRemainsUnpriced(t *testing.T) {
+	groupID := int64(1)
+	for _, tc := range []struct {
+		name            string                    // named unavailable pricing case
+		defaultPrice    *float64                  // optional configured request default
+		tiers           []pricing.PricingInterval // labeled or context-specific prices
+		wantIndependent bool                      // selected cards retain independent pricing
+	}{
+		{name: "missing price"},
+		{name: "label without default", tiers: []pricing.PricingInterval{{TierLabel: "720p", PerRequestPrice: requestTestPrice(0.25)}}, wantIndependent: true},
+		{name: "context without default", tiers: []pricing.PricingInterval{{MinTokens: 100, PerRequestPrice: requestTestPrice(0.25)}}, wantIndependent: true},
+		{name: "different labeled amount", defaultPrice: requestTestPrice(0.25), tiers: []pricing.PricingInterval{{TierLabel: "720p", PerRequestPrice: requestTestPrice(0.5)}}, wantIndependent: true},
+		{name: "different context amount", defaultPrice: requestTestPrice(0.25), tiers: []pricing.PricingInterval{{MinTokens: 100, PerRequestPrice: requestTestPrice(0.5)}}, wantIndependent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calculator := NewCalculator(nil, CalculatorOptions{})
+			resolver := NewPriceResolver(mediaPriceCards{card: &ModelPricingEntry{
+				BillingMode: pricing.BillingModePerRequest, PerRequestPrice: tc.defaultPrice,
+				PriceMultiplier: requestTestPrice(2), IndependentPricing: true, Intervals: tc.tiers,
+			}}, calculator, nil, nil)
+			quote := resolver.PublicQuote(context.Background(), PublicQuoteInput{
+				PricingInput: PricingInput{Model: "request-model", GroupID: &groupID}, RateMultiplier: 0,
+			})
+			require.Equal(t, tc.wantIndependent, quote.IndependentPricing)
+			require.Equal(t, "unknown", quote.PricingMode)
+			require.Equal(t, "unpriced", quote.PriceStatus)
+			require.Nil(t, quote.PerRequestPrice)
+			require.Empty(t, quote.ImagePriceSizes)
+		})
 	}
 }
 

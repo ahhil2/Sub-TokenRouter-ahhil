@@ -169,7 +169,7 @@ type CostBreakdown struct {
 // configured effort and time controls are carried separately.
 type ModelDisplayPricing struct {
 	IndependentPricing            bool
-	PricingMode                   string  // display classification: token, image, video, or unknown
+	PricingMode                   string  // token, per_request, image, video, or unknown
 	PriceStatus                   string  // priced or unpriced display state
 	InputPricePerToken            float64 // USD per text-input token
 	ImageInputPricePerToken       float64 // USD per image-input token
@@ -198,6 +198,9 @@ type ModelDisplayPricing struct {
 	// construction does not load its zone here; catalog time factors may already
 	// be included by the billing caller.
 	TimePricing *TimePricingConfig // displayed configured daily schedule
+	// PerRequestPrice supplies one fixed amount when the declared default and
+	// every request tier agree. Nil means unavailable; zero declares free usage.
+	PerRequestPrice *float64 // USD per request unit
 	// VideoPrices contains only quoted resolutions, including free amounts. The
 	// quote owns its map, and every value already includes the group multiplier.
 	VideoPrices map[string]float64 // USD per video second

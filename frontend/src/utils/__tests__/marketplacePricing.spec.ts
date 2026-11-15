@@ -2,11 +2,56 @@ import { describe, expect, it } from 'vitest'
 import { pricingKind, videoPricingEntries } from '../marketplacePricing'
 
 /**
- * marketplacePricing.spec.ts tests availability of public video quotes and their
- * row identities. Fixtures distinguish free amounts from unavailable or invalid
- * prices and keep named resolution entries separate from the optional default-
- * price row.
+ * marketplacePricing.spec.ts tests availability of public request and video quotes.
+ * Fixtures distinguish free amounts from unavailable or invalid prices and keep
+ * named video resolution entries separate from the optional default-price row.
  */
+
+describe('per-request marketplace prices', () => {
+  /**
+   * Fixed request quotes include positive and zero amounts with an available status.
+   * Classification keeps both amounts in the request category so free models remain
+   * discoverable.
+   */
+  it.each([0.25, 0])('recognizes an available request price of %s', (price) => {
+    expect(
+      pricingKind({
+        pricing_mode: 'per_request',
+        price_status: 'priced',
+        per_request_price: price,
+      }),
+    ).toBe('per_request')
+  })
+
+  /**
+   * Request quotes can lack an amount or contain unusable numbers despite a priced
+   * status. Those records remain unavailable instead of appearing as free requests.
+   */
+  it.each([undefined, -1, NaN, Infinity])('rejects an unavailable request price of %s', (price) => {
+    expect(
+      pricingKind({
+        pricing_mode: 'per_request',
+        price_status: 'priced',
+        per_request_price: price,
+      }),
+    ).toBe('unpriced')
+  })
+
+  /**
+   * An unavailable request quote still carries an amount from its data source.
+   * The availability status takes precedence so populated fields cannot expose an
+   * invalid quote.
+   */
+  it('honors an unavailable status despite a populated request amount', () => {
+    expect(
+      pricingKind({
+        pricing_mode: 'per_request',
+        price_status: 'unpriced',
+        per_request_price: 0.25,
+      }),
+    ).toBe('unpriced')
+  })
+})
 
 describe('video marketplace prices', () => {
   /**

@@ -11,6 +11,9 @@ export default {
     actualPricingNote:
       'Prices use the configured model rates and group multiplier. Unit: {unitName}',
     tokenPricing: 'Token Pricing',
+    perRequestPricing: 'Per-request Pricing',
+    perRequestPrice: 'Request price',
+    perRequest: '/ request',
     contextIntervalPricing: 'Context Interval Pricing',
     pricingDetail: 'Full Pricing Details',
     viewPricing: 'View detailed pricing',

@@ -163,3 +163,58 @@ func TestVideoQuoteJSONPreservesFreeAndMissingPrices(t *testing.T) {
 	require.NotContains(t, string(body), "video_prices")
 	require.NotContains(t, string(body), "video_price_per_second")
 }
+
+// TestPerRequestQuoteJSONPreservesFreeAndMissingPrices passes request quotes
+// through a group with a nonunit multiplier. JSON retains the resolved amount
+// without applying the multiplier again, preserves independent pricing and free
+// requests, and omits unavailable prices.
+func TestPerRequestQuoteJSONPreservesFreeAndMissingPrices(t *testing.T) {
+	zero := 0.0
+	paid := 0.25
+	for _, tc := range []struct {
+		name     string                      // named serialization case
+		quote    pricing.ModelDisplayPricing // already resolved public quote
+		wantJSON string                      // expected pricing response object
+	}{
+		{
+			name: "free independent request",
+			quote: pricing.ModelDisplayPricing{
+				PricingMode: "per_request", PriceStatus: "priced",
+				PerRequestPrice: &zero, IndependentPricing: true,
+			},
+			wantJSON: `{"pricing_mode":"per_request","price_status":"priced","per_request_price":0,"independent_pricing":true}`,
+		},
+		{
+			name: "paid independent request",
+			quote: pricing.ModelDisplayPricing{
+				PricingMode: "per_request", PriceStatus: "priced",
+				PerRequestPrice: &paid, IndependentPricing: true,
+			},
+			wantJSON: `{"pricing_mode":"per_request","price_status":"priced","per_request_price":0.25,"independent_pricing":true}`,
+		},
+		{
+			name: "paid ordinary request",
+			quote: pricing.ModelDisplayPricing{
+				PricingMode: "per_request", PriceStatus: "priced", PerRequestPrice: &paid,
+			},
+			wantJSON: `{"pricing_mode":"per_request","price_status":"priced","per_request_price":0.25}`,
+		},
+		{
+			name:     "unavailable request",
+			quote:    pricing.ModelDisplayPricing{PricingMode: "unknown", PriceStatus: "unpriced"},
+			wantJSON: `{"pricing_mode":"unknown","price_status":"unpriced"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			groups := ModelMarketplaceGroupsFromRouting([]routing.ModelMarketplaceGroup{{
+				ID: 1, RateMultiplier: 2, ModelCount: 1,
+				Models: []routing.ModelMarketplaceModel{{ID: "request-model", Pricing: tc.quote}},
+			}})
+			require.Len(t, groups, 1)
+			require.Len(t, groups[0].Models, 1)
+			body, err := json.Marshal(groups[0].Models[0].Pricing)
+			require.NoError(t, err)
+			require.JSONEq(t, tc.wantJSON, string(body))
+		})
+	}
+}

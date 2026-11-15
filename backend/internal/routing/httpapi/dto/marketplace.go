@@ -17,6 +17,8 @@ import (
 // may carry a numeric zero before HTTP conversion. ImagePriceSizes retains
 // which sizes were quoted; the mapper emits a pointer for a known free size
 // and leaves an unavailable size absent from JSON.
+// Per-request amounts and video defaults retain optional pointers so explicit
+// zero prices stay distinguishable from unavailable quotes.
 //
 // Marketplace groups also carry optional observations and route display
 // attributes supplied by routing. Conversion allocates the group, model,
@@ -32,10 +34,13 @@ type ModelMarketplaceStats struct {
 	TotalUsers  int64 `json:"total_users"`  // public total user count
 }
 
-// ModelMarketplacePricing exposes token and media unit amounts with optional
+// ModelMarketplacePricing exposes token, request, and media amounts with optional
 // pricing modifiers for a public group quote.
 type ModelMarketplacePricing struct {
 	IndependentPricing bool `json:"independent_pricing,omitempty"`
+	// PerRequestPrice carries the resolved USD charge for one request.
+	// A nil pointer omits unavailable pricing; a pointer to zero encodes free use.
+	PerRequestPrice *float64 `json:"per_request_price,omitempty"`
 	// VideoPrices carries the available per-resolution amounts, including zero.
 	// The billing quote already applies the group multiplier to each value.
 	VideoPrices map[string]float64 `json:"video_prices,omitempty"`
@@ -341,9 +346,10 @@ func modelMarketplaceCapacityFromRouting(capacity *routing.GroupCapacitySummary)
 // without recalculating its amounts. It allocates interval records and daily
 // schedule records, retains video maps and optional scalar pointers as read-only
 // quote data, and derives optional image prices from size-presence metadata so
-// declared free sizes remain encoded. A free video default retains its nonnil
-// pointer, while an unavailable default remains absent. Video dimension keys
-// pass through using the canonical labels supplied by the billing quote.
+// declared free sizes remain encoded. Free per-request amounts and video
+// defaults retain their nonnil pointers, while unavailable amounts remain
+// absent. Video dimension keys pass through using the canonical labels supplied
+// by the billing quote.
 func modelMarketplacePricingFromRouting(pricing pricing.ModelDisplayPricing) ModelMarketplacePricing {
 	intervals := make([]ModelMarketplacePricingInterval, 0, len(pricing.ContextIntervals))
 	for _, interval := range pricing.ContextIntervals {
@@ -369,6 +375,7 @@ func modelMarketplacePricingFromRouting(pricing pricing.ModelDisplayPricing) Mod
 
 	return ModelMarketplacePricing{
 		IndependentPricing:            pricing.IndependentPricing,
+		PerRequestPrice:               pricing.PerRequestPrice,
 		VideoPrices:                   pricing.VideoPrices,
 		VideoPricePerSecond:           pricing.VideoPricePerSecond,
 		PricingMode:                   pricing.PricingMode,

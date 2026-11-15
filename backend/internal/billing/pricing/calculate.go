@@ -634,10 +634,13 @@ func ShouldApplySessionLongContextPricing(tokens UsageTokens, pricing *ModelPric
 // displayed base copy. Unpriced gaps are omitted, and configured effort and
 // valid time rules are attached separately.
 //
-// Image and per-request displays require configuration-source prices.
-// Per-request mode also needs explicitly labeled image dimensions, then quotes
-// only fixed available 1K, 2K, and 4K amounts. Video mode exposes configured
-// per-second labels and its optional default; unsupported modes return false. Callers supply a finite rate already normalized for display.
+// Image and per-request displays require configuration-source prices. Explicit
+// image dimensions retain their available 1K, 2K, and 4K quotes. Other request
+// cards expose a fixed unit amount when a default exists and every labeled or
+// context tier agrees with it. Missing or variable request amounts remain
+// unavailable. Video mode exposes configured per-second labels and its optional
+// default; unsupported modes return false. Callers supply a finite rate already
+// normalized for display.
 func DisplayPricingFromResolved(model string, rateMultiplier float64, resolved *ResolvedPricing) (ModelDisplayPricing, bool) {
 	if resolved == nil {
 		return ModelDisplayPricing{}, false
@@ -671,7 +674,19 @@ func DisplayPricingFromResolved(model string, rateMultiplier float64, resolved *
 				}
 			}
 			if !imageDimensions {
-				return ModelDisplayPricing{}, false
+				value, found := ResolveRequestUnitPrice(resolved, "", nil)
+				if !found || !validAmount(value) || !validAmount(value*rateMultiplier) {
+					return ModelDisplayPricing{}, false
+				}
+				// Public quotes have no requested label or context. Every tier must
+				// agree with the default before one amount can describe all request units.
+				for _, tier := range resolved.RequestTiers {
+					if tier.PerRequestPrice != nil && *tier.PerRequestPrice != value {
+						return ModelDisplayPricing{}, false
+					}
+				}
+				scaled := value * rateMultiplier
+				return ModelDisplayPricing{PricingMode: "per_request", PriceStatus: "priced", PerRequestPrice: &scaled}, true
 			}
 		}
 		result := ModelDisplayPricing{PricingMode: "image", PriceStatus: "priced"}

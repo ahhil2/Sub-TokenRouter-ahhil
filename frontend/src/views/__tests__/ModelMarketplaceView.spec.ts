@@ -8,7 +8,8 @@ import type { MarketplaceGroup, MarketplaceModelPricing } from '@/api/marketplac
 // ModelMarketplaceView.spec.ts checks the mounted public model catalog with
 // deterministic group and price responses. Interactive substitutes preserve
 // filter and clipboard events while real cards verify loading placeholders,
-// modality metadata, protocol tooltips, brand artwork, and expandable price rows.
+// modality metadata, protocol tooltips, brand artwork, fixed request charges, and
+// expandable price rows.
 
 // Hoisted collaborators isolate public data loading, session initialization,
 // settings access, and clipboard writes so page effects remain directly observable.
@@ -265,6 +266,73 @@ describe('ModelMarketplaceView', () => {
     checkAuth.mockClear()
     fetchPublicSettings.mockClear()
     copyToClipboard.mockClear()
+  })
+
+  // A multiplied group contains paid, free, unavailable request prices, and a token
+  // quote. Cards retain server amounts and request units, and billing filters
+  // distinguish free quotes from missing prices.
+  it('shows and filters fixed request prices including free requests', async () => {
+    getMarketplaceModels.mockResolvedValueOnce([
+      marketplaceGroup(3, 'Fixed videos', [
+        marketplaceModel('paid-video', 'Paid Video', {
+          pricing_mode: 'per_request',
+          price_status: 'priced',
+          independent_pricing: true,
+          per_request_price: 0.25,
+        }),
+        marketplaceModel('free-video', 'Free Video', {
+          pricing_mode: 'per_request',
+          price_status: 'priced',
+          per_request_price: 0,
+        }),
+        marketplaceModel('missing-video', 'Missing Video', {
+          pricing_mode: 'per_request',
+          price_status: 'unpriced',
+        }),
+        marketplaceModel('text-model', 'Text Model', tokenPricing),
+      ]),
+    ])
+    const wrapper = await mountMarketplace()
+    const cards = wrapper.findAll('article')
+    const paidCard = cards.find((card) => card.get('h3').text() === 'Paid Video')!
+    const freeCard = cards.find((card) => card.get('h3').text() === 'Free Video')!
+    const missingCard = cards.find((card) => card.get('h3').text() === 'Missing Video')!
+
+    expect(paidCard.text()).toContain('0.2500 点 marketplace.perRequest')
+    expect(paidCard.text()).toContain('marketplace.independentPricing')
+    expect(paidCard.text()).not.toContain('0.7500')
+    expect(paidCard.text()).not.toContain('marketplace.perSecond')
+    expect(freeCard.text()).toContain('0.0000 点 marketplace.perRequest')
+    expect(missingCard.find('[data-testid="model-pricing-toggle"]').exists()).toBe(false)
+
+    await paidCard.get('[data-testid="model-pricing-toggle"]').trigger('click')
+    expect(paidCard.get('[data-testid="pricing-rows"]').text()).toContain(
+      '0.2500 点 marketplace.perRequest',
+    )
+
+    await wrapper.get('[data-testid="select-option-per_request"]').trigger('click')
+    expect(wrapper.findAll('article').map((card) => card.get('h3').text())).toEqual([
+      'Paid Video',
+      'Free Video',
+    ])
+    const requestSidebarOption = wrapper.get('[data-pricing-mode="per_request"]')
+    expect(requestSidebarOption.attributes('aria-pressed')).toBe('true')
+
+    await wrapper.get('[data-testid="select-option-unpriced"]').trigger('click')
+    expect(wrapper.findAll('article').map((card) => card.get('h3').text())).toEqual([
+      'Missing Video',
+    ])
+    expect(requestSidebarOption.attributes('aria-pressed')).toBe('false')
+
+    await requestSidebarOption.trigger('click')
+    expect(wrapper.findAll('article').map((card) => card.get('h3').text())).toEqual([
+      'Paid Video',
+      'Free Video',
+    ])
+
+    await wrapper.get('[data-testid="select-option-token"]').trigger('click')
+    expect(wrapper.findAll('article').map((card) => card.get('h3').text())).toEqual(['Text Model'])
+    wrapper.unmount()
   })
 
   // A manually resolved catalog request keeps the page in its loading phase.
