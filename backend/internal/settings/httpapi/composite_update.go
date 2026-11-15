@@ -300,8 +300,16 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
-	// Merge these pointer switches with prior state before preparing owned fields;
-	// a supplied false remains distinct from nil so older partial requests retain the saved policy.
+	// Merge pointer components and switches with prior state before preparing owned
+	// fields; supplied zero or false values clear policy while omitted fields retain it.
+	registrationIPIntervalDays := previousSettings.RegistrationIPIntervalDays
+	if req.RegistrationIPIntervalDays != nil {
+		registrationIPIntervalDays = *req.RegistrationIPIntervalDays
+	}
+	registrationIPIntervalHours := previousSettings.RegistrationIPIntervalHours
+	if req.RegistrationIPIntervalHours != nil {
+		registrationIPIntervalHours = *req.RegistrationIPIntervalHours
+	}
 	registrationEmailDomainQuotaEnabled := previousSettings.RegistrationEmailDomainQuotaEnabled
 	if req.RegistrationEmailDomainQuotaEnabled != nil {
 		registrationEmailDomainQuotaEnabled = *req.RegistrationEmailDomainQuotaEnabled
@@ -1304,6 +1312,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	settings := &composite.Snapshot{
 		ProviderSchedulingThresholds: req.ProviderSchedulingThresholds,
 
+		RegistrationIPIntervalDays:          registrationIPIntervalDays,
+		RegistrationIPIntervalHours:         registrationIPIntervalHours,
 		RegistrationEnabled:                 req.RegistrationEnabled,
 		EmailVerifyEnabled:                  req.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:    req.RegistrationEmailSuffixWhitelist,

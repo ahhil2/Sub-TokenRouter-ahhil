@@ -39,6 +39,8 @@ type SystemSettings struct {
 	// while keeping valid but unresolved override JSON in the response.
 	ResponsesWS                         json.RawMessage                  `json:"responses_ws"`                            // raw Responses WebSocket override JSON
 	ResponsesWSEffective                ws.Parameters                    `json:"responses_ws_effective"`                  // resolved Responses WebSocket runtime parameters
+	RegistrationIPIntervalDays          int                              `json:"registration_ip_interval_days"`           // whole days between successful email registrations
+	RegistrationIPIntervalHours         int                              `json:"registration_ip_interval_hours"`          // additional hours between successful email registrations
 	RegistrationEnabled                 bool                             `json:"registration_enabled"`                    // new account registration switch
 	EmailVerifyEnabled                  bool                             `json:"email_verify_enabled"`                    // registration email verification switch
 	RegistrationEmailSuffixWhitelist    []string                         `json:"registration_email_suffix_whitelist"`     // allowed registration email domain suffixes

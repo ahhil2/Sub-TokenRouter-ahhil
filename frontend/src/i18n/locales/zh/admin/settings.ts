@@ -177,6 +177,14 @@ export default {
       bucketLimitHint: '如果窗口和粒度会产生超过 720 根柱子，后端会自动放大单柱时间窗口。',
     },
     features: {
+      registrationIPInterval: {
+        title: '同 IP 注册间隔',
+        description: '同一 IP 成功注册邮箱账号后，需等待设定的间隔才能再次注册。',
+        days: '间隔天数',
+        hours: '额外小时',
+        hint: '例如 0 天 6 小时或 30 天 0 小时。设为 0 天 0 小时关闭限制；注册失败不占用间隔。',
+        invalid: '注册间隔需填写整数：天数为 0 至 3650，小时为 0 至 23。',
+      },
       team: {
         title: '团队功能',
         description: '控制用户团队页和管理员团队管理页是否开放。',

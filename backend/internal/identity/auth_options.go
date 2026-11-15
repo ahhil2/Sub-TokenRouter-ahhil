@@ -156,6 +156,10 @@ type AuthIdentity struct {
 // AuthSettings reads current authentication policy and grant defaults for
 // each action.
 type AuthSettings interface {
+	// GetRegistrationIPInterval returns the minimum successful-email-registration
+	// spacing in hours; storage or malformed-setting errors prevent registration.
+	// Missing components default to zero, and zero total hours disables enforcement.
+	GetRegistrationIPInterval(ctx context.Context) (int, error)
 	// GetCaptchaProviderConfig reads the current challenge-provider settings as
 	// one configuration. Failures remain errors for authentication admission,
 	// and enabled-provider conflicts are interpreted by the calling CAPTCHA

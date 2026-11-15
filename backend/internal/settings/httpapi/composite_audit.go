@@ -69,6 +69,12 @@ func (h *Handler) auditSettingsUpdate(c *gin.Context, before *composite.Snapshot
 // with nil grant records interpreted as zero defaults.
 func DiffSettings(before *composite.Snapshot, after *composite.Snapshot, beforeAuthSourceDefaults *identity.AuthSourceDefaultSettings, afterAuthSourceDefaults *identity.AuthSourceDefaultSettings, req UpdateSettingsRequest) []string {
 	changed := make([]string, 0, 20)
+	if before.RegistrationIPIntervalDays != after.RegistrationIPIntervalDays {
+		changed = append(changed, "registration_ip_interval_days")
+	}
+	if before.RegistrationIPIntervalHours != after.RegistrationIPIntervalHours {
+		changed = append(changed, "registration_ip_interval_hours")
+	}
 	if before.RegistrationEnabled != after.RegistrationEnabled {
 		changed = append(changed, "registration_enabled")
 	}

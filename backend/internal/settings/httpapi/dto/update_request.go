@@ -37,11 +37,16 @@ type UpdateSettingsRequest struct {
 	// ResponsesWS retains submitted JSON bytes, including null, while omission
 	// leaves a nil value. The registered WebSocket participant validates supplied
 	// objects and combines them with its deployment defaults.
-	ResponsesWS                      json.RawMessage `json:"responses_ws,omitempty"`              // raw Responses WebSocket override JSON
-	RegistrationEnabled              bool            `json:"registration_enabled"`                // new account registration switch
-	EmailVerifyEnabled               bool            `json:"email_verify_enabled"`                // registration email verification switch
-	RegistrationEmailSuffixWhitelist []string        `json:"registration_email_suffix_whitelist"` // allowed registration email domain suffixes
-	RegistrationEmailNormalization   bool            `json:"registration_email_normalization"`    // registration mailbox normalization switch
+	ResponsesWS json.RawMessage `json:"responses_ws,omitempty"` // raw Responses WebSocket override JSON
+	// RegistrationIPIntervalDays and RegistrationIPIntervalHours retain saved
+	// components when omitted or null. Explicit zero clears the corresponding
+	// component, and both zero disable the interval.
+	RegistrationIPIntervalDays       *int     `json:"registration_ip_interval_days"`       // whole days between email registrations
+	RegistrationIPIntervalHours      *int     `json:"registration_ip_interval_hours"`      // additional hours between email registrations
+	RegistrationEnabled              bool     `json:"registration_enabled"`                // new account registration switch
+	EmailVerifyEnabled               bool     `json:"email_verify_enabled"`                // registration email verification switch
+	RegistrationEmailSuffixWhitelist []string `json:"registration_email_suffix_whitelist"` // allowed registration email domain suffixes
+	RegistrationEmailNormalization   bool     `json:"registration_email_normalization"`    // registration mailbox normalization switch
 	// RegistrationEmailDomainQuotaEnabled and UserEmailChangeEnabled merge with
 	// the prior Snapshot when nil. A nonnil false is a supplied switch value,
 	// while non-pointer fields use the handler's raw-presence filtering.

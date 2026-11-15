@@ -75,6 +75,10 @@ type AdminReadSettings struct {
 func (s *OAuthSettings) ReadAdminSettings(settings map[string]string, defaultConcurrency func() int) *AdminReadSettings {
 	emailVerifyEnabled := settings[SettingKeyEmailVerifyEnabled] == "true"
 	result := &AdminReadSettings{}
+	// Administrative display uses zero for absent or malformed numeric text. The
+	// registration runtime reader separately rejects malformed stored values before account creation.
+	result.RegistrationIPIntervalDays, _ = strconv.Atoi(settings[SettingKeyRegistrationIPIntervalDays])
+	result.RegistrationIPIntervalHours, _ = strconv.Atoi(settings[SettingKeyRegistrationIPIntervalHours])
 	result.RegistrationEnabled = settings[SettingKeyRegistrationEnabled] == "true"
 	result.EmailVerifyEnabled = emailVerifyEnabled
 	result.RegistrationEmailSuffixWhitelist = ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist])

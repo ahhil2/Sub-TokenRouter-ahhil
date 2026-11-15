@@ -32,6 +32,8 @@ import type { SettingsTab } from './useNavigationSettings'
  */
 export type FeaturesSettingsForm = Pick<
   SettingsForm,
+  | 'registration_ip_interval_days'
+  | 'registration_ip_interval_hours'
   | 'affiliate_admin_recharge_enabled'
   | 'affiliate_enabled'
   | 'affiliate_rebate_duration_days'

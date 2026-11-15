@@ -1,5 +1,47 @@
 <template>
   <SettingsCard
+    :title="t('admin.settings.features.registrationIPInterval.title')"
+    :description="t('admin.settings.features.registrationIPInterval.description')"
+  >
+    <SettingsSection>
+      <SettingRow
+        id="registration-ip-interval-days"
+        field
+        label-for="registration-ip-interval-days"
+        :label="t('admin.settings.features.registrationIPInterval.days')"
+      >
+        <input
+          id="registration-ip-interval-days"
+          v-model.number="form.registration_ip_interval_days"
+          type="number"
+          min="0"
+          max="3650"
+          step="1"
+          required
+          class="input"
+        />
+      </SettingRow>
+      <SettingRow
+        id="registration-ip-interval-hours"
+        field
+        label-for="registration-ip-interval-hours"
+        :label="t('admin.settings.features.registrationIPInterval.hours')"
+        :hint="t('admin.settings.features.registrationIPInterval.hint')"
+      >
+        <input
+          id="registration-ip-interval-hours"
+          v-model.number="form.registration_ip_interval_hours"
+          type="number"
+          min="0"
+          max="23"
+          step="1"
+          required
+          class="input"
+        />
+      </SettingRow>
+    </SettingsSection>
+  </SettingsCard>
+  <SettingsCard
     :title="t('admin.settings.features.team.title')"
     :description="t('admin.settings.features.team.description')"
   >
@@ -372,7 +414,7 @@ import RuleListEditor from '@/components/common/RuleListEditor.vue'
 import type { useFeaturesSettings, FeaturesSettingsForm } from './useFeaturesSettings'
 
 /**
- * FeatureSettings.vue renders team, creative, affiliate, and risk-control settings using
+ * FeatureSettings.vue renders registration intervals, team, creative, affiliate, and risk-control settings using
  * the page-owned draft and feature controller. Creative rows expose candidates and
  * supported operations from the controller, including unavailable historical selections,
  * while worker usage displays its observed status. The shared page save action persists

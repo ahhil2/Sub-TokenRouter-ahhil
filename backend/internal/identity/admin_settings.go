@@ -226,6 +226,11 @@ type AdminSettings struct {
 	// Preparation normalizes a fresh list and encodes absent selections as an
 	// empty JSON array; empty policy permits unrestricted suffixes.
 	RegistrationEmailSuffixWhitelist []string `json:"registration_email_suffix_whitelist"`
+	// RegistrationIPIntervalDays and RegistrationIPIntervalHours form one interval
+	// between successful email signups; both zero disable enforcement. Preparation
+	// validates each component before any settings are serialized.
+	RegistrationIPIntervalDays  int `json:"registration_ip_interval_days"`  // whole days between successful email registrations
+	RegistrationIPIntervalHours int `json:"registration_ip_interval_hours"` // additional hours between successful email registrations
 	// ordinary account creation switch
 	RegistrationEnabled bool `json:"registration_enabled"`
 	// client-bound token validation switch
@@ -335,6 +340,9 @@ type AdminSettings struct {
 // use the settings participant's presence filter for selected-field updates
 // and the coordinator for actual persistence.
 func PrepareAdminSettings(settings *AdminSettings) (map[string]string, error) {
+	if !ValidRegistrationIPInterval(settings.RegistrationIPIntervalDays, settings.RegistrationIPIntervalHours) {
+		return nil, apperror.BadRequest("INVALID_REGISTRATION_IP_INTERVAL", "registration interval days must be between 0 and 3650 and hours between 0 and 23")
+	}
 	updates := make(map[string]string)
 	normalizedWhitelist, err := NormalizeRegistrationEmailSuffixWhitelist(settings.RegistrationEmailSuffixWhitelist)
 	if err != nil {
@@ -387,6 +395,8 @@ func PrepareAdminSettings(settings *AdminSettings) (map[string]string, error) {
 	if settings.GoogleOAuthFrontendRedirectURL == "" {
 		settings.GoogleOAuthFrontendRedirectURL = OAuthDefaultGoogleOAuthFrontend
 	}
+	updates[SettingKeyRegistrationIPIntervalDays] = strconv.Itoa(settings.RegistrationIPIntervalDays)
+	updates[SettingKeyRegistrationIPIntervalHours] = strconv.Itoa(settings.RegistrationIPIntervalHours)
 	updates[SettingKeyRegistrationEnabled] = strconv.FormatBool(settings.RegistrationEnabled)
 	updates[SettingKeyEmailVerifyEnabled] = strconv.FormatBool(settings.EmailVerifyEnabled)
 	updates[SettingKeyRegistrationEmailNormalization] = strconv.FormatBool(settings.RegistrationEmailNormalization)
@@ -539,4 +549,11 @@ func PrepareAdminSettings(settings *AdminSettings) (map[string]string, error) {
 	}
 	updates[SettingKeyDefaultUserAPIKeyLimit] = strconv.Itoa(settings.DefaultUserAPIKeyLimit)
 	return updates, nil
+}
+
+// ValidRegistrationIPInterval checks whole day and hour components for email
+// registration spacing. Zero days and zero hours disable the guard; bounded
+// components keep duration conversion within the supported ten-year range.
+func ValidRegistrationIPInterval(days, hours int) bool {
+	return days >= 0 && days <= 3650 && hours >= 0 && hours <= 23
 }

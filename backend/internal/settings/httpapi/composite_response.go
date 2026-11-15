@@ -29,6 +29,8 @@ func buildSystemSettingsResponse(
 	totpConfigured bool,
 ) settingsdto.SystemSettings {
 	return settingsdto.SystemSettings{
+		RegistrationIPIntervalDays:                       settings.RegistrationIPIntervalDays,
+		RegistrationIPIntervalHours:                      settings.RegistrationIPIntervalHours,
 		RegistrationEnabled:                              settings.RegistrationEnabled,
 		EmailVerifyEnabled:                               settings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:                 settings.RegistrationEmailSuffixWhitelist,

@@ -378,3 +378,30 @@ func (s *navigationSettingsSource) PrepareSettingsWithAuthSourceDefaults(_ conte
 	s.prepared = snapshot
 	return nil, errors.New("navigation preparation captured")
 }
+
+// TestUpdateSettingsRegistrationIntervalPresence submits omitted, cleared, and
+// individually supplied interval components. The handler retains saved components
+// unless the request explicitly replaces them, including replacement with zero.
+func TestUpdateSettingsRegistrationIntervalPresence(t *testing.T) {
+	for _, tc := range []struct {
+		payload string // submitted settings request body
+		days    int    // expected prepared day component
+		hours   int    // expected prepared hour component
+	}{
+		{`{}`, 30, 6},
+		{`{"registration_ip_interval_days":0}`, 0, 6},
+		{`{"registration_ip_interval_hours":0}`, 30, 0},
+		{`{"registration_ip_interval_days":0,"registration_ip_interval_hours":0}`, 0, 0},
+		{`{"registration_ip_interval_days":null,"registration_ip_interval_hours":null}`, 30, 6},
+	} {
+		source := &navigationSettingsSource{store: settings.New(nil), previous: &composite.Snapshot{RegistrationIPIntervalDays: 30, RegistrationIPIntervalHours: 6}}
+		writer := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(writer)
+		ctx.Request = httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(tc.payload))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		(&Handler{settingService: source}).UpdateSettings(ctx)
+		require.NotNil(t, source.prepared, writer.Body.String())
+		require.Equal(t, tc.days, source.prepared.RegistrationIPIntervalDays)
+		require.Equal(t, tc.hours, source.prepared.RegistrationIPIntervalHours)
+	}
+}

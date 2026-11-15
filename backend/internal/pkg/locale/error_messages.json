@@ -158,7 +158,10 @@
     "GROUP_DELETED": "The API key group has been deleted.",
     "GROUP_DISABLED": "The API key group is disabled.",
     "GROUP_REQUIRED": "Select a group for this API key in the console.",
-    "LOCALIZATION_REQUIRED": "Use localization to update plan text."
+    "LOCALIZATION_REQUIRED": "Use localization to update plan text.",
+    "REGISTRATION_IP_INTERVAL": "This IP must wait before registering another email account.",
+    "INVALID_REGISTRATION_IP_INTERVAL": "Registration interval must be 0 to 3650 days and 0 to 23 hours.",
+    "INVALID_REGISTRATION_IP": "Unable to determine the registration IP. Please try again later."
   },
   "zh-Hans": {
     "EMAIL_VERIFY_REQUIRED": "请先完成邮箱验证后再继续。",
@@ -319,6 +322,9 @@
     "GROUP_DELETED": "API Key 所属分组已删除。",
     "GROUP_DISABLED": "API Key 所属分组已停用。",
     "GROUP_REQUIRED": "请先在控制台为此 API Key 选择分组。",
-    "LOCALIZATION_REQUIRED": "请通过多语言内容字段更新套餐文案。"
+    "LOCALIZATION_REQUIRED": "请通过多语言内容字段更新套餐文案。",
+    "REGISTRATION_IP_INTERVAL": "该 IP 尚未达到注册间隔，请稍后再注册邮箱账号。",
+    "INVALID_REGISTRATION_IP_INTERVAL": "注册间隔应为 0 至 3650 天和 0 至 23 小时。",
+    "INVALID_REGISTRATION_IP": "无法识别注册 IP，请稍后重试。"
   }
 }

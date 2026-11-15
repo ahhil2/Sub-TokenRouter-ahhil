@@ -100,6 +100,8 @@ export type SettingsForm = Omit<
  */
 export function createSettingsForm() {
   const form = reactive<SettingsForm>({
+    registration_ip_interval_days: 0,
+    registration_ip_interval_hours: 0,
     registration_enabled: true,
     email_verify_enabled: false,
     registration_email_suffix_whitelist: [],

@@ -312,7 +312,8 @@ func (h *SessionHandler) ensureBackendModeAllowsNewUserLogin(ctx context.Context
 }
 
 // Register validates account JSON and applicable CAPTCHA before registration
-// with email proof and signup codes. It records the selected audit actor after
+// with email proof, signup codes, and the resolved client IP used by registration
+// interval enforcement. It records the selected audit actor after
 // account creation, then uses the shared active-account credential response
 // helper.
 func (h *SessionHandler) Register(c *gin.Context) {
@@ -332,7 +333,7 @@ func (h *SessionHandler) Register(c *gin.Context) {
 		return
 	}
 
-	_, user, err := h.authService.RegisterWithVerification(c.Request.Context(), req.Email, req.Password, req.VerifyCode, req.PromoCode, req.InvitationCode, req.AffCode)
+	_, user, err := h.authService.RegisterWithVerification(c.Request.Context(), req.Email, req.Password, req.VerifyCode, req.PromoCode, req.InvitationCode, req.AffCode, clientip.GetClientIP(c))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

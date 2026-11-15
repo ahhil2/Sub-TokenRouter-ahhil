@@ -3,7 +3,7 @@ import type { UpdateSettingsRequest, CreativeModelSetting } from '@/api/admin/se
 
 /**
  * featuresSettingsPayload.ts builds feature flags, affiliate values, creative selections,
- * and session-block expiry for bulk saving. The coordinator provides validated creative
+ * registration intervals, and session-block expiry for bulk saving. The coordinator provides validated creative
  * rows and worker count separately, while this serializer clamps affiliate numeric values
  * and floors session-block expiry while clamping its minimum to one second.
  */
@@ -17,6 +17,8 @@ import type { UpdateSettingsRequest, CreativeModelSetting } from '@/api/admin/se
 export function buildFeaturesSettingsPayload(
   form: Pick<
     SettingsForm,
+    | 'registration_ip_interval_days'
+    | 'registration_ip_interval_hours'
     | 'affiliate_enabled'
     | 'affiliate_rebate_rate'
     | 'affiliate_rebate_freeze_hours'
@@ -35,6 +37,8 @@ export function buildFeaturesSettingsPayload(
   normalizedCreativeWorkerCount: number,
 ): Pick<
   UpdateSettingsRequest,
+  | 'registration_ip_interval_days'
+  | 'registration_ip_interval_hours'
   | 'affiliate_enabled'
   | 'affiliate_rebate_rate'
   | 'affiliate_rebate_freeze_hours'
@@ -52,6 +56,8 @@ export function buildFeaturesSettingsPayload(
   | 'cyber_session_block_ttl_seconds'
 > {
   return {
+    registration_ip_interval_days: form.registration_ip_interval_days,
+    registration_ip_interval_hours: form.registration_ip_interval_hours,
     affiliate_enabled: form.affiliate_enabled,
 
     // Affiliate percentages are bounded to the control range, with invalid

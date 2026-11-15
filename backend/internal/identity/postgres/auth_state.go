@@ -180,7 +180,9 @@ ON CONFLICT (user_id, provider_type, grant_reason) DO NOTHING`,
 // user input is a successful no-op.
 //
 // The work rechecks enforced domain policy and normalized-email availability
-// in its operation context before account creation and invitation use. A
+// in its operation context before account creation and invitation use. Ordinary
+// email signup first reserves its IP interval in the same transaction, so a
+// failed account or invitation write restores the previous admission time. A
 // configured Ent client opens an owned transaction; database-free fixtures run
 // the supplied repositories directly. Domain quota requires the atomic
 // repository capability when a database is configured, while its absent
@@ -206,6 +208,11 @@ func (s *AuthState) AuthCreateRegisteredUser(ctx context.Context, user *identity
 	}
 
 	run := func(runCtx context.Context) error {
+		if artifacts.RegistrationIP != nil {
+			if err := s.claimRegistrationIP(runCtx, *artifacts.RegistrationIP); err != nil {
+				return err
+			}
+		}
 		domainLimit := ""
 		if artifacts.EnforceEmailDomainQuota {
 			var err error
@@ -270,7 +277,7 @@ func (s *AuthState) AuthCreateRegisteredUser(ctx context.Context, user *identity
 	if err != nil {
 		return err
 	}
-	// Rollback covers the new account and supplied invitation use when
+	// Rollback covers the IP reservation, account and supplied invitation use when
 	// registration fails after creation. Cleanup errors are discarded, and
 	// callers retain recovery of the mutated account object.
 	defer func() { _ = tx.Rollback() }()
@@ -279,9 +286,8 @@ func (s *AuthState) AuthCreateRegisteredUser(ctx context.Context, user *identity
 	if err := run(txCtx); err != nil {
 		return err
 	}
-	// Commit after guarded account creation and any invitation consumption
-	// succeed, keeping the stored account and invitation claim within the same
-	// owned registration result.
+	// Commit after guarded account creation and any invitation consumption succeed.
+	// The stored account, IP admission time, and invitation share this registration result.
 	return tx.Commit()
 }
 

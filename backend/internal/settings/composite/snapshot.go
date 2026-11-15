@@ -43,6 +43,8 @@ type Snapshot struct {
 	// raw-value expectations while normalizing the separate typed fields.
 	StoredValues map[string]string `json:"-"` // raw batch used for revision checks
 
+	RegistrationIPIntervalDays          int      // whole days between successful email registrations
+	RegistrationIPIntervalHours         int      // additional hours between successful email registrations
 	RegistrationEnabled                 bool     // new account registration switch
 	EmailVerifyEnabled                  bool     // registration email verification switch
 	RegistrationEmailSuffixWhitelist    []string // allowed registration email domain suffixes

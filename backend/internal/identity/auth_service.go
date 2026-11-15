@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -31,12 +32,13 @@ import (
 // challenge failures for HTTP callers while preserving the shared identities
 // used by wrapped-error checks.
 var (
-	ErrInvalidCredentials = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
-	ErrUserNotActive      = infraerrors.Forbidden("USER_NOT_ACTIVE", "user is not active")
-	ErrEmailExists        = infraerrors.Conflict("EMAIL_EXISTS", "email already exists")
-	ErrEmailReserved      = infraerrors.BadRequest("EMAIL_RESERVED", "email is reserved")
-	ErrInvalidToken       = infraerrors.Unauthorized("INVALID_TOKEN", "invalid token")
-	ErrTokenExpired       = infraerrors.Unauthorized("TOKEN_EXPIRED", "token has expired")
+	ErrInvalidCredentials     = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
+	ErrUserNotActive          = infraerrors.Forbidden("USER_NOT_ACTIVE", "user is not active")
+	ErrRegistrationIPInterval = infraerrors.TooManyRequests("REGISTRATION_IP_INTERVAL", "this IP must wait before registering another email account")
+	ErrEmailExists            = infraerrors.Conflict("EMAIL_EXISTS", "email already exists")
+	ErrEmailReserved          = infraerrors.BadRequest("EMAIL_RESERVED", "email is reserved")
+	ErrInvalidToken           = infraerrors.Unauthorized("INVALID_TOKEN", "invalid token")
+	ErrTokenExpired           = infraerrors.Unauthorized("TOKEN_EXPIRED", "token has expired")
 
 	ErrTokenTooLarge       = infraerrors.BadRequest("TOKEN_TOO_LARGE", "token too large")
 	ErrTokenRevoked        = infraerrors.Unauthorized("TOKEN_REVOKED", "token has been revoked")
@@ -102,9 +104,12 @@ type SendVerifyCodeResult struct {
 	Countdown int `json:"countdown"` // seconds
 }
 
-// AuthRegistrationArtifacts carries invitation observations and quota
-// selection for guarded account creation.
+// AuthRegistrationArtifacts carries the email signup IP, invitation observations,
+// and domain quota selection for guarded account creation.
 type AuthRegistrationArtifacts struct {
+	// RegistrationIP identifies the resolved origin of ordinary email signup.
+	// Nil marks other account-creation flows, which do not consume this interval.
+	RegistrationIP *netip.Addr
 	// InvitationRedeemCode holds the preflight record when policy requires an
 	// invitation. Creation performs conditional use later; callers keep this
 	// observation stable through that write.
@@ -124,10 +129,10 @@ type AuthRegistrationArtifacts struct {
 // Promotion failure is diagnostic and a failed promotion readback retains the
 // working account. Optional post-create effects and eventual token-generation
 // failure do not remove the created account here. Callers supply shaped
-// email/password input and perform CAPTCHA admission at their HTTP entry;
-// this core operation chooses whether a local email code is required from its
-// current settings read.
-func (s *AuthService) RegisterWithVerification(ctx context.Context, email, password, verifyCode, promoCode, invitationCode, affiliateCode string) (string, *User, error) {
+// email/password input and the resolved client IP, and perform CAPTCHA admission
+// at their HTTP entry. This core operation chooses whether a local email code
+// is required from its current settings read.
+func (s *AuthService) RegisterWithVerification(ctx context.Context, email, password, verifyCode, promoCode, invitationCode, affiliateCode, clientIP string) (string, *User, error) {
 	if s.Settings == nil || !s.Settings.IsRegistrationEnabled(ctx) {
 		return "", nil, ErrRegDisabled
 	}
@@ -151,6 +156,14 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	if err != nil {
 		return "", nil, err
 	}
+	registrationIP, err := netip.ParseAddr(clientIP)
+	if err != nil {
+		return "", nil, infraerrors.BadRequest("INVALID_REGISTRATION_IP", "unable to determine the registration IP")
+	}
+	// Collapse mapped IPv4 and scoped spelling before persistence so equivalent
+	// client addresses share registration history across proxy and socket spellings.
+	registrationIP = registrationIP.Unmap().WithZone("")
+	artifacts.RegistrationIP = &registrationIP
 	artifacts.EnforceEmailDomainQuota = true
 
 	if s.Settings != nil && s.Settings.IsEmailVerifyEnabled(ctx) {
@@ -196,6 +209,8 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 		// earlier reads, preserving their specific rejection identities when
 		// another request or current policy changed the outcome.
 		switch {
+		case errors.Is(err, ErrRegistrationIPInterval):
+			return "", nil, err
 		case errors.Is(err, ErrEmailExists):
 			return "", nil, ErrEmailExists
 		case errors.Is(err, ErrEmailDomainRegistrationLimit):

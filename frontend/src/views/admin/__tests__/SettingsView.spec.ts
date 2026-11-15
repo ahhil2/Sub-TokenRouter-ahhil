@@ -602,6 +602,8 @@ const ImageUploadStub = defineComponent({
 // baseSettingsResponse supplies persisted settings used by the mounted page tests.
 // Individual scenarios override fields to exercise their loading and saving rules.
 const baseSettingsResponse = {
+  registration_ip_interval_days: 0,
+  registration_ip_interval_hours: 0,
   registration_enabled: true,
   email_verify_enabled: false,
   registration_email_suffix_whitelist: [],
@@ -2830,6 +2832,78 @@ describe('admin SettingsView payment visible method controls', () => {
 
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({ creative_model_settings: [] }),
+    )
+  })
+
+  // Registration settings arrive from the server and remain editable as separate
+  // components. Saving supports the requested durations and an explicit disabled policy.
+  it.each([
+    [0, 6],
+    [30, 0],
+    [0, 0],
+  ])('saves registration interval %d days and %d hours', async (days, hours) => {
+    getSettings.mockResolvedValue({
+      ...baseSettingsResponse,
+      registration_ip_interval_days: 2,
+      registration_ip_interval_hours: 3,
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('#settings-tab-features').trigger('click')
+    const dayInput = wrapper.get('input#registration-ip-interval-days')
+    const hourInput = wrapper.get('input#registration-ip-interval-hours')
+    expect((dayInput.element as HTMLInputElement).value).toBe('2')
+    expect((hourInput.element as HTMLInputElement).value).toBe('3')
+    await dayInput.setValue(String(days))
+    await hourInput.setValue(String(hours))
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registration_ip_interval_days: days,
+        registration_ip_interval_hours: hours,
+      }),
+    )
+  })
+
+  // Numeric controls can contain fractional, out-of-range, or empty draft values.
+  // Page validation rejects every invalid component before issuing a settings request.
+  it.each([
+    ['-1', '0'],
+    ['3651', '0'],
+    ['0', '-1'],
+    ['0', '24'],
+    ['0.5', '0'],
+    ['', '6'],
+    ['30', ''],
+  ])('rejects invalid registration interval %s days and %s hours', async (days, hours) => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('#settings-tab-features').trigger('click')
+    await wrapper.get('input#registration-ip-interval-days').setValue(days)
+    await wrapper.get('input#registration-ip-interval-hours').setValue(hours)
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('admin.settings.features.registrationIPInterval.invalid')
+  })
+
+  // A settings response from an older server omits both interval fields.
+  // The form displays disabled defaults and includes those explicit values on save.
+  it('defaults missing registration interval fields to disabled', async () => {
+    const legacy = { ...baseSettingsResponse }
+    Reflect.deleteProperty(legacy, 'registration_ip_interval_days')
+    Reflect.deleteProperty(legacy, 'registration_ip_interval_hours')
+    getSettings.mockResolvedValue(legacy)
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registration_ip_interval_days: 0,
+        registration_ip_interval_hours: 0,
+      }),
     )
   })
 })

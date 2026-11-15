@@ -14,7 +14,9 @@ import (
 // Authentication feature checks interpret persisted text each time they run.
 // Most switches enable a feature only for the exact value true and select
 // disabled after a store failure, while numeric account limits use their own
-// defaults when input is missing or unusable. Password reset additionally
+// defaults when input is missing or unusable. Registration intervals reject
+// malformed components and read failures; absent components default to zero.
+// Password reset additionally
 // depends on email verification, with the two switches read separately.
 //
 // CAPTCHA verification reads its switches and server credentials through one
@@ -42,6 +44,8 @@ const (
 	SettingKeyRegistrationEmailDomainQuotaEnabled = "registration_email_domain_quota_enabled"
 	SettingKeyRegistrationEmailNormalization      = "registration_email_normalization"
 	SettingKeyRegistrationEmailSuffixWhitelist    = "registration_email_suffix_whitelist"
+	SettingKeyRegistrationIPIntervalDays          = "registration_ip_interval_days"
+	SettingKeyRegistrationIPIntervalHours         = "registration_ip_interval_hours"
 	SettingKeyRegistrationEnabled                 = "registration_enabled"
 	SettingKeySessionBindingEnabled               = "session_binding_enabled"
 	SettingKeyStepUpEnabled                       = "step_up_enabled"
@@ -450,4 +454,34 @@ func (s *RuntimeSettings) IsRegistrationEmailNormalizationEnabled(ctx context.Co
 		return false
 	}
 	return value == "true"
+}
+
+// GetRegistrationIPInterval reads the successful-registration interval in hours.
+// Missing components default to zero; malformed values and storage failures
+// remain errors so account creation cannot silently disable an enabled guard.
+//
+// Both components come from one batch read to avoid combining values from
+// different administrative saves. Range checks precede conversion, bounding the
+// total used by PostgreSQL to compare its clock with the last committed signup.
+// A disabled duration returns zero and leaves any stored IP history intact.
+func (s *RuntimeSettings) GetRegistrationIPInterval(ctx context.Context) (int, error) {
+	values, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyRegistrationIPIntervalDays, SettingKeyRegistrationIPIntervalHours})
+	if err != nil {
+		return 0, err
+	}
+	var parts [2]int
+	for index, key := range []string{SettingKeyRegistrationIPIntervalDays, SettingKeyRegistrationIPIntervalHours} {
+		if raw, exists := values[key]; exists {
+			parts[index], err = strconv.Atoi(raw)
+			if err != nil {
+				return 0, fmt.Errorf("invalid registration interval component %s: %w", key, err)
+			}
+		}
+	}
+	if !ValidRegistrationIPInterval(parts[0], parts[1]) {
+		return 0, fmt.Errorf("registration interval is outside the supported range")
+	}
+	// Settings express days and additional hours; PostgreSQL consumes the total
+	// hours while enforcing the interval against its own clock within registration.
+	return parts[0]*24 + parts[1], nil
 }

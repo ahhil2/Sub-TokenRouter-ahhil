@@ -646,6 +646,8 @@ export interface SystemSettings {
    */
   responses_ws_effective: ResponsesWSParameters // Responses ws effective.
   // Registration settings
+  registration_ip_interval_days: number // Whole days between successful email registrations.
+  registration_ip_interval_hours: number // Additional hours between successful email registrations.
   registration_enabled: boolean // Configured registration enabled.
   email_verify_enabled: boolean // Email verify enabled.
   registration_email_suffix_whitelist: string[] // Registration email suffix whitelist.
@@ -1014,6 +1016,13 @@ export interface UpdateSettingsRequest {
    * parameters; omission leaves this section outside the current partial save.
    */
   responses_ws?: ResponsesWSOverrides | null // Requested responses ws.
+  /**
+   * registration_ip_interval_days and registration_ip_interval_hours retain saved
+   * components when omitted. Explicit zeros clear components; both zero disable
+   * the interval between successful email registrations.
+   */
+  registration_ip_interval_days?: number // Whole days between registrations.
+  registration_ip_interval_hours?: number // Additional hours between registrations.
   registration_enabled?: boolean // Requested registration enabled.
   email_verify_enabled?: boolean // Email verify enabled.
   registration_email_suffix_whitelist?: string[] // Registration email suffix whitelist.

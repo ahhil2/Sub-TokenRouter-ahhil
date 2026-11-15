@@ -185,6 +185,15 @@ export default {
         'If the window and bucket size would produce more than 720 bars, the backend widens the bucket size automatically.',
     },
     features: {
+      registrationIPInterval: {
+        title: 'Registration interval per IP',
+        description:
+          'After an email account is created, the same IP must wait before registering another account.',
+        days: 'Days',
+        hours: 'Additional hours',
+        hint: 'For example, 0 days 6 hours or 30 days 0 hours. Set both to 0 to disable the limit. Failed registrations do not start the interval.',
+        invalid: 'Enter whole numbers: 0 to 3650 days and 0 to 23 hours.',
+      },
       team: {
         title: 'Team Features',
         description: 'Control whether team pages are available to users and administrators.',

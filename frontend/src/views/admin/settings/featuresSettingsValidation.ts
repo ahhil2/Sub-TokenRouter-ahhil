@@ -5,21 +5,27 @@ import type { SettingsForm } from './settingsState'
 import type { CreativeModelSetting } from '@/api/admin/settings'
 
 /**
- * featuresSettingsValidation.ts validates creative worker capacity and image and text models for
- * the bulk settings coordinator. Worker validation publishes an accepted whole count to
- * the draft, while model normalization returns a separate list; null results report errors
- * that stop request construction at the corresponding validation phase.
+ * featuresSettingsValidation.ts validates registration intervals, creative worker
+ * capacity, and models for the bulk settings coordinator. Worker validation
+ * publishes an accepted whole count to the draft, while model normalization
+ * returns a separate list; invalid results stop request construction at the
+ * corresponding validation phase.
  */
 
 /**
- * createFeaturesSettingsValidation binds worker-count checks and creative selection errors
- * to the settings page. Create it during setup and use its returned count and model list
- * in the feature serializer only after both validation steps succeed.
+ * createFeaturesSettingsValidation binds registration interval, worker-count,
+ * and creative selection checks to the settings page. Create it during setup
+ * and use its returned count and model list in the feature serializer after
+ * every validation step succeeds.
  */
 export function createFeaturesSettingsValidation(
   form: Pick<
     SettingsForm,
-    'creative_worker_count' | 'creative_prompt_group_id' | 'creative_prompt_model'
+    | 'registration_ip_interval_hours'
+    | 'registration_ip_interval_days'
+    | 'creative_worker_count'
+    | 'creative_prompt_group_id'
+    | 'creative_prompt_model'
   >,
   actions: Pick<ReturnType<typeof useFeaturesSettings>, 'normalizeCreativeModelSettingsForSave'>,
 ) {
@@ -77,5 +83,28 @@ export function createFeaturesSettingsValidation(
     }
     return normalizedCreativeModelSettings
   }
-  return { normalizeWorkerCount, normalizeModelSettings }
+
+  /**
+   * validateRegistrationInterval accepts whole days and additional hours in the
+   * supported ranges. Invalid or cleared inputs report an error and prevent the
+   * shared save request from changing registration policy.
+   */
+  function validateRegistrationInterval(): boolean {
+    const days = form.registration_ip_interval_days
+    const hours = form.registration_ip_interval_hours
+    if (
+      !Number.isSafeInteger(days) ||
+      days < 0 ||
+      days > 3650 ||
+      !Number.isSafeInteger(hours) ||
+      hours < 0 ||
+      hours > 23
+    ) {
+      appStore.showError(t('admin.settings.features.registrationIPInterval.invalid'))
+      return false
+    }
+    return true
+  }
+
+  return { normalizeWorkerCount, normalizeModelSettings, validateRegistrationInterval }
 }

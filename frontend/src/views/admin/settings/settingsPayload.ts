@@ -113,6 +113,7 @@ export function createSettingsPayload(form: SettingsForm, controllers: SettingsP
    * after the main field object is assembled.
    */
   function buildSettingsPayload(): UpdateSettingsRequest | null {
+    if (!featuresValidation.validateRegistrationInterval()) return null
     const normalizedCreativeWorkerCount = featuresValidation.normalizeWorkerCount()
     if (normalizedCreativeWorkerCount === null) return null
     if (!usersValidation.validateApiKeyLimit()) return null

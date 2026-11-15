@@ -10,7 +10,8 @@
 //
 // The user_*.go group contains profile and attribute repositories, identity
 // bindings, and entity conversion. auth_*.go and oauth_lookup.go support
-// registration, login, and provider lookup. pending*.go implements session
+// registration, login, and provider lookup; registration_ip_interval.go reserves
+// admission times inside account transactions. pending*.go implements session
 // state, binding, and profile adoption.
 //
 // admin_mutations.go and bootstrap_admin.go implement administrative account

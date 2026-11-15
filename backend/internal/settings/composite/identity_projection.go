@@ -83,6 +83,8 @@ func (s *Snapshot) IdentityAdminSettings() identity.AdminSettings {
 		RegistrationEmailDomainQuotaEnabled:    s.RegistrationEmailDomainQuotaEnabled,
 		RegistrationEmailNormalization:         s.RegistrationEmailNormalization,
 		RegistrationEmailSuffixWhitelist:       s.RegistrationEmailSuffixWhitelist,
+		RegistrationIPIntervalDays:             s.RegistrationIPIntervalDays,
+		RegistrationIPIntervalHours:            s.RegistrationIPIntervalHours,
 		RegistrationEnabled:                    s.RegistrationEnabled,
 		SessionBindingEnabled:                  s.SessionBindingEnabled,
 		StepUpEnabled:                          s.StepUpEnabled,
@@ -188,6 +190,8 @@ func (s *Snapshot) ApplyIdentityAdminSettings(value identity.AdminSettings) {
 	s.RegistrationEmailDomainQuotaEnabled = value.RegistrationEmailDomainQuotaEnabled
 	s.RegistrationEmailNormalization = value.RegistrationEmailNormalization
 	s.RegistrationEmailSuffixWhitelist = value.RegistrationEmailSuffixWhitelist
+	s.RegistrationIPIntervalDays = value.RegistrationIPIntervalDays
+	s.RegistrationIPIntervalHours = value.RegistrationIPIntervalHours
 	s.RegistrationEnabled = value.RegistrationEnabled
 	s.SessionBindingEnabled = value.SessionBindingEnabled
 	s.StepUpEnabled = value.StepUpEnabled
@@ -298,6 +302,8 @@ func (s *Snapshot) ApplyIdentityAdminReadSettings(value *identity.AdminReadSetti
 	s.RegistrationEmailDomainQuotaEnabled = value.RegistrationEmailDomainQuotaEnabled
 	s.RegistrationEmailNormalization = value.RegistrationEmailNormalization
 	s.RegistrationEmailSuffixWhitelist = value.RegistrationEmailSuffixWhitelist
+	s.RegistrationIPIntervalDays = value.RegistrationIPIntervalDays
+	s.RegistrationIPIntervalHours = value.RegistrationIPIntervalHours
 	s.RegistrationEnabled = value.RegistrationEnabled
 	s.SessionBindingEnabled = value.SessionBindingEnabled
 	s.StepUpEnabled = value.StepUpEnabled
