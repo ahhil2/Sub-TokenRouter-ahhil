@@ -1153,6 +1153,8 @@ func TestAPIContracts(t *testing.T) {
 				"message": "success",
 				"data": {
 					"registration_enabled": true,
+					"registration_ip_interval_days": 0,
+					"registration_ip_interval_hours": 0,
 					"email_verify_enabled": false,
 					"registration_email_normalization": false,
 					"registration_email_suffix_whitelist": [],
@@ -1556,6 +1558,8 @@ func TestAPIContracts(t *testing.T) {
 				"message": "success",
 				"data": {
 					"registration_enabled": true,
+					"registration_ip_interval_days": 0,
+					"registration_ip_interval_hours": 0,
 					"email_verify_enabled": false,
 					"registration_email_normalization": false,
 					"registration_email_suffix_whitelist": [],

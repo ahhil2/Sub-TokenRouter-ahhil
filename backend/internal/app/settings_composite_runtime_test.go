@@ -439,7 +439,7 @@ func newCompositeSettingsHTTPFixture(repo settingscore.Repository, cfg *config.C
 }
 
 // TestSettingsFieldOwnership enumerates static participants and the flattened
-// update request type. It checks unique ownership, all 285 request fields are
+// update request type. It checks unique ownership, all 287 request fields are
 // represented, and no participant declares an extra field outside that request.
 func TestSettingsFieldOwnership(t *testing.T) {
 	defaults := scheduler.DefaultAdminSettingsDefaults()
@@ -472,7 +472,7 @@ func TestSettingsFieldOwnership(t *testing.T) {
 		delete(owners, name)
 		count++
 	}
-	require.Equal(t, 285, count, "HTTP 字段变化需要同步字段登记")
+	require.Equal(t, 287, count, "HTTP 字段变化需要同步字段登记")
 	require.Empty(t, owners, "参与者不应声明不存在的输入字段")
 }
 
@@ -2224,4 +2224,46 @@ func TestUpdateSettingsCreativePromptPartialSemantics(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, "0", repo.values[creative.SettingKeyCreativePromptGroupID])
 	require.Equal(t, "", repo.values[creative.SettingKeyCreativePromptModel])
+}
+
+// TestUpdateSettingsRegistrationInterval persists both interval components through
+// the combined HTTP settings coordinator. Partial saves retain missing components,
+// and invalid input leaves the complete stored settings batch unchanged.
+func TestUpdateSettingsRegistrationInterval(t *testing.T) {
+	for _, tc := range []struct {
+		name    string         // HTTP update scenario label
+		payload map[string]any // submitted settings field values
+		days    string         // expected stored day component
+		hours   string         // expected stored hour component
+		invalid bool           // expected full batch rejection
+	}{
+		{name: "six hours", payload: map[string]any{"registration_ip_interval_days": 0, "registration_ip_interval_hours": 6}, days: "0", hours: "6"},
+		{name: "thirty days", payload: map[string]any{"registration_ip_interval_days": 30, "registration_ip_interval_hours": 0}, days: "30", hours: "0"},
+		{name: "disabled", payload: map[string]any{"registration_ip_interval_days": 0, "registration_ip_interval_hours": 0}, days: "0", hours: "0"},
+		{name: "omitted", payload: map[string]any{"risk_control_enabled": true}, days: "30", hours: "6"},
+		{name: "partial", payload: map[string]any{"registration_ip_interval_days": 0}, days: "0", hours: "6"},
+		{name: "null", payload: map[string]any{"registration_ip_interval_days": nil, "registration_ip_interval_hours": nil}, days: "30", hours: "6"},
+		{name: "invalid hours", payload: map[string]any{"registration_ip_interval_hours": 24, "site_name": "must not persist"}, invalid: true},
+		{name: "negative days", payload: map[string]any{"registration_ip_interval_days": -1, "site_name": "must not persist"}, invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, repo := newStepUpSwitchTestHandler(t, map[string]string{identity.SettingKeyRegistrationIPIntervalDays: "30", identity.SettingKeyRegistrationIPIntervalHours: "6"})
+			before := maps.Clone(repo.values)
+			rec := doUpdateSettings(t, h, tc.payload, nil)
+			if tc.invalid {
+				require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+				require.Equal(t, before, repo.values)
+				return
+			}
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			require.Equal(t, tc.days, repo.values[identity.SettingKeyRegistrationIPIntervalDays])
+			require.Equal(t, tc.hours, repo.values[identity.SettingKeyRegistrationIPIntervalHours])
+			var response struct {
+				Data map[string]json.RawMessage `json:"data"` // saved settings response members
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+			require.JSONEq(t, tc.days, string(response.Data[identity.SettingKeyRegistrationIPIntervalDays]))
+			require.JSONEq(t, tc.hours, string(response.Data[identity.SettingKeyRegistrationIPIntervalHours]))
+		})
+	}
 }
