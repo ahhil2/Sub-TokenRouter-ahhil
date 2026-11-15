@@ -20,7 +20,9 @@ import (
 // request context available during response reads. Cleanup uses sync.Once so
 // cancellation and context release happen once across error and close paths;
 // the body wrapper separately makes its underlying close and recorded close
-// error repeatable for callers.
+// error repeatable for callers. Client cancellation is checked before context
+// detachment and again before dispatch, so already-cancelled preparation does
+// not create another upstream request.
 
 // HTTPExchangeOptions supplies request construction and observations for one
 // guarded HTTP exchange.
@@ -70,6 +72,9 @@ type openAIRequestContextReadCloser struct {
 // receiving headers. All option callbacks are required when their path is used,
 // and StartedAt determines the positive FirstOutputTimeout deadline. The caller
 // closes a returned response body to release guarded context ownership.
+// Client cancellation observed before detachment or after request preparation
+// returns directly, bypassing upstream error translation and dispatch. Once Do
+// starts, the supplied RequestContext determines response-reading cancellation.
 //
 // When timer stopping reports that the deadline callback ran, HeaderTimeout
 // wins over the transport result and any returned body is closed. Other
@@ -77,6 +82,11 @@ type openAIRequestContextReadCloser struct {
 // stops the timer but retains guard cleanup in the returned body wrapper,
 // keeping response reads alive until the caller finishes with the body.
 func ExchangeHTTP(ctx context.Context, body []byte, options HTTPExchangeOptions) (*http.Response, error) {
+	// Detachment deliberately permits draining already-started work. Observe an
+	// existing cancellation first so that policy cannot revive a waiting request.
+	if ctx != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	upstreamCtx, release := options.RequestContext(ctx)
 	var guard *openAIFirstOutputHeaderGuard
 	if options.FirstOutputTimeout > 0 {
@@ -93,6 +103,17 @@ func ExchangeHTTP(ctx context.Context, body []byte, options HTTPExchangeOptions)
 		return nil, err
 	}
 	options.ApplyHeaders(request.Header)
+	// Preparation may wait on credentials or connection policy after detachment.
+	// Recheck the client before dispatch, releasing the unsent body and guard locally.
+	if ctx != nil && ctx.Err() != nil {
+		if request.Body != nil {
+			_ = request.Body.Close()
+		}
+		if guard != nil {
+			guard.close()
+		}
+		return nil, ctx.Err()
+	}
 	started := time.Now()
 	response, err := options.Do(request)
 	options.Latency(time.Since(started))

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -1273,6 +1274,168 @@ func TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T)
 	default:
 		t.Fatal("response-header timeout did not cancel the upstream request context")
 	}
+}
+
+// TestOpenAIForwardHeaderWaitKeepalive holds upstream headers across a heartbeat
+// interval for native and passthrough attempts. Streaming clients receive comments
+// before headers and one protocol result, while disabled or nonstreaming requests
+// retain their ordinary JSON error status.
+func TestOpenAIForwardHeaderWaitKeepalive(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		for _, stream := range []bool{false, true} {
+			for _, interval := range []int{0, 1} {
+				for _, outcome := range []string{"success", "invalid_request", "fast_error"} {
+					t.Run(fmt.Sprintf("passthrough_%t/stream_%t/interval_%d/%s", passthrough, stream, interval, outcome), func(t *testing.T) {
+						synctest.Test(t, func(t *testing.T) {
+							body := []byte(fmt.Sprintf(`{"model":"gpt-5.5","instructions":"test","input":"hello","stream":%t}`, stream))
+							rec := httptest.NewRecorder()
+							c, _ := gin.CreateTestContext(rec)
+							c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+							upstream := &auxiliaryHTTPRecorder{onRequest: func(*http.Request) (*http.Response, error) {
+								if outcome != "fast_error" {
+									// Fake time passes while transport owns the header wait. Quiescence
+									// makes recorder reads follow completed heartbeat writes before inspection.
+									time.Sleep(1500 * time.Millisecond)
+									synctest.Wait()
+									if stream && interval > 0 {
+										require.Equal(t, ": keepalive\n\n", rec.Body.String())
+										require.True(t, rec.Flushed)
+									} else {
+										require.Empty(t, rec.Body.String())
+									}
+								}
+								if outcome != "success" {
+									return &http.Response{StatusCode: http.StatusBadRequest, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(openAIInvalidFunctionParametersBody))}, nil
+								}
+								payload := `{"id":"resp_header_wait","model":"gpt-5.5","output":[],"usage":{"input_tokens":2,"output_tokens":1}}`
+								contentType := "application/json"
+								if stream {
+									payload = "data: {\"type\":\"response.completed\",\"response\":" + payload + "}\n\n"
+									contentType = "text/event-stream"
+								}
+								return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(strings.NewReader(payload))}, nil
+							}}
+							svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Response: OpenAIResponseOptions{StreamKeepaliveInterval: interval, MaxLineSize: OpenAIResponseDefaultMaxLineSize}}, transport: upstream})
+							provider := newOpenAIImageGenerationControlTestProvider()
+							provider.Record.Type = capability.ProviderTypeOAuth
+							provider.Record.Credentials["access_token"] = "fixture-token"
+							if passthrough {
+								provider.Record.Type = capability.ProviderTypeAPIKey
+							}
+							result, err := svc.Forward(c.Request.Context(), c, provider, body)
+							synctest.Wait()
+							require.Len(t, upstream.requests, 1)
+							if outcome == "success" {
+								require.NoError(t, err)
+								require.NotNil(t, result)
+								require.Equal(t, 2, result.Usage.InputTokens)
+								require.Contains(t, rec.Body.String(), "resp_header_wait")
+								require.NotContains(t, rec.Body.String(), "response.failed")
+							} else {
+								require.Error(t, err)
+								if stream && interval > 0 && outcome != "fast_error" {
+									require.Equal(t, http.StatusOK, rec.Code)
+									require.Equal(t, "text/event-stream", rec.Result().Header.Get("Content-Type"))
+									require.Equal(t, 1, strings.Count(rec.Body.String(), "event: response.failed\n"))
+									require.Contains(t, rec.Body.String(), "invalid_function_parameters")
+									require.Contains(t, rec.Body.String(), `"param":"input[8].tools[1].tools[2].parameters"`)
+									require.Contains(t, rec.Body.String(), `"type":"invalid_request_error"`)
+									require.NotContains(t, rec.Body.String(), "\n\n{\"error\"")
+								} else {
+									require.Equal(t, http.StatusBadRequest, rec.Code)
+									require.JSONEq(t, openAIInvalidFunctionParametersBody, rec.Body.String())
+								}
+							}
+							size := rec.Body.Len()
+							time.Sleep(2 * time.Second)
+							synctest.Wait()
+							require.Equal(t, size, rec.Body.Len(), "forwarding return stops header heartbeats")
+						})
+					})
+				}
+			}
+		}
+	}
+}
+
+// TestOpenAIForwardHeaderWaitKeepaliveAllowsFailover rejects the first delayed
+// native or passthrough exchange before business output. Heartbeats keep the
+// recovery window open, and a second provider attempt completes the same SSE.
+func TestOpenAIForwardHeaderWaitKeepaliveAllowsFailover(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		t.Run(fmt.Sprintf("passthrough_%t", passthrough), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				body := []byte(`{"model":"gpt-5.5","instructions":"test","input":"hello","stream":true}`)
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+				attempt := 0
+				upstream := &auxiliaryHTTPRecorder{onRequest: func(*http.Request) (*http.Response, error) {
+					attempt++
+					time.Sleep(1500 * time.Millisecond)
+					if attempt == 1 {
+						return &http.Response{StatusCode: http.StatusBadGateway, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"unavailable"}}`))}, nil
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_recovered\",\"output\":[],\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n"))}, nil
+				}}
+				svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Response: OpenAIResponseOptions{StreamKeepaliveInterval: 1, MaxLineSize: OpenAIResponseDefaultMaxLineSize}}, transport: upstream})
+				provider := newOpenAIImageGenerationControlTestProvider()
+				provider.Record.Type = capability.ProviderTypeOAuth
+				provider.Record.Credentials["access_token"] = "fixture-token"
+				if passthrough {
+					provider.Record.Type = capability.ProviderTypeAPIKey
+				}
+				_, err := svc.Forward(c.Request.Context(), c, provider, body)
+				var failure *forwardcore.UpstreamFailoverError
+				require.ErrorAs(t, err, &failure)
+				require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c))
+				require.False(t, OpenAIStreamClientOutputStarted(c, false))
+				require.NotContains(t, rec.Body.String(), "response.failed")
+				result, err := svc.Forward(c.Request.Context(), c, provider, body)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				require.Equal(t, 2, attempt)
+				require.Equal(t, 2, strings.Count(rec.Body.String(), ": keepalive\n\n"))
+				require.Contains(t, rec.Body.String(), "resp_recovered")
+				require.NotContains(t, rec.Body.String(), "response.failed")
+			})
+		})
+	}
+}
+
+// TestOpenAIForwardHeaderWaitKeepaliveTimeout expires the native first-output
+// budget after waiting heartbeats have committed HTTP 200. The exchange is
+// canceled, retry remains possible, and final presentation emits one SSE failure.
+func TestOpenAIForwardHeaderWaitKeepaliveTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		body := []byte(`{"model":"gpt-5.5","input":"hello","stream":true}`)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		canceled := false
+		upstream := &auxiliaryHTTPRecorder{onRequest: func(r *http.Request) (*http.Response, error) {
+			// The first-output guard owns cancellation of the detached transport.
+			// Returning its error lets normal failure handling decide whether to retry.
+			<-r.Context().Done()
+			canceled = true
+			return nil, r.Context().Err()
+		}}
+		svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Response: OpenAIResponseOptions{StreamKeepaliveInterval: 1, OpenAIFirstOutputTimeoutSeconds: 3, MaxLineSize: OpenAIResponseDefaultMaxLineSize}}, transport: upstream})
+		provider := newOpenAIImageGenerationControlTestProvider()
+		provider.Record.Type = capability.ProviderTypeOAuth
+		provider.Record.Credentials["access_token"] = "fixture-token"
+		_, err := svc.Forward(c.Request.Context(), c, provider, body)
+		var failure *forwardcore.UpstreamFailoverError
+		require.ErrorAs(t, err, &failure)
+		require.True(t, canceled)
+		require.Equal(t, http.StatusGatewayTimeout, failure.StatusCode)
+		require.True(t, failure.SafeToFailoverAfterWrite)
+		require.Contains(t, rec.Body.String(), ": keepalive\n\n")
+		require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c))
+		DefaultOpenAIErrorOutput().StreamError(c, failure.StatusCode, "upstream_error", "Upstream produced no output before the deadline", false)
+		require.Equal(t, 1, strings.Count(rec.Body.String(), "event: response.failed\n"))
+		require.Equal(t, "text/event-stream", rec.Result().Header.Get("Content-Type"))
+	})
 }
 
 // TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidInputItemIDs mixes
@@ -4688,19 +4851,16 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreami
 }
 
 // TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCancel
-// cancels the client context before OAuth passthrough forwarding over HTTP. It
-// checks a successful result and a captured upstream context with no
-// cancellation error.
+// cancels the client after OAuth passthrough has entered the HTTP transport.
+// The accepted exchange remains detached, drains its terminal response and
+// returns the observed usage for completion processing.
 func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	reqCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil)).WithContext(reqCtx)
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
-	// Cancel before calling Forward so the captured transport context
-	// distinguishes HTTP upstream detachment from a request that happened to
-	// finish before client cancellation.
-	cancel()
 
 	originalBody := []byte(`{"model":"gpt-5.2","stream":true,"store":true,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`)
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
@@ -4713,6 +4873,14 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCance
 			"",
 		}, "\n"))),
 	}}
+	upstream.onRequest = func(req *http.Request) (*http.Response, error) {
+		// Cancellation occurs after dispatch has accepted this exchange. Its
+		// detached context must still permit reading the terminal usage afterward.
+		cancel()
+		require.ErrorIs(t, reqCtx.Err(), context.Canceled)
+		require.NoError(t, req.Context().Err())
+		return upstream.resp, nil
+	}
 
 	svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Request: OpenAIRequestOptions{ForceCLI: false}}, transport: upstream})
 	provider := &gatewayprovider.ExecutionProvider{
@@ -4735,6 +4903,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCance
 	require.NotNil(t, result)
 	require.NotNil(t, upstream.lastReq)
 	require.NoError(t, upstream.lastReq.Context().Err())
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, 2, result.Usage.InputTokens)
+	require.Equal(t, 1, result.Usage.OutputTokens)
 }
 
 // TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsGetsDefault
@@ -4837,19 +5008,16 @@ func TestOpenAIGatewayService_OAuthPassthrough_DisabledUsesLegacyTransform(t *te
 }
 
 // TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel
-// cancels the client context before managed OAuth HTTP forwarding. It checks a
-// successful result and a captured upstream context with no cancellation
-// error.
+// cancels the client after managed OAuth HTTP dispatch has begun. The accepted
+// exchange retains its detached context and returns terminal usage after
+// draining the upstream response despite downstream cancellation.
 func TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	reqCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil)).WithContext(reqCtx)
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
-	// Cancel before calling Forward so the captured transport context
-	// distinguishes HTTP upstream detachment from a request that happened to
-	// finish before client cancellation.
-	cancel()
 
 	originalBody := []byte(`{"model":"gpt-5.2","stream":false,"store":true,"input":[{"type":"text","text":"hi"}]}`)
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
@@ -4862,6 +5030,14 @@ func TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel(t *
 			"",
 		}, "\n"))),
 	}}
+	upstream.onRequest = func(req *http.Request) (*http.Response, error) {
+		// Dispatch has already accepted the request when the client disconnects.
+		// Reading the detached response still needs to retain the upstream usage.
+		cancel()
+		require.ErrorIs(t, reqCtx.Err(), context.Canceled)
+		require.NoError(t, req.Context().Err())
+		return upstream.resp, nil
+	}
 
 	svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Request: OpenAIRequestOptions{ForceCLI: false}}, transport: upstream})
 	provider := &gatewayprovider.ExecutionProvider{
@@ -4884,6 +5060,47 @@ func TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel(t *
 	require.NotNil(t, result)
 	require.NotNil(t, upstream.lastReq)
 	require.NoError(t, upstream.lastReq.Context().Err())
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, 1, result.Usage.InputTokens)
+	require.Equal(t, 1, result.Usage.OutputTokens)
+}
+
+// TestOpenAIForwardCanceledBeforeDispatch rejects a canceled client before
+// either native or passthrough OAuth forwarding enters transport. Streaming
+// and buffered requests both return cancellation with zero upstream sends.
+func TestOpenAIForwardCanceledBeforeDispatch(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("passthrough_%t/stream_%t", passthrough, stream), func(t *testing.T) {
+				body := []byte(fmt.Sprintf(`{"model":"gpt-5.2","stream":%t,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`, stream))
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/responses", bytes.NewReader(body))
+				c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
+				upstream := &auxiliaryHTTPRecorder{onRequest: func(*http.Request) (*http.Response, error) {
+					return nil, errors.New("canceled request reached transport")
+				}}
+				svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{}, transport: upstream})
+				provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{
+					LoadLocation: time.LoadLocation, ID: 123, Name: "fixture", Platform: capability.PlatformOpenAI,
+					Type: capability.ProviderTypeOAuth, Concurrency: 1, Status: billingcore.StatusActive, Schedulable: true,
+					Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
+					Extra:       map[string]any{"openai_passthrough": passthrough, "openai_oauth_responses_websockets_v2_mode": "off"},
+				}}
+				// Cancel before preparation can detach the transport context, so the
+				// dispatch guard must use the client context when deciding whether to send.
+				cancel()
+				result, err := svc.Forward(ctx, c, provider, body)
+				require.ErrorIs(t, err, context.Canceled)
+				require.Nil(t, result)
+				require.Empty(t, upstream.requests)
+				require.Nil(t, upstream.lastReq)
+				require.Empty(t, rec.Body.String())
+			})
+		}
+	}
 }
 
 // TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator

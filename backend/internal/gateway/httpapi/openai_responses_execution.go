@@ -31,7 +31,10 @@ import (
 // rejection marking refers to the same prepared entry that a repeated request
 // can present. HTTP exchange callbacks carry one token, fingerprint and route
 // preparation through the shared runner's local recovery and response-reading
-// phases.
+// phases. Streaming HTTP exchanges send delayed comment heartbeats while
+// headers are pending, then stop that writer before error or stream readers
+// take over. The shared heartbeat counter keeps those comments outside the
+// provider loop's business-output decision.
 
 // OpenAIResponsesExecutor combines selected-attempt request, output, text and
 // lineage services for Responses forwarding. App assembly shares these
@@ -204,6 +207,12 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 			proxyURL := ""
 			if provider.Record.ProxyID != nil && provider.Record.Proxy != nil {
 				proxyURL = provider.Record.Proxy.URL()
+			}
+			// Keep the admitted streaming request active during the blocking exchange.
+			// Stopping before response handling serializes subsequent errors and reader output.
+			if reqStream && s.Output.Options.Configured {
+				stop := StartOpenAISSEKeepalive(c, time.Duration(s.Output.Options.StreamKeepaliveInterval)*time.Second)
+				defer stop()
 			}
 			return s.Requests.Transport.DoWithTLS(request, proxyURL, provider.Record.ID, provider.Record.Concurrency, s.Requests.TLSProfile(provider, tlsRouterMatch))
 		},

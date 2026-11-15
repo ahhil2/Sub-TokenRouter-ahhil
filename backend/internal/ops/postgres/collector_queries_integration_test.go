@@ -14,8 +14,9 @@ import (
 )
 
 // TestUsagePerformanceSQLMatchesRecordedMetrics compares PostgreSQL aggregation
-// expressions with usage API derivation. Missing, invalid, incomplete and media
-// observations must yield identical eligible samples and rounded average TPS.
+// expressions with usage API derivation for persisted fields. Missing, invalid,
+// incomplete and media observations must yield identical eligible samples and
+// rounded average TPS without depending on removed schema columns.
 func TestUsagePerformanceSQLMatchesRecordedMetrics(t *testing.T) {
 	complete := timing.NewPerformance(timing.FirstOutput, 1614)
 	complete.Stream, complete.Complete, complete.UsageComplete = true, true, true
@@ -47,10 +48,8 @@ func TestUsagePerformanceSQLMatchesRecordedMetrics(t *testing.T) {
 		{"image_count", func(u *usage.UsageLog) { u.ImageCount = 1 }, false},
 		{"image_tokens", func(u *usage.UsageLog) { u.ImageOutputTokens = 1 }, false},
 		{"image_billing", func(u *usage.UsageLog) { u.BillingMode = &image }, false},
-		{"image_media", func(u *usage.UsageLog) { u.MediaType = &image }, false},
 		{"video_count", func(u *usage.UsageLog) { u.VideoCount = 1 }, false},
 		{"video_billing", func(u *usage.UsageLog) { u.BillingMode = &video }, false},
-		{"video_media", func(u *usage.UsageLog) { u.MediaType = &video }, false},
 		{"live", func(u *usage.UsageLog) { u.RequestType = usage.RequestTypeLive }, false},
 		{"websocket", func(u *usage.UsageLog) { u.RequestType = usage.RequestTypeWSV2 }, true},
 		{"cyber_completed", func(u *usage.UsageLog) { u.RequestType = usage.RequestTypeCyberBlocked }, true},
@@ -69,9 +68,9 @@ func TestUsagePerformanceSQLMatchesRecordedMetrics(t *testing.T) {
 				query := "SELECT " + usageTTFTSQL(alias) + "," + usageTPSSQL(alias) + ` FROM (
  SELECT $1::jsonb AS timings,$2::int AS output_tokens,$3::int AS image_count,
  $4::int AS image_output_tokens,$5::int AS video_count,$6::text AS billing_mode,
- $7::text AS media_type,$8::smallint AS request_type) u`
+ $7::smallint AS request_type) u`
 				require.NoError(t, integrationDB.QueryRowContext(t.Context(), query, string(encoded), u.OutputTokens,
-					u.ImageCount, u.ImageOutputTokens, u.VideoCount, u.BillingMode, u.MediaType, u.RequestType).Scan(&latency, &speed))
+					u.ImageCount, u.ImageOutputTokens, u.VideoCount, u.BillingMode, u.RequestType).Scan(&latency, &speed))
 				require.Equal(t, u.Timings.TTFTMs() != nil, latency.Valid)
 				if latency.Valid {
 					require.Equal(t, int64(*u.Timings.TTFTMs()), latency.Int64)

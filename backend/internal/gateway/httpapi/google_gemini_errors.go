@@ -471,18 +471,12 @@ func (s *GeminiOutput) GeminiOpenAICompatError(
 	return s.ChatError(status, errType, message)
 }
 
-// ChatError writes the supplied OpenAI Chat error type and message as JSON. It
-// returns a message error after presentation; this method itself does not
-// install a response-commit marker.
+// ChatError commits and writes the supplied OpenAI Chat rejection as JSON.
+// Callers use it before streaming output starts and retain the returned error
+// for attempt completion. Its commit marker tells outer error handling that
+// this rejection has already been presented.
 func (s *GeminiOutput) ChatError(status int, errType, message string) error {
-	c := s.Context
-
-	c.JSON(status, gin.H{
-		"error": gin.H{
-			"type":    errType,
-			"message": message,
-		},
-	})
+	WriteForwardChatError(s.Context, status, errType, message)
 	return fmt.Errorf("%s", message)
 }
 

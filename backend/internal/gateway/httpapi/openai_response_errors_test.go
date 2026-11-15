@@ -38,6 +38,56 @@ const openAIInvalidFunctionParametersBody = `{"error":{` +
 // panicOnReadCloser rejects any body reread in captured-error health fixtures.
 type panicOnReadCloser struct{}
 
+// TestOpenAIResponseErrorAfterHeaderKeepalive exercises final error policy
+// after an ordinary Responses heartbeat commits HTTP 200. Raw client errors,
+// policy warnings and rewritten failures each terminate the SSE exactly once.
+func TestOpenAIResponseErrorAfterHeaderKeepalive(t *testing.T) {
+	for _, tc := range []struct {
+		name    string // error presentation branch
+		status  int    // upstream HTTP status
+		body    string // captured upstream JSON
+		message string // expected client error text
+	}{
+		{"parameter", http.StatusBadRequest, openAIInvalidFunctionParametersBody, "Invalid schema for function"},
+		{"body_size", http.StatusRequestEntityTooLarge, `{"error":{"type":"invalid_request_error","message":"Request body too large"}}`, "Request body too large"},
+		{"cyber", http.StatusForbidden, `{"error":{"type":"invalid_request_error","code":"cyber_policy","message":"Request rejected by cyber policy"}}`, "cyber policy"},
+		{"cyber_warning", http.StatusForbidden, `{"error":{"message":"This request has been flagged for potentially high-risk cyber activity."}}`, "high-risk cyber activity"},
+		{"generic", http.StatusUnprocessableEntity, `{"error":{"message":"invalid schema"}}`, "Upstream request failed"},
+		{"rule", http.StatusUnprocessableEntity, `{"error":{"message":"invalid schema"}}`, "Configured client message"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			stop := StartOpenAISSEKeepalive(c, time.Hour)
+			defer stop()
+			value, ok := c.Get(openAICompactSSEKeepaliveKey)
+			require.True(t, ok)
+			// Trigger the delayed writer directly before final response handling.
+			// The controller's mutex keeps this deterministic beat ordered with stopping.
+			keepalive, ok := value.(*openAICompactSSEKeepalive)
+			require.True(t, ok)
+			require.True(t, keepalive.beat())
+			if tc.name == "rule" {
+				BindErrorPassthroughService(c, gatewaytestkit.ErrorRules([]*errorpolicy.ErrorPassthroughRule{
+					gatewaytestkit.NonFailoverRule(tc.status, "invalid schema", http.StatusTeapot, tc.message),
+				}))
+			}
+			output := newResponseOutputForTest(OpenAIResponseOptions{})
+			provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 12, Name: "fixture", Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
+			response := &http.Response{StatusCode: tc.status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(tc.body))}
+			_, err := output.ResponseError(t.Context(), response, c, provider, []byte(`{"model":"gpt-5.5"}`))
+			require.Error(t, err)
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(t, "text/event-stream", rec.Result().Header.Get("Content-Type"))
+			require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
+			require.Equal(t, 1, strings.Count(rec.Body.String(), "event: response.failed\n"))
+			require.Contains(t, rec.Body.String(), tc.message)
+			require.NotContains(t, rec.Body.String(), "\n\n{\"error\"")
+		})
+	}
+}
+
 // TestOpenAIHandleErrorResponse_NoRuleKeepsDefault supplies an upstream HTTP
 // 422 without a presentation rule. It checks a returned error and the default
 // JSON 502 upstream-error type and fixed message.

@@ -34,7 +34,7 @@ import (
 // recovery, and returned observations can accompany an error.
 func (s *OpenAITextExecutor) Passthrough(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body, canonicalImageIntentBody []byte, reqModel string, attemptImageIntentInvalidated bool, reasoningEffort *string, reqStream bool, startTime time.Time, tlsRouterMatch ...egress.TLSFingerprintRouterMatchResult) (*forwardcore.OpenAIResult, error) {
 	input := openaiexecution.PassthroughInput{Body: body, CanonicalImageIntentBody: canonicalImageIntentBody, Model: reqModel, ImageIntentInvalidated: attemptImageIntentInvalidated, ReasoningEffort: reasoningEffort, Stream: reqStream, StartedAt: startTime}
-	p := &openAIPassthroughExecutionAdapter{openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider, tls: tlsRouterMatch}}
+	p := &openAIPassthroughExecutionAdapter{openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: s, c: c, provider: provider, tls: tlsRouterMatch}, stream: reqStream}
 	result, err := openaiexecution.RunPassthrough(ctx, input, p)
 	out := openaiexecution.ToForwardResult(result)
 	captureResponseModel(c, out)

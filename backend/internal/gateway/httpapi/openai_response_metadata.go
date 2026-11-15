@@ -12,8 +12,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	egressadapter "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
 )
 
 // openai_response_metadata.go binds response identifiers to owners and
@@ -21,11 +23,13 @@ import (
 // HTTP Responses continuation needs both provider affinity and downstream
 // ownership for a response identifier. Binding records those two observations
 // independently, and a storage failure is logged while response delivery
-// continues. The current effective API-key group scopes both bindings after
-// any group switch.
+// continues. Binding uses a detached context with a short shared deadline so
+// disconnected clients can still continue completed responses on another
+// instance. The current effective API-key group scopes both bindings after
+// any group switch; server abort signals still stop the storage work.
 //
 // An invalid nonstreaming upstream result normally becomes JSON with filtered
-// headers. A Compact heartbeat can already have committed HTTP 200, so
+// headers. A waiting heartbeat can already have committed HTTP 200, so
 // ProtocolError stops the heartbeat and uses a failed Responses event when
 // that stream is active. This keeps the error compatible with the output
 // format already established for the caller while recording the intended
@@ -36,6 +40,10 @@ import (
 // provider, positive provider ID, response ID or store skips binding. The
 // effective request group and ResponseTTL supply the namespace and expiry.
 //
+// Provider and owner writes share a three-second context budget detached from
+// client cancellation, retaining request values and server abort signals.
+// Storage socket timeouts still determine when an ongoing Redis call returns.
+// The supplied context may be nil, in which case background values are used.
 // Provider and owner writes are separate best-effort operations. A failed
 // provider bind is logged before the owner bind is attempted, and an
 // owner-bind error is also logged; callers continue response handling after
@@ -54,11 +62,15 @@ func (p *OpenAIResponseOutput) BindResponseProvider(ctx context.Context, c *gin.
 	}
 	groupID := OpenAIResponseGroupID(c)
 	ttl := p.ResponseTTL()
+	// Completed upstream responses can outlive their clients. Keep continuation
+	// metadata writable during that drain, with a bounded context for both bindings.
+	ctx, cancel := context.WithTimeout(requestcontext.Detach(ctx), session.StateStoreRedisTimeout)
+	defer cancel()
 	// Provider affinity and user ownership have separate storage operations. Keep
 	// attempting owner publication after an affinity error so each available binding survives.
 	gatewayprovider.LogOpenAIWSBindResponseProviderWarn(groupID, provider.Record.ID, responseID, store.BindResponseProvider(ctx, groupID, responseID, provider.Record.ID, ttl))
 	if owner, ok := ResponseOwnerFromContext(c); ok {
-		if err := store.BindHTTPResponseOwner(ctx, groupID, responseID, owner.UserID, owner.APIKeyID, p.ResponseTTL()); err != nil {
+		if err := store.BindHTTPResponseOwner(ctx, groupID, responseID, owner.UserID, owner.APIKeyID, ttl); err != nil {
 			logging.L().Warn(
 				"openai.http_bind_response_owner_failed",
 				zap.Int64("group_id", groupID),
@@ -77,21 +89,23 @@ func (p *OpenAIResponseOutput) BindResponseProvider(ctx context.Context, c *gin.
 // configuration after the reader has rejected the upstream representation.
 // Empty messages use the standard invalid-response explanation.
 //
-// The output format depends on prior Compact heartbeat commitment. Stopping a
-// committed Compact stream permits a response.failed terminal event under its
+// The output format depends on prior heartbeat commitment. Stopping a
+// committed Responses stream permits a response.failed terminal event under its
 // existing HTTP status; otherwise filtered upstream headers precede a JSON 502
 // envelope. The returned error retains the same diagnostic message for
-// execution logging.
+// execution logging. Terminal response marking tells outer error handling that
+// this dedicated rejection has already been presented to the client.
 func (p *OpenAIResponseOutput) ProtocolError(resp *http.Response, c *gin.Context, message string) error {
 	message = logredact.SanitizeUpstreamQueries(strings.TrimSpace(message))
 	if message == "" {
 		message = "Upstream returned an invalid non-streaming response"
 	}
 	SetOpsUpstreamError(c, http.StatusBadGateway, message, "")
-	// Stop the Compact heartbeat before taking over its writer. A committed
+	MarkResponseCommitted(c)
+	// Stop the waiting heartbeat before taking over its writer. A committed
 	// stream needs a terminal Responses event because its HTTP status is already sent.
-	if OpenAICompactClientWantsStream(c) && StopOpenAICompactSSEKeepaliveCommitted(c) {
-		WriteOpenAICompactSSEFailureMessage(c, http.StatusBadGateway, "upstream_error", message, MarkOpsStreamError)
+	if StopOpenAICompactSSEKeepaliveCommitted(c) {
+		DefaultOpenAIErrorOutput().StreamError(c, http.StatusBadGateway, "upstream_error", message, true)
 		return fmt.Errorf("non-streaming openai protocol error: %s", message)
 	}
 	egressadapter.WriteFilteredHeaders(c.Writer.Header(), resp.Header, p.Headers)

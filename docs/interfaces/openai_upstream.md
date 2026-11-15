@@ -89,6 +89,10 @@ Compact 的请求白名单、reasoning replay 和 store=false 的修复由请求
 
 Responses 的标准和透传读取、Responses 转 Chat 或 Messages、Raw Chat 直通、Chat 转 Responses 或 Messages 的响应执行，都在 `upstream/openai`；协议算法只在 `protocol/bridge`。缓冲的终态、空响应检测和流状态按每次尝试创建，终态 usage 的覆盖顺序和断开时的返回方式各自保持。执行适配传入提供商策略和观察接口；HTTP 在输出时才取得 Header，等待心跳不会因为创建了适配器而提前结束。
 
+普通 Responses 的标准流和透传流，在每次实际发送上游 HTTP 请求前启动 SSE 注释心跳，覆盖等待响应头的阶段。间隔使用 `gateway.stream_keepalive_interval`，默认 10 秒，设为 `0` 关闭；非流式请求不启用这段 SSE 心跳。取得响应头或请求失败后停止等待心跳，成功的 SSE 响应由流读取器接续保活。心跳字节跨尝试累计并从实际输出计数中扣除，只有心跳时仍可按既有规则重试。首次心跳前的错误保持 HTTP 状态和 JSON，心跳提交后以 `response.failed` 结束，监控保留实际失败状态。
+
+心跳不延长首输出预算。标准流的 `gateway.openai_first_output_timeout_seconds` 覆盖响应头等待和后续首输出等待，高推理档可使用 `gateway.openai_high_effort_first_output_timeout_seconds`；基础值为 `0` 时关闭此预算。传输层的响应头等待由 `gateway.openai_response_header_timeout` 控制，`0` 表示关闭。超时后的切换仍受输出状态、客户端取消和重试预算约束。
+
 HTTP Responses 的标准流和透传流兼容第三方的生命周期事件：
 
 - `event` 行声明 created、in_progress 或终态，data 却是带 `object=response` 和 ID 的裸 Response 时，补上 `type`、`response` 包装和缺失的事件序号。

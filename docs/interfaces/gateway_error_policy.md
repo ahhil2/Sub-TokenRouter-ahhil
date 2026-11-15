@@ -20,7 +20,9 @@
 
 失败的事实和稳定的 reason 在 `gateway/forward`，HTTP 层使用 `gateway/httpapi` 的展示数据和输出顺序（只有一份实现）。空的 Chat 终态和空的 Responses completed 各有自己的 Ops 消息，对外仍使用内部静默拒绝的编码；是否换号、怎么完成，由请求编排判断。观察输入只带提供商的 ID、名称和平台，凭据不会交给错误输出层。
 
-OpenAI 的同步错误、SSE 终止帧和写失败时的备用输出，由 `gateway/httpapi.OpenAIErrorOutput` 处理。图片专用错误输出使用同一套响应承诺和流失败观测。接管 Writer 之前，先停止 compact 和图片的心跳，并区分四种情况：只有保活、已经完成的 JSON、实际的 SSE 输出、已经提交的专用错误。普通的流错误和计入 SLA 的失败，分别按各自的规则观测。
+OpenAI 的同步错误、SSE 终止帧和写失败时的备用输出，由 `gateway/httpapi.OpenAIErrorOutput` 处理。图片专用错误输出使用同一套响应承诺和流失败观测。接管 Writer 之前，先停止 Responses、Compact 和图片的等待心跳，并区分四种情况：只有保活、已经完成的 JSON、实际的 SSE 输出、已经提交的专用错误。普通的流错误和计入 SLA 的失败，分别按各自的规则观测。
+
+Gemini 转 Chat 的本地校验错误在输出 JSON 时登记专用错误终态。即使客户端请求了流式响应，只要流尚未开始，无效参数也返回单个 JSON 400；外层转发处理看到终态后结束响应。
 
 客户端工具声明或历史转换的本地拒绝保留请求错误身份，HTTP Responses 返回 `400 invalid_request_error` 和转换解释，提供商健康评分不受影响。请求体读取、复合 Key 解析或资金来源查询期间已经取消的请求终止处理；未提交的响应记为 499，已提交的状态保留，取消处理不再生成内部错误正文。
 

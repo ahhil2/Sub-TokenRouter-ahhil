@@ -13,7 +13,7 @@ import (
 
 // compact_keepalive.go coordinates SSE heartbeats with response takeover and
 // tracks heartbeat bytes for retry decisions.
-// Compact JSON work and image response-header waits can leave an SSE client
+// Compact JSON work and Responses or image header waits can leave an SSE client
 // idle before model output arrives. The first heartbeat waits one interval,
 // then commits HTTP 200 and sends a comment. Later errors consequently need
 // stream-compatible output.
@@ -35,7 +35,8 @@ const (
 	// openAIStreamKeepaliveBytesContextKey stores ordinary SSE heartbeat byte counts.
 	openAIStreamKeepaliveBytesContextKey = "openai_stream_keepalive_bytes"
 
-	// openAICompactSSEKeepaliveKey stores the shared Compact and Images SSE heartbeat.
+	// openAICompactSSEKeepaliveKey stores the heartbeat shared by Responses,
+	// Compact and Images while their upstream result or response headers are pending.
 	openAICompactSSEKeepaliveKey = "openai_compact_sse_keepalive"
 )
 
@@ -89,7 +90,7 @@ func StartOpenAICompactSSEKeepalive(c *gin.Context, interval time.Duration) func
 }
 
 // StartOpenAISSEKeepalive starts heartbeats for callers that have already selected SSE output.
-// Callers include Responses passthrough and Images response-header waits.
+// Callers include native Responses, passthrough and Images response-header waits.
 // Use OpenAICompactKeepaliveAdjustedWrittenSize to exclude heartbeat bytes from failover checks (#3887).
 // A nil context or writer, or a nonpositive interval, returns a no-op cleanup.
 // A missing request supplies no cancellation channel, so cleanup ends its worker.

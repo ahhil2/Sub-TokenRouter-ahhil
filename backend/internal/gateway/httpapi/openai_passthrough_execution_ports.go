@@ -39,6 +39,8 @@ import (
 // Agent Identity and field repairs remain distinct recovery decisions.
 // Successful HTTP turn-state provenance is recorded before response reading,
 // and the runner owns each body lifetime across retries and final output.
+// Streaming exchanges use the shared SSE heartbeat controller during header
+// waits, retaining comment accounting across local repairs and provider retry.
 
 // openAIResponsesRejectedFieldRetryBudgetContextKey identifies the request-wide repair allowance
 // reused by per-provider body-deduplication states during passthrough recovery.
@@ -50,6 +52,7 @@ type openAIPassthroughExecutionAdapter struct {
 	// openAIMessagesExecutionAdapter shares provider, HTTP state and services
 	// with this passthrough call until its synchronous response handling finishes.
 	*openAIMessagesExecutionAdapter
+	stream bool // client streaming preference
 }
 
 // Profile describes the selected provider and shadow state for passthrough
@@ -353,9 +356,16 @@ func (p *openAIPassthroughExecutionAdapter) BuildPass(ctx context.Context, body 
 // SendPass clears model observation and sends using prepared proxy, provider
 // concurrency and TLS profile. Callers run PrepareTransportPass first, and the
 // passthrough runner closes each successful response body after reading or
-// retry/error handling.
+// retry/error handling. Streaming attempts stop their delayed header-wait
+// heartbeat before returning control to response or error handling.
 func (p *openAIPassthroughExecutionAdapter) SendPass(r *http.Request) (*http.Response, error) {
 	resetResponseModel(p.c)
+	// A blocked transport cannot produce reader heartbeats yet. Use the shared
+	// controller until response handling can take ownership of the HTTP writer.
+	if p.stream && p.s.Output.Options.Configured {
+		stop := StartOpenAISSEKeepalive(p.c, time.Duration(p.s.Output.Options.StreamKeepaliveInterval)*time.Second)
+		defer stop()
+	}
 	return p.s.Requests.Transport.DoWithTLS(r, p.proxyURL, p.provider.Record.ID, p.provider.Record.Concurrency, p.s.Requests.TLSProfile(p.provider, p.tls...))
 }
 

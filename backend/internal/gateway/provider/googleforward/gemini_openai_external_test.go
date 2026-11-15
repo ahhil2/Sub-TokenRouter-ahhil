@@ -316,6 +316,56 @@ func TestGeminiForwardAsResponsesReturnsFailoverBeforeResponseStarts(t *testing.
 	require.Zero(t, recorder.Body.Len())
 }
 
+// TestGeminiForwardAsChatCompletions_RejectsInvalidRequestWithoutFallback sends
+// invalid Chat input through Gemini conversion before any upstream request.
+// Streaming and buffered clients receive one JSON rejection after the outer
+// error handler runs, preserving the validation message and HTTP status.
+func TestGeminiForwardAsChatCompletions_RejectsInvalidRequestWithoutFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name    string // validation case name
+		body    string // client request template
+		message string // expected rejection message
+	}{
+		{"malformed JSON", `{"stream":%t,"model":`, "Failed to parse request body"},
+		{"missing model", `{"stream":%t,"messages":[{"role":"user","content":"hi"}]}`, "model is required"},
+		{"unsupported effort", `{"stream":%t,"model":"gemini-2.5-flash","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"ultra"}`, `reasoning effort "ultra" is not supported`},
+	} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", tc.name, stream), func(t *testing.T) {
+				stub := &geminiCompatHTTPUpstreamStub{}
+				svc := newGeminiFixture(geminiDependencies{httpUpstream: stub, cfg: &googleforward.Options{}})
+				svc.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
+				provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{
+					ID:          1,
+					Platform:    capability.PlatformGemini,
+					Type:        capability.ProviderTypeAPIKey,
+					Credentials: map[string]any{"api_key": "fixture"},
+				}}
+				body := []byte(fmt.Sprintf(tc.body, stream))
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+
+				result, err := svc.ForwardAsChatCompletions(c.Request.Context(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, body)
+
+				require.Nil(t, result)
+				require.ErrorContains(t, err, tc.message)
+				require.Zero(t, stub.calls)
+				rejectedBody := recorder.Body.String()
+				require.False(t, gatewayhttp.DefaultOpenAIErrorOutput().EnsureResponse(c, false, err))
+				require.Equal(t, http.StatusBadRequest, recorder.Code)
+				require.Equal(t, rejectedBody, recorder.Body.String())
+				require.True(t, json.Valid(recorder.Body.Bytes()), recorder.Body.String())
+				require.Equal(t, "invalid_request_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+				require.Contains(t, gjson.GetBytes(recorder.Body.Bytes(), "error.message").String(), tc.message)
+				require.True(t, gatewayhttp.IsResponseCommitted(c))
+				_, hasStreamError := gatewayhttp.GetOpsStreamError(c)
+				require.False(t, hasStreamError)
+			})
+		}
+	}
+}
+
 // TestGeminiForwardAsChatCompletions_CustomCodesMiss400HiddenAs500 returns a
 // status-400 error outside an enabled custom-code set. Chat output uses the
 // generic status-500 api_error message and forwarding returns no completion

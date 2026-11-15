@@ -33,7 +33,9 @@ import (
 // failures close the response before final presentation. Successful headers can
 // publish turn-state provenance before client delivery, while response
 // ownership and usage snapshots follow completed reading. Image observations
-// attach image billing identity to the final result.
+// attach image billing identity to the final result. Each exchange checks
+// client cancellation before detachment and again after request construction;
+// already-dispatched work follows the supplied upstream context while draining.
 
 // PassthroughInput carries prepared bytes, retained image intent, and response observations for one attempt.
 type PassthroughInput struct {
@@ -71,6 +73,8 @@ type ImageBilling struct {
 // snapshots follow successful reading. The result keeps the incoming response
 // model; UpstreamModel records initial mapping or Compact replacement and can
 // remain empty, and observed images supply the image billing fields.
+// Cancellation observed before an exchange is dispatched returns directly,
+// allowing callers to release admission without classifying a provider failure.
 func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts) (*Result, error) {
 	profile := p.Profile()
 	body, canonicalImageIntentBody, reqModel := in.Body, in.CanonicalImageIntentBody, in.Model
@@ -291,11 +295,24 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 			actualModel = reqModel
 		}
 		p.UpstreamModelObserved(actualModel)
+		// The detached context permits collecting usage from dispatched work.
+		// Check the client first so cancellation cannot start another recovery exchange.
+		if ctx != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		upstreamCtx, releaseUpstreamCtx := p.UpstreamContext(ctx)
 		upstreamReq, buildErr := p.BuildPass(upstreamCtx, body, token)
 		releaseUpstreamCtx()
 		if buildErr != nil {
 			return nil, buildErr
+		}
+		// Request construction can outlast the client. Release the unsent body
+		// here because transport will never take ownership after this cancellation.
+		if ctx != nil && ctx.Err() != nil {
+			if upstreamReq.Body != nil {
+				_ = upstreamReq.Body.Close()
+			}
+			return nil, ctx.Err()
 		}
 
 		upstreamStart := time.Now()

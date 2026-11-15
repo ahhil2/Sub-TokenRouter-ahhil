@@ -41,23 +41,31 @@ import (
 // quota headers as fresh global failure evidence. Caller-visible error bodies
 // retain classified credential or transient evidence and rebuild other
 // failures into a generic protocol envelope.
+// HTTP errors arriving after waiting heartbeats finish through a Responses
+// failure event, keeping the committed SSE format intact during presentation.
 
 // writeSanitizedOpenAIPassthroughError delegates status-based fixed client
-// messages with Compact SSE support. Its callback can terminate an
-// already-started Compact response; otherwise the shared envelope writer emits
-// JSON with validated retry headers.
+// messages with waiting-heartbeat and Compact SSE support. Its callback ends
+// committed SSE before the shared envelope writer can select JSON and validated
+// retry headers for an unstarted response.
 func writeSanitizedOpenAIPassthroughError(c *gin.Context, upstreamStatus int, upstreamHeaders http.Header) {
 	WriteSanitizedForwardPassthroughError(c, upstreamStatus, upstreamHeaders, func(c *gin.Context, status int, body []byte) bool {
+		if writeOpenAIResponseErrorAfterKeepalive(c, status, body) {
+			return true
+		}
 		return WriteOpenAICompactSSEBridge(c, status, body, MarkOpsStreamError)
 	})
 }
 
 // writeOpenAIPassthroughErrorEnvelope writes the chosen message using Compact
-// or JSON presentation. It supplies the Compact bridge callback required by
-// the shared envelope helper, which checks that format before committing
-// ordinary JSON output.
+// or JSON presentation. The shared envelope helper first offers committed
+// heartbeats and Compact requests their stream format before committing
+// ordinary JSON output with retry headers.
 func writeOpenAIPassthroughErrorEnvelope(c *gin.Context, downstreamStatus int, upstreamHeaders http.Header, message string) {
 	WriteForwardPassthroughErrorEnvelope(c, downstreamStatus, upstreamHeaders, message, func(c *gin.Context, status int, body []byte) bool {
+		if writeOpenAIResponseErrorAfterKeepalive(c, status, body) {
+			return true
+		}
 		return WriteOpenAICompactSSEBridge(c, status, body, MarkOpsStreamError)
 	})
 }
@@ -137,8 +145,8 @@ func (p *OpenAIResponseOutput) PassthroughFailoverError(
 //
 // Health can choose generic output or a configured failover signal for
 // remaining errors. Final presentation commits the request, records
-// passthrough Ops evidence and retains a redacted parameter-error body when
-// appropriate. Context-window messages use the sanitized extracted message,
+// passthrough Ops evidence and retains redacted parameter-error fields in
+// JSON or a committed SSE failure. Context-window messages use the extracted message,
 // allowing client recovery; other failures use fixed status-based text through
 // the Compact-aware envelope writer.
 func (p *OpenAIResponseOutput) PassthroughError(
@@ -216,10 +224,12 @@ func (p *OpenAIResponseOutput) PassthroughError(
 		UpstreamResponseBody: upstreamDetail,
 	})
 	if clientInvalidRequest {
-		// Keep the captured redacted parameter error intact while the shared
-		// header writer admits retry metadata for this already-final client rejection.
-		WriteForwardPassthroughErrorHeaders(c.Writer.Header(), resp.Header)
-		c.Data(http.StatusBadRequest, "application/json; charset=utf-8", body)
+		// A committed heartbeat needs an SSE terminal with the parameter fields.
+		// Unstarted output can return the captured JSON and validated retry headers.
+		if !writeOpenAIResponseErrorAfterKeepalive(c, http.StatusBadRequest, body) {
+			WriteForwardPassthroughErrorHeaders(c.Writer.Header(), resp.Header)
+			c.Data(http.StatusBadRequest, "application/json; charset=utf-8", body)
+		}
 		return fmt.Errorf("upstream invalid request: %d message=%s", resp.StatusCode, upstreamMsg)
 	}
 	// Context-window text describes the client recovery condition. Retain its
@@ -231,6 +241,42 @@ func (p *OpenAIResponseOutput) PassthroughError(
 	}
 
 	return fmt.Errorf("upstream error: %d (client response sanitized)", resp.StatusCode)
+}
+
+// writeOpenAIResponseErrorAfterKeepalive presents an error inside committed
+// SSE output and reports whether it handled presentation. Callers invoke it
+// before changing response headers or writing a JSON body. The body must
+// already be redacted; missing classification and message fields receive a
+// generic upstream error. Heartbeat stopping synchronizes with the last
+// possible comment before the error writer takes over. Responses terminals
+// retain the captured error type and parameter, including an explicit null.
+func writeOpenAIResponseErrorAfterKeepalive(c *gin.Context, status int, body []byte) bool {
+	if !StopOpenAICompactSSEKeepaliveCommitted(c) {
+		return false
+	}
+	kind := strings.TrimSpace(gjson.GetBytes(body, "error.type").String())
+	if kind == "" {
+		kind = "upstream_error"
+	}
+	code := strings.TrimSpace(upstream.ExtractErrorCode(body))
+	message := logredact.SanitizeUpstreamQueries(strings.TrimSpace(upstream.ExtractErrorMessage(body)))
+	if message == "" {
+		message = "Upstream request failed"
+	}
+	// The heartbeat already selected the response format. Pass its error fields
+	// into the terminal writer so a raw JSON rejection cannot corrupt the SSE stream.
+	if InboundIsResponses(c) {
+		failure := ResponsesFailedError{Code: MapResponsesErrorCode(kind, code), Message: message, Type: kind}
+		param := gjson.GetBytes(body, "error.param")
+		if json.Valid([]byte(param.Raw)) {
+			failure.Param = json.RawMessage(param.Raw)
+		}
+		MarkOpsStreamError(c, kind, message, status)
+		writeResponsesFailedSSE(c, failure, ErrorRequestID(c), ErrorRequestModel(c))
+		return true
+	}
+	DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, status, kind, code, message, true, false)
+	return true
 }
 
 // LogOpenAICapacityFailoverSuppressed records that capacity recovery was

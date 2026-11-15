@@ -19,10 +19,115 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/compact"
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
+
+// cancelledPassthroughPorts injects cancellation during request preparation and
+// records dispatch and cleanup through the real HTTP policy adapter.
+type cancelledPassthroughPorts struct {
+	*openAIPassthroughExecutionAdapter // real request policy adapter
+
+	cancel context.CancelFunc // original client cancellation callback
+	stage  string             // selected cancellation injection stage
+
+	detachCalls  int // upstream context acquisition count
+	buildCalls   int // prepared request construction count
+	releaseCalls int // upstream context release count
+	sendCalls    int // attempted upstream dispatch count
+
+	body *testkit.CloseTrackingReader // unsent request cleanup observer
+}
+
+// TestOpenAIPassthroughCancellationBeforeDispatch cancels before detachment,
+// while detaching, during construction, or during construction cleanup. It
+// checks that no upstream dispatch occurs and acquired request resources close.
+func TestOpenAIPassthroughCancellationBeforeDispatch(t *testing.T) {
+	for _, stage := range []string{"before_detach", "during_detach", "during_build", "after_build"} {
+		t.Run(stage, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+			body := []byte(`{"model":"gpt-5.4","input":"hello","stream":false}`)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			svc := openAIClientToolsTestService(&auxiliaryHTTPRecorder{})
+			provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{
+				LoadLocation: time.LoadLocation, ID: 7401, Platform: capability.PlatformOpenAI,
+				Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{"api_key": "test-key"},
+			}}
+			ports := &cancelledPassthroughPorts{
+				openAIPassthroughExecutionAdapter: &openAIPassthroughExecutionAdapter{
+					openAIMessagesExecutionAdapter: &openAIMessagesExecutionAdapter{s: svc.Text, c: c, provider: provider},
+				},
+				cancel: cancel,
+				stage:  stage,
+				body:   &testkit.CloseTrackingReader{Reader: bytes.NewReader(body)},
+			}
+			if stage == "before_detach" {
+				cancel()
+			}
+			result, err := openaiforward.RunPassthrough(ctx, openaiforward.PassthroughInput{
+				Body: body, CanonicalImageIntentBody: body, Model: "gpt-5.4", StartedAt: time.Now(),
+			}, ports)
+
+			require.ErrorIs(t, err, context.Canceled)
+			require.Nil(t, result)
+			require.Zero(t, ports.sendCalls)
+			require.False(t, c.Writer.Written())
+			if stage == "before_detach" {
+				require.Zero(t, ports.detachCalls)
+				require.Zero(t, ports.buildCalls)
+				require.Zero(t, ports.releaseCalls)
+				require.False(t, ports.body.Closed)
+			} else {
+				require.Equal(t, 1, ports.detachCalls)
+				require.Equal(t, 1, ports.buildCalls)
+				require.Equal(t, 1, ports.releaseCalls)
+				require.True(t, ports.body.Closed)
+			}
+		})
+	}
+}
+
+// UpstreamContext records detached context ownership and returns its counted
+// release callback. Selected stages cancel the client after detachment or when
+// the runner releases construction resources before dispatch.
+func (p *cancelledPassthroughPorts) UpstreamContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	p.detachCalls++
+	detached, release := p.openAIPassthroughExecutionAdapter.UpstreamContext(ctx)
+	if p.stage == "during_detach" {
+		p.cancel()
+	}
+	return detached, func() {
+		p.releaseCalls++
+		release()
+		if p.stage == "after_build" {
+			p.cancel()
+		}
+	}
+}
+
+// BuildPass creates a request with an observable body and the supplied upstream
+// context. The construction stage cancels the original client after building,
+// leaving the detached request available for the runner's final cancellation check.
+func (p *cancelledPassthroughPorts) BuildPass(ctx context.Context, _ []byte, _ string) (*http.Request, error) {
+	p.buildCalls++
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://upstream.invalid/v1/responses", p.body)
+	if p.stage == "during_build" {
+		p.cancel()
+	}
+	return request, err
+}
+
+// SendPass records a prohibited dispatch and returns an observable failure.
+func (p *cancelledPassthroughPorts) SendPass(*http.Request) (*http.Response, error) {
+	p.sendCalls++
+	return nil, errors.New("cancelled passthrough reached transport")
+}
 
 // TestOpenAIPassthroughCompactFallbackSecondStreamFailureUsesStandardErrorPath
 // returns context-window failures from both initial and Compact retry streams.

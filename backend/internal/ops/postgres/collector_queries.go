@@ -261,14 +261,17 @@ func usageTTFTSQL(alias string) string {
 	return "(CASE WHEN " + column + "->>'upstream_stream'='true' AND " + end + ">=" + start + " THEN " + end + "-" + start + " END)"
 }
 
-// usageTPSSQL derives the same nullable average output rate as usage.UsageLog.TPS.
-// Alias is a code-owned table alias. Complete usage, successful completion and a
-// positive upstream duration qualify both streaming and buffered text responses.
+// usageTPSSQL derives the nullable average output rate for persisted usage rows,
+// matching usage.UsageLog.TPS after database loading. Alias is a code-owned table
+// alias. Complete usage, successful completion and a positive upstream duration
+// qualify both streaming and buffered text responses.
 //
 // Media counters and billing categories exclude image and video generations, while
 // the recorded Live category (request_type=5) excludes session-duration usage.
 // Unknown historical categories resolve to text transports in
-// UsageLog.EffectiveRequestType.
+// UsageLog.EffectiveRequestType. MediaType is an in-memory compatibility field;
+// database reads identify generated media through the persisted counters and
+// billing_mode.
 // Ineligible rows yield SQL NULL so model averages use the same samples as usage
 // responses, including historical rows with complete timing snapshots.
 func usageTPSSQL(alias string) string {
@@ -283,6 +286,6 @@ func usageTPSSQL(alias string) string {
 		column + "->>'usage_complete'='true' AND " + prefix + "output_tokens>0 AND " +
 		"COALESCE(" + prefix + "image_count,0)<=0 AND COALESCE(" + prefix + "image_output_tokens,0)<=0 AND " +
 		"COALESCE(" + prefix + "video_count,0)<=0 AND COALESCE(" + prefix + "billing_mode,'') NOT IN ('image','video') AND " +
-		"COALESCE(" + prefix + "media_type,'') NOT IN ('image','video') AND COALESCE(" + prefix + "request_type,0)<>5 AND " +
+		"COALESCE(" + prefix + "request_type,0)<>5 AND " +
 		elapsed + ">0 THEN ROUND(" + prefix + "output_tokens*1000.0/" + elapsed + ",1) END)"
 }

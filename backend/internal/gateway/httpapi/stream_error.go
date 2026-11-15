@@ -17,11 +17,22 @@ import (
 // terminal response.failed object. That object carries an ID, creation
 // timestamp and empty output array so clients can complete their response state
 // even when generation never produced output.
+//
+// Callers can retain a redacted upstream error's type and parameter alongside
+// its code and message when an earlier heartbeat has already committed SSE.
+// Parameter absence and an explicit JSON null are distinct inputs, so the
+// structured writer retains the parameter's JSON representation. The public
+// string-based entry point supplies code and message, while callers needing
+// upstream detail select those fields before invoking the same terminal writer.
 
 // ResponsesFailedError is the error object in an OpenAI Responses failure.
 type ResponsesFailedError struct {
-	Code    string `json:"code"`    // client machine-readable error code
-	Message string `json:"message"` // client-safe failure description text
+	Code    string `json:"code"`           // client machine-readable error code
+	Message string `json:"message"`        // client-safe failure description text
+	Type    string `json:"type,omitempty"` // optional upstream error category
+	// Param retains the redacted upstream parameter value as JSON. Nil omits
+	// the field, while a supplied JSON null remains present in the event.
+	Param json.RawMessage `json:"param,omitempty"`
 }
 
 // ResponsesFailedBody is the response object carried by a failure event. The
@@ -56,6 +67,17 @@ type ResponsesFailedEvent struct {
 // Flush is unavailable, so the caller may choose another protocol error path;
 // committed HTTP status remains fixed.
 func WriteResponsesFailedSSE(c *gin.Context, errType, code, message, requestID, model string) bool {
+	return writeResponsesFailedSSE(c, ResponsesFailedError{
+		Code:    MapResponsesErrorCode(errType, code),
+		Message: message,
+	}, requestID, model)
+}
+
+// writeResponsesFailedSSE writes a terminal event containing the supplied
+// client-safe error fields. Callers stop any active heartbeat before using the
+// writer and end their response after true, including marshal or delivery
+// failures recorded on Gin. False means that streaming flush is unavailable.
+func writeResponsesFailedSSE(c *gin.Context, failure ResponsesFailedError, requestID, model string) bool {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		return false
@@ -70,10 +92,7 @@ func WriteResponsesFailedSSE(c *gin.Context, errType, code, message, requestID, 
 			Model:     strings.TrimSpace(model),
 			Status:    "failed",
 			Output:    []any{},
-			Error: ResponsesFailedError{
-				Code:    MapResponsesErrorCode(errType, code),
-				Message: message,
-			},
+			Error:     failure,
 		},
 	})
 	// Attach serialization failure to the request and return handled,

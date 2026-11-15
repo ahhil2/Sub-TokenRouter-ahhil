@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
@@ -17,6 +19,55 @@ import (
 // streamErrorBackendFixture supplies error observation methods; execution methods remain unset.
 type streamErrorBackendFixture struct {
 	OpenAITextBackend // unset platform execution methods
+}
+
+// TestWriteResponsesFailedSSE_PreservesParameterRepresentation presents an
+// upstream parameter rejection after HTTP success has already been committed.
+// The single terminal event retains its error type, code, and string or null
+// parameter, while absent parameters remain omitted.
+func TestWriteResponsesFailedSSE_PreservesParameterRepresentation(t *testing.T) {
+	for _, tc := range []struct {
+		name  string // parameter fixture name
+		param string // encoded upstream parameter
+	}{
+		{"string", `"reasoning.effort"`},
+		{"null", `null`},
+		{"absent", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, recorder := newGinContextForEndpoint(t, EndpointResponses)
+			c.Header("Content-Type", "text/event-stream")
+			c.Writer.WriteHeader(http.StatusOK)
+			c.Writer.WriteHeaderNow()
+			require.True(t, writeResponsesFailedSSE(c, ResponsesFailedError{
+				Code:    "invalid_value",
+				Message: "Unsupported reasoning effort",
+				Type:    "invalid_request_error",
+				Param:   json.RawMessage(tc.param),
+			}, "request-123", "gpt-5.5"))
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: response.failed\n"))
+			_, failure := parseResponsesFailedSSE(t, recorder.Body.String())
+			require.Equal(t, "invalid_value", failure["code"])
+			require.Equal(t, "invalid_request_error", failure["type"])
+			encoded, err := json.Marshal(failure)
+			require.NoError(t, err)
+			parameter := gjson.GetBytes(encoded, "param")
+			require.Equal(t, tc.param, parameter.Raw)
+			require.Equal(t, tc.param != "", parameter.Exists())
+		})
+	}
+}
+
+// TestWriteResponsesFailedSSE_DefaultFields keeps the public string-based
+// writer's client error shape stable. Code mapping and the message remain
+// present while optional upstream type and parameter fields are omitted.
+func TestWriteResponsesFailedSSE_DefaultFields(t *testing.T) {
+	c, recorder := newGinContextForEndpoint(t, EndpointResponses)
+	require.True(t, WriteResponsesFailedSSE(c, "invalid_request_error", "", "Invalid input", "request-123", ""))
+	_, failure := parseResponsesFailedSSE(t, recorder.Body.String())
+	require.Equal(t, map[string]any{"code": "invalid_request", "message": "Invalid input"}, failure)
 }
 
 // newGinContextForEndpoint builds an unmatched Gin request with a response
