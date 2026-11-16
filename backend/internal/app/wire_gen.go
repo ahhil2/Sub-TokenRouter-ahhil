@@ -212,7 +212,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	refreshTokenCache := rediscache7.NewRefreshTokenCache(redisClient)
 	identityRuntimeSettings := provideIdentitySettings(store)
 	instanceStore := postgres7.NewInstanceStore(client)
-	plans := provideBillingPlans(client, instanceStore)
+	plans := provideBillingPlans(client, instanceStore, groupStore)
 	grantSettings := provideGrantSettings(store, cfg, plans)
 	promotionRuntimeSettings := providePromotionSettings(store)
 	appIdentityAuthSettings := provideIdentityAuthSettings(identityRuntimeSettings, grantSettings, displaySettings, oAuthSettings, promotionRuntimeSettings)

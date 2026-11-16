@@ -9,6 +9,7 @@
 - [模型与会话](#模型与会话)：修改模型解析、thinking、signature 或缓存连续性时读取。
 - [配额与调度](#配额与调度)：修改 tier、模型限流或粘性时读取。
 - [错误与诊断](#错误与诊断)：修改 Google 错误、刷新或 failover 时读取。
+- [流式完成与用量](#gemini_stream_lifecycle)：修改 SSE 读取、结束判断、超时或中断计费时读取。
 - [原生执行与提供商授权](#gemini_native_execution)：修改执行器、授权会话或批量调用时读取。
 - [Vertex 服务账号与对象流](#vertex_service_account_execution)：修改 Vertex token、Batch 或 GCS 时读取。
 
@@ -59,6 +60,8 @@ Antigravity 的专用入口 `/antigravity/v1beta/*` 强制选择 Antigravity 提
 
 兼容层维护 thinking 和推理字段、tool 和 schema、图片输入、usage、finish reason 和 Gemini 的 thought signature。工具 schema 会递归删掉 Gemini 不支持的字段；INTEGER 类型的整数 `exclusiveMinimum` 转成加一后的、包含边界的 `minimum`，已有的更严格的下界保持不变；无法等价转换的独占下界只删除，不会编造新的下界。需要跨轮次保持 signature、session 和缓存连续性时，粘性会话优先复用同一个提供商；换提供商时，重新评估能否继续，另一个提供商的内部状态不能当作通用的上下文使用。
 
+Messages、Chat 和 Responses 兼容请求中的 thinking 只用于推理输出，不作为普通文本重新加入历史。Gemini 的 opaque thought signature 不放进 Messages history；网关按客户端 tool call ID 保存原始 Gemini ID 和 signature，回放范围由 API Key、提供商和映射后的模型共同限定。记录保留一小时，进程内最多 16,384 条、32 MiB 字符串数据，未命中或过期时使用兼容标记；同一提供商拒绝已恢复的签名时，可以改用兼容标记重试一次。稍后到达的签名回写到已发给客户端的 tool call ID，重复或分片的工具调用保持各自的调用关系。
+
 原生和 Claude 兼容的生图响应，按上游实际返回的 `inlineData` 或 `inline_data` 图片 part 数计费，自定义的模型别名也一样。流式响应取单个 payload 里观测到的最大图片数，累积式的 SSE 因此不会重复计费；没有观测到内联图片时，才按请求的模型名或映射后的模型名判断是不是生图模型。
 
 ## 配额与调度
@@ -74,6 +77,17 @@ OAuth refresh、Service Account token、project 和 tier 发现、上游请求�
 提供商内的传输错误、429、5xx 和签名恢复重试都使用请求 context 控制退避。请求取消或自身截止时，等待立即结束，后续尝试停止，并把取消错误交给请求完成流程；`countTokens` 也不会将取消转为本地估算成功。请求 context 仍有效时，上游独立超时继续按上游失败处理。
 
 Gemini 原生入口返回 Google 格式的错误，Anthropic 和 OpenAI 入口返回对应客户端的格式。最终错误可以应用[网关错误响应策略](gateway_error_policy.md)，但 project、service account JSON、token、API key 和上游的内部响应，默认都不透传。排查问题时，核对 OAuth 变体、project、location 和 tier、最终的模型、thought 和 session 状态、配额 reset 时间和 attempt 链。
+
+<a id="gemini_stream_lifecycle"></a>
+## 流式完成与用量
+
+Gemini 原生、Messages、Chat 和 Responses 的 SSE 适配，以及上游 SSE 转非流式 JSON，都经过同一个有界读取器。每个 SSE 帧累计所有字段的字节数，包括注释和未知字段，按配置的 `MaxLineSize` 限制；未配置时沿用共享的 SSE 大小上限。多行 `data` 先组成完整事件再解析，格式错误、显式上游错误和完成前的 EOF 都作为失败返回。
+
+完成判断使用最终上游请求的 `candidateCount`，每个候选的结束原因只计一次。阻断响应可以独立结束；兼容的 `[DONE]` 需要此前已有内容。所有候选完成后，读取器最多继续收集五秒的尾部用量，期间到达的新数据不会延长该时限。完成后的尾部断开或超时保留已经成立的完成状态，完成前的读取失败则不会生成成功结束事件。
+
+空闲超时由实际读取的上游字节更新，包括上游心跳；客户端保活不会更新它。请求 context 取消时，读取器关闭响应体并等待读取任务退出。响应体通过幂等关闭器与执行器共用，取消或超时后释放一次底层连接。
+
+稀疏 `usageMetadata` 按字段合并，后续帧没有出现的计数保留此前值。读取或输出失败时，执行结果仍携带已观测的用量和客户端断开状态，完成器据此处理部分用量。HTTP 200 内的错误使用提供商现有错误策略；输出尚未提交时可以返回 failover，提交后按原生、Messages 或 OpenAI 的 SSE 格式输出一次错误，保持已发送的 HTTP 状态。
 
 <a id="gemini_native_execution"></a>
 ## 原生执行与提供商授权

@@ -6,12 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
@@ -30,10 +28,11 @@ import (
 // when meaningful content arrives. Stream termination, timeout and read
 // failure select different finalization paths, including usage collection
 // after client disconnect. Headers are prepared by the first actual writer
-// call, and keepalive ticks emit only after meaningful data. Scanner stop
-// signals request delivery stop while the exchange owner closes a blocked body
-// reader; tool restoration and conversion state stay local to the ordered
-// stream.
+// call. Local heartbeats begin after meaningful output and run on the same
+// consumer goroutine as converted events. The shared Gemini reader validates
+// frames, collects trailing usage, closes the body,
+// and joins its worker. Tool restoration and conversion state remain local
+// to the ordered stream.
 
 // antigravityCompatStreamAdapter converts ordered Claude events and writes
 // representation-specific completion or failure output.
@@ -85,13 +84,6 @@ type antigravityResponsesStreamAdapter struct {
 	clientToolRestorer *bridge.ResponsesClientToolStreamRestorer
 }
 
-// antigravityCompatScanEvent transfers a scanned input line or final scanner
-// failure to its handler.
-type antigravityCompatScanEvent struct {
-	line string // copied scanned input line
-	err  error  // terminal scanner read failure
-}
-
 // antigravityCompatStreamSession stages ordered prelude output and retains
 // usage/timing observations for one answer.
 type antigravityCompatStreamSession struct {
@@ -113,7 +105,7 @@ type antigravityCompatStreamSession struct {
 	// order.
 	pendingEvents []protocolanthropic.AnthropicStreamEvent
 	// meaningfulData stays true after a qualifying content/completion observation
-	// and controls prelude release, keepalive eligibility, and empty-stream
+	// and controls prelude release and empty-stream
 	// recovery.
 	meaningfulData bool
 }
@@ -491,19 +483,17 @@ func MergeAntigravityCompatUsage(dst *upstream.TokenUsage, src *protocolanthropi
 }
 
 // HandleAntigravityCompatStream coordinates one ordered upstream stream with
-// compatible output, timeout, and keepalive. Callers supply a nonnil
+// compatible output and upstream timeout handling. Callers supply a nonnil
 // response/body and flushing output writer, required failure callbacks, and
-// close the body after return to release a blocked scanner.
+// may close the idempotent body again after the shared reader has released it.
 //
 // Prelude remains buffered until content/completion qualifies, and
-// headers/status are prepared before the first writer call. Every delivered
-// line resets timeout before raw observation and conversion. EOF or timeout
-// before meaningful output selects Failover; disconnected terminal paths
-// finalize usage without further adapter output. Keepalive ticks write only
-// after meaningful data. Disconnected timeout/read paths collect usage
-// without adapter finalization; EOF still runs ordinary finish. Later errors
-// can emit a committed error event, and scanner stop signals delivery
-// termination without joining a blocked reader.
+// headers/status are prepared before the first writer call. Shared frame reading
+// validates completion and collects trailing usage before adapter finalization.
+// Read failure before meaningful output selects Failover; disconnection retains
+// observed usage without further output. Errors after content emit the existing
+// committed failure, while successful finalization emits complete cache counts
+// before the single protocol terminal event.
 func (s *ResponseAdapter) HandleAntigravityCompatStream(
 	c *upstream.OutputContext,
 	resp *http.Response,
@@ -529,171 +519,40 @@ func (s *ResponseAdapter) HandleAntigravityCompatStream(
 		c.Status(http.StatusOK)
 	}
 	session := NewAntigravityCompatStreamSession(originalModel, startTime, adapter, writer)
-	events, stopScanner, maxLineSize := s.StartAntigravityCompatScanner(resp.Body)
-	defer stopScanner()
-
-	timeout := s.AntigravityCompatStreamTimeout()
-	timeoutTimer, timeoutCh := NewAntigravityCompatTimer(timeout)
-	if timeoutTimer != nil {
-		defer timeoutTimer.Stop()
-	}
-	keepaliveTicker, keepaliveCh := s.NewAntigravityCompatKeepaliveTicker()
-	if keepaliveTicker != nil {
-		defer keepaliveTicker.Stop()
-	}
-
-	for {
-		select {
-		case event, open := <-events:
-			if !open {
-				if !session.hasMeaningfulData() && !writer.Disconnected() {
-					return nil, AntigravityCompatEmptyStreamError(s.Options.Failover)
-				}
-				return session.finish(), nil
-			}
-			if event.err != nil {
-				return s.HandleAntigravityCompatReadError(c, session, event.err, maxLineSize, prefix)
-			}
-			// Reset timeout for each delivered line before conversion, including
-			// ignored framing, because stream activity and meaningful-output
-			// qualification govern different decisions.
-			ResetAntigravityCompatTimer(timeoutTimer, timeout)
-			s.observeRaw([]byte(event.line))
-			session.consume(event.line)
-
-		case <-timeoutCh:
-			if writer.Disconnected() {
-				return session.collectResult(true), nil
-			}
-			if !session.hasMeaningfulData() {
-				return nil, AntigravityCompatEmptyStreamError(s.Options.Failover)
-			}
-			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (%s)", prefix)
-			WriteAntigravityCompatStreamError(c, adapter, writer, "stream_timeout", s.Options.MarkCommitted)
-			return session.collectResult(false), fmt.Errorf("stream data interval timeout")
-
-		case <-keepaliveCh:
-			if session.hasMeaningfulData() && !writer.Disconnected() {
-				writer.Write([]byte(": ping\n\n"))
-			}
+	observed, err := s.readGeminiStream(resp, s.unwrapConvertedGeminiResponse, func(event upstream.GeminiStreamEvent) error {
+		if len(event.Data) > 0 {
+			s.observeRaw(event.Data)
+			session.consume("data: " + string(event.Data))
 		}
-	}
-}
-
-// StartAntigravityCompatScanner starts a line worker and returns its events,
-// stop callback, and growth limit. Call stop exactly once, then close the
-// owning response body when needed to release a blocked read.
-//
-// The worker owns the pooled 64-KiB buffer until scanning ends and closes its
-// event channel on exit. Stop competes with sending and does not join the
-// worker or close the reader. Sixteen queued events decouple reading from
-// handler selection; the scanner maximum controls growth but a smaller value
-// does not enforce a cap below the existing pooled capacity.
-func (s *ResponseAdapter) StartAntigravityCompatScanner(
-	body io.Reader,
-) (<-chan antigravityCompatScanEvent, func(), int) {
-	maxLineSize := upstream.DefaultSSELineLimit
-	if s.Options.MaxLineSize > 0 {
-		maxLineSize = s.Options.MaxLineSize
-	}
-	scanner := bufio.NewScanner(body)
-	scanBuf := httpclient.GetSSEScannerBuf64K()
-	scanner.Buffer(scanBuf[:0], maxLineSize)
-
-	events := make(chan antigravityCompatScanEvent, 16)
-	done := make(chan struct{})
-	// Give the worker buffer ownership until its reader finishes; the stop
-	// channel allows send termination to be selected, and response-body closure
-	// releases blocked scanning.
-	go func() {
-		defer httpclient.PutSSEScannerBuf64K(scanBuf)
-		defer close(events)
-		send := func(event antigravityCompatScanEvent) bool {
-			select {
-			case events <- event:
-				return true
-			case <-done:
-				return false
-			}
+		return nil
+	}, func() {
+		// Prelude frames stay buffered for retry; comments are emitted only after
+		// meaningful content has already committed this attempt to its client.
+		if session.hasMeaningfulData() && !writer.Disconnected() {
+			writer.Write([]byte(": ping\n\n"))
 		}
-		for scanner.Scan() {
-			if !send(antigravityCompatScanEvent{line: scanner.Text()}) {
-				return
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			send(antigravityCompatScanEvent{err: err})
-		}
-	}()
-	return events, func() { close(done) }, maxLineSize
-}
-
-// AntigravityCompatStreamTimeout returns the configured idle-timeout seconds
-// as a duration.
-func (s *ResponseAdapter) AntigravityCompatStreamTimeout() time.Duration {
-	return time.Duration(s.Options.StreamDataIntervalTimeout) * time.Second
-}
-
-// NewAntigravityCompatKeepaliveTicker returns a ticker and channel for a
-// positive configured interval. Nonpositive intervals return nil values to
-// disable the select path; the caller stops a returned ticker.
-func (s *ResponseAdapter) NewAntigravityCompatKeepaliveTicker() (*time.Ticker, <-chan time.Time) {
-	interval := time.Duration(s.Options.StreamKeepaliveInterval) * time.Second
-	if interval <= 0 {
-		return nil, nil
+	})
+	// Refresh the processor before either failure collection or successful final
+	// output, so all consumers retain the same sparse-tail cache observations.
+	session.processor.SetUsageSnapshot(bridge.NativeExtractGeminiUsage(observed.UsageJSON))
+	if err != nil {
+		return s.HandleAntigravityCompatReadError(c, session, err, s.Options.MaxLineSize, prefix)
 	}
-	ticker := time.NewTicker(interval)
-	return ticker, ticker.C
-}
-
-// NewAntigravityCompatTimer returns a timer and channel for a positive
-// timeout. Nonpositive values return nil values to disable timeout selection;
-// the caller stops the returned timer when handling ends.
-func NewAntigravityCompatTimer(timeout time.Duration) (*time.Timer, <-chan time.Time) {
-	if timeout <= 0 {
-		return nil, nil
-	}
-	timer := time.NewTimer(timeout)
-	return timer, timer.C
-}
-
-// ResetAntigravityCompatTimer stops and nonblockingly drains an available
-// timer before resetting its supplied duration. Nil has no effect; callers
-// serialize timer/channel use, and nonpositive reset durations can fire
-// immediately.
-//
-// Stop precedes the nonblocking receive, which removes an old queued tick when
-// one is available before Reset starts the next interval. The handler uses
-// that timer as its delivered-line clock. Callers keep other receivers from
-// consuming the same channel during this sequence so the selected old/new
-// timeout cycle belongs to one handler.
-func ResetAntigravityCompatTimer(timer *time.Timer, timeout time.Duration) {
-	if timer == nil {
-		return
-	}
-	// Drain an available old tick without blocking before reset so a pending
-	// prior timeout does not become the next observed timeout cycle.
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
-	}
-	timer.Reset(timeout)
+	return session.finish(), nil
 }
 
 // HandleAntigravityCompatReadError chooses failover, usage collection, or
-// committed failure for a scanner error. Callers provide live session/writer
-// state and applicable failure callbacks, then stop scanning and close the
-// owning body after return.
+// committed failure for a validated reader error. Callers provide live
+// session/writer state and applicable failure callbacks after shared reader
+// cleanup; conversion finalization cannot resume successful output on failure.
 //
 // When neither meaningful data nor a client disconnect has been observed,
 // empty-stream policy wins before cancellation classification. Later
 // cancellation or an existing disconnect returns finalized usage without
 // another error event. A too-long
-// line emits a committed size error and returns current usage without
-// processor finalization; other read errors emit a committed failure and
-// return no result. Thus returned usage depends on the selected terminal path.
+// frame emits a committed size error and returns observed usage. Other read
+// failures emit the corresponding committed failure and return no adapter
+// result; the execution owner retains its independent raw usage observations.
 func (s *ResponseAdapter) HandleAntigravityCompatReadError(
 	c *upstream.OutputContext,
 	session *antigravityCompatStreamSession,
@@ -710,12 +569,19 @@ func (s *ResponseAdapter) HandleAntigravityCompatReadError(
 	if disconnect, handled := HandleStreamReadError(err, session.writer.Disconnected(), prefix); handled {
 		return session.collectResult(disconnect), nil
 	}
-	if errors.Is(err, bufio.ErrTooLong) {
+	var streamError *upstream.GeminiStreamError
+	tooLarge := errors.Is(err, bufio.ErrTooLong) ||
+		(errors.As(err, &streamError) && streamError.Kind == "stream_frame_too_large")
+	if tooLarge {
 		logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (%s): max_size=%d error=%v", prefix, maxLineSize, err)
 		WriteAntigravityCompatStreamError(c, session.adapter, session.writer, "response_too_large", s.Options.MarkCommitted)
-		return session.result(false), err
+		return session.collectResult(false), err
 	}
-	WriteAntigravityCompatStreamError(c, session.adapter, session.writer, "stream_read_error", s.Options.MarkCommitted)
+	reason := "stream_read_error"
+	if errors.As(err, &streamError) && streamError.Kind == "stream_timeout" {
+		reason = "stream_timeout"
+	}
+	WriteAntigravityCompatStreamError(c, session.adapter, session.writer, reason, s.Options.MarkCommitted)
 	return nil, fmt.Errorf("stream read error: %w", err)
 }
 

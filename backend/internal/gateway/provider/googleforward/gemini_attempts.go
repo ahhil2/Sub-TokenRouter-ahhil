@@ -19,6 +19,7 @@ import (
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
@@ -143,7 +144,9 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	// same selected wire model.
 	mappedModel := providercore.ResolveForwardMappedModel(gatewayprovider.ExecutionRecord(provider), req.Model, provideradapter.ModelDefaults())
 
-	geminiReq, err := convertClaudeMessagesToGeminiGenerateContent(body)
+	toolScope := session.GeminiToolScope{APIKeyID: c.APIKeyID(), ProviderID: provider.Record.ID, Model: mappedModel}
+
+	geminiReq, err := bridge.NativeConvertClaudeMessagesToGeminiGenerateContent(s.geminiToolOptions(toolScope), body)
 	if err != nil {
 		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", err.Error())
 	}
@@ -155,7 +158,6 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	if err != nil {
 		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", err.Error())
 	}
-	geminiReq = ensureGeminiFunctionCallThoughtSignatures(geminiReq)
 	originalClaudeBody := body
 
 	proxyURL := ""
@@ -192,6 +194,8 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 		return gatewayprovider.FilterSignatureSensitiveBlocksForRetry(originalClaudeBody, originalModel)
 	}
 	options.ConvertRetry = func(stripped []byte) ([]byte, error) {
+		// A provider rejected the original signature. Rebuild with the
+		// compatibility marker so the retry does not send that signature again.
 		converted, err := convertClaudeMessagesToGeminiGenerateContent(stripped)
 		if err != nil {
 			return nil, err
@@ -214,7 +218,7 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 		Model:          mappedModel,
 		Mode:           gemininative.MessagesResponse,
 		Exchange:       options,
-		Response:       s.geminiResponseAdapter(c).Options,
+		Response:       s.geminiResponseAdapter(c, toolScope).Options,
 		StartedAt:      startTime,
 		UpstreamStream: useUpstreamStream,
 		OAuth:          provider.Record.Type == capability.ProviderTypeOAuth,
@@ -307,7 +311,14 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 		return compatibilityResult, executeErr
 	}
 	if executeErr != nil {
-		return nil, executeErr
+		executeErr = s.streamFailure(ctx, c, provider, result, executeErr, func(status int, body []byte) error {
+			return c.GeminiMappedError(provider, status, result.RequestID, body)
+		})
+		// Keep observations from an interrupted generation available for completion
+		// accounting even when a final protocol error has already reached the client.
+		if !result.HasUsage && !result.Served {
+			return nil, executeErr
+		}
 	}
 	requestID = result.RequestID
 	usage := &result.Usage
@@ -332,7 +343,8 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 		ImageCount:            imageCount,
 		ImageSize:             imageSize,
 		ImageInputSize:        imageInputSize,
-	}, nil
+		ClientDisconnect:      result.ClientDisconnect,
+	}, executeErr
 }
 
 // ForwardNative executes generateContent, streamGenerateContent, or countTokens
@@ -435,7 +447,7 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 		Model:          mappedModel,
 		Mode:           gemininative.NativeResponse,
 		Exchange:       options,
-		Response:       s.geminiResponseAdapter(c).Options,
+		Response:       s.geminiResponseAdapter(c, session.GeminiToolScope{}).Options,
 		StartedAt:      startTime,
 		UpstreamStream: useUpstreamStream,
 		OAuth:          provider.Record.Type == capability.ProviderTypeOAuth,
@@ -547,7 +559,14 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 		return compatibilityResult, executeErr
 	}
 	if executeErr != nil {
-		return nil, executeErr
+		executeErr = s.streamFailure(ctx, c, provider, result, executeErr, func(status int, body []byte) error {
+			return c.GeminiNativeUpstreamError(provider, &http.Response{StatusCode: status, Header: result.UpstreamHeaders}, body, result.RequestID, false)
+		})
+		// Keep observations from an interrupted generation available for completion
+		// accounting even when a final protocol error has already reached the client.
+		if !result.HasUsage && !result.Served {
+			return nil, executeErr
+		}
 	}
 	if result.EstimatedTokenCount != nil {
 		return &forwardcore.MessagesResult{
@@ -581,7 +600,8 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 		ImageCount:            imageCount,
 		ImageSize:             imageSize,
 		ImageInputSize:        imageInputSize,
-	}, nil
+		ClientDisconnect:      result.ClientDisconnect,
+	}, executeErr
 }
 
 // checkErrorPolicyInLoop inspects failures before another Gemini retry and

@@ -126,6 +126,10 @@ JSON 转换先验证完整文档，再交付完成事件。实际图片数量和
 
 原生 Images 的 `image_generation.completed` 和 `image_edit.completed` 都按实际图片内容计数，沿用 ID、call ID 和内容摘要的去重规则。部分图片事件与没有图片内容的完成事件不增加完成图片数，完成事件中的尺寸和用量照常保留。
 
+原生 Images SSE 的每帧和累计图片结果均受读取上限约束。已输出预览或完整图片后发生错误或截断时，发送一个终止错误事件，保留实际完成图片和用量，不发送成功的 `[DONE]`。尚未输出内容时由网关写入 HTTP 错误；仅有等待心跳时沿用已经提交的 SSE 格式。缓冲客户端接收 SSE 时，后续失败也保留已经完成图片的计费用量，并返回错误 JSON。错误会写入 Ops 流失败状态。将 JSON 标成 event-stream 的上游响应通过完整文档验证后转换为完成事件。
+
+OpenAI 协议转换共用[客户端用量与缓存](protocol_capabilities.md#client_usage_cache)中的归一化规则，稀疏尾帧保留已观察的缓存与图片用量。
+
 OpenAI API Key 提供商可以通过 `extra.images_url_to_b64_json=true` 开启图片回填，默认关闭。非流式的 `/images/generations` 和 `/images/edits` 响应里，只有缺少非空 `b64_json`、但带有 URL 的图片项才会被补全；已有 Base64 的、明确指定 `response_format=url` 的和流式的请求，保持原样。回填保留原 URL、修订后的提示词和所有上游元数据，某一张下载失败时只跳过它；用量、图片数量和计费尺寸，始终从回填之前的上游响应读取。
 
 下载复用提供商的代理，不带提供商认证和客户端 Cookie；每张最多 20 MiB、60 秒，只接受字节嗅探确认的 PNG、JPEG、WebP、GIF，data URI 同样检查内容和大小。目标检查见[上游传输安全](../operations/upstream_transport_security.md)。URL 回填复用同一个传输和逐跳的目标校验，返回格式的选择和计费元数据保持不变。

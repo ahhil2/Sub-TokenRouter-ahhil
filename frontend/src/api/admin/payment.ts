@@ -67,6 +67,9 @@ export interface UpdatePaymentConfigRequest {
  * confirmation or deducted entitlements.
  */
 export interface RefundResult {
+  // New servers provide this outcome so clients can refresh or ask for consent
+  // independently of the wording in warning. Older servers omit the field.
+  status?: 'succeeded' | 'pending' | 'failed' | 'requires_force'
   success: boolean // Operation success flag.
   warning?: string // Server advisory message.
   require_force?: boolean // Recorded require force.
@@ -228,11 +231,14 @@ export const adminPaymentAPI = {
   },
 
   /**
-   * queryRefund asks the server to reconcile the selected order's pending
-   * refund.
+   * queryRefund reconciles an existing refund. An optional Stripe refund ID
+   * is verified by the server before it is associated with the order.
    */
-  queryRefund(id: number) {
-    return apiClient.post<RefundResult>(`/admin/payment/orders/${id}/refund/query`)
+  queryRefund(id: number, refundID?: string) {
+    return apiClient.post<RefundResult>(
+      `/admin/payment/orders/${id}/refund/query`,
+      refundID ? { refund_id: refundID } : undefined,
+    )
   },
 
   /**

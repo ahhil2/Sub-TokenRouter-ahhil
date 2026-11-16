@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -177,11 +178,18 @@ type airwallexPaymentIntent struct {
 	Metadata map[string]string `json:"metadata"`
 }
 
+// airwallexHTTPError retains the response information needed to classify a
+// failed request without parsing its diagnostic message.
+type airwallexHTTPError struct {
+	status  int    // HTTP response status
+	code    string // Airwallex error code
+	summary string // sanitized response summary
+}
+
 // airwallexRefund decodes the upstream refund reference and state used during
 // local finalization.
 type airwallexRefund struct {
-	// ID is required by Refund after trimming; QueryRefund instead substitutes
-	// its requested ID when the response label is blank.
+	// ID identifies the refund operation for both creation and later verification.
 	ID string `json:"id"`
 	// reported refund request label.
 	RequestID string `json:"request_id"`
@@ -512,10 +520,15 @@ func (a *Airwallex) Refund(ctx context.Context, req payment.RefundRequest) (*pay
 
 	var resp airwallexRefund
 	if err := a.doJSON(ctx, http.MethodPost, "/pa/refunds/create", token, payload, &resp); err != nil {
-		return nil, fmt.Errorf("airwallex refund: %w", err)
+		// A parameter or authorization rejection cannot create a refund.
+		// Unknown responses keep the prepared rights available for recovery.
+		if airwallexRefundDefinitelyRejected(err) {
+			return nil, fmt.Errorf("airwallex refund rejected: %w", err)
+		}
+		return nil, fmt.Errorf("%w: airwallex refund submission: %v", payment.ErrRefundOutcomeUnknown, err)
 	}
 	if strings.TrimSpace(resp.ID) == "" {
-		return nil, fmt.Errorf("airwallex refund: missing refund id")
+		return nil, fmt.Errorf("%w: airwallex refund response has no identity", payment.ErrRefundOutcomeUnknown)
 	}
 	refundResp := &payment.RefundResponse{
 		RefundID: resp.ID,
@@ -527,10 +540,38 @@ func (a *Airwallex) Refund(ctx context.Context, req payment.RefundRequest) (*pay
 	return refundResp, nil
 }
 
-// QueryRefund requires a saved trimmed refund ID and reads its current state
-// with ctx. A blank returned ID uses that requested identity, letting recovery
-// finalize an existing refund from settled, failed or pending state without
-// resubmission.
+// airwallexRefundDefinitelyRejected recognizes documented, explicit pre-execution
+// rejections. Other HTTP or transport failures leave the provider outcome
+// unknown so the caller cannot compensate a possibly accepted refund.
+func airwallexRefundDefinitelyRejected(err error) bool {
+	var apiErr *airwallexHTTPError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return true
+	case http.StatusBadRequest:
+		switch apiErr.code {
+		case "invalid_argument", "validation_error", "field_required", "validation_failed",
+			"invalid_status_for_operation", "amount_above_limit", "operation_not_supported", "resource_not_found":
+			return true
+		}
+	case http.StatusNotFound:
+		return apiErr.code == "not_found" || apiErr.code == "resource_not_found"
+	}
+	return false
+}
+
+// QueryRefund retrieves the saved Airwallex refund and verifies its original
+// intent, amount and currency before returning a settlement outcome. An
+// absent identity or inconsistent response leaves recovery pending.
+//
+// The recorded refund reference selects the remote resource, but that resource
+// must independently name the prepared payment and exact decimal amount.
+// Returned fields never inherit missing values from the request, because that
+// would allow an incomplete response to appear associated. This lookup cannot
+// create a refund or replace the saved channel reference.
 func (a *Airwallex) QueryRefund(ctx context.Context, req payment.RefundQueryRequest) (*payment.RefundResponse, error) {
 	refundID := strings.TrimSpace(req.RefundID)
 	if refundID == "" {
@@ -544,10 +585,13 @@ func (a *Airwallex) QueryRefund(ctx context.Context, req payment.RefundQueryRequ
 	if err := a.doJSON(ctx, http.MethodGet, "/pa/refunds/"+url.PathEscape(refundID), token, nil, &resp); err != nil {
 		return nil, fmt.Errorf("airwallex query refund: %w", err)
 	}
-	if strings.TrimSpace(resp.ID) == "" {
-		// Retain the saved refund reference when the response omits identity,
-		// allowing local recovery to attach the status to its existing operation.
-		resp.ID = refundID
+	expectedAmount, err := decimal.NewFromString(req.Amount)
+	if err != nil || !expectedAmount.IsPositive() {
+		return nil, fmt.Errorf("airwallex query refund: invalid expected amount")
+	}
+	if resp.ID != refundID || resp.PaymentIntentID == "" || resp.PaymentIntentID != strings.TrimSpace(req.TradeNo) ||
+		req.Currency == "" || !strings.EqualFold(resp.Currency, req.Currency) || !resp.Amount.Equal(expectedAmount) {
+		return nil, fmt.Errorf("airwallex query refund: refund does not match the prepared payment")
 	}
 	return &payment.RefundResponse{RefundID: resp.ID, Status: airwallexRefundProviderStatus(resp.Status)}, nil
 }
@@ -728,7 +772,15 @@ func (a *Airwallex) doJSON(ctx context.Context, method, path, token string, payl
 		return err
 	}
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return fmt.Errorf("HTTP %d: %s", status, summarizeAirwallexResponse(body))
+		var failure struct {
+			Code string `json:"code"` // provider classification code
+		}
+		// An unreadable error body has no trustworthy classification code.
+		// Preserve the status and safe diagnostic without treating it as success.
+		if err := json.Unmarshal(body, &failure); err != nil {
+			failure.Code = ""
+		}
+		return &airwallexHTTPError{status: status, code: failure.Code, summary: summarizeAirwallexResponse(body)}
 	}
 	// Accept a successful empty body with output unchanged; operation-specific
 	// required fields decide whether that response is sufficient afterward.
@@ -739,6 +791,11 @@ func (a *Airwallex) doJSON(ctx context.Context, method, path, token string, payl
 		return fmt.Errorf("parse response: %w", err)
 	}
 	return nil
+}
+
+// Error formats the HTTP status and response summary for existing diagnostics.
+func (e *airwallexHTTPError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.status, e.summary)
 }
 
 // do sends the supplied request through the reused client or a fifteen-second

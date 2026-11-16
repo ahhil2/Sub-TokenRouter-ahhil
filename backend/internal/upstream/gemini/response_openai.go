@@ -1,14 +1,12 @@
 package gemini
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/tidwall/gjson"
@@ -73,7 +71,7 @@ func (s *ResponseAdapter) HandleChatCompletionsNonStreamingResponseFromGemini(
 		return nil, s.Options.ChatError(http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 	}
 
-	chatResp, usage, err := GeminiResponseToChatCompletions(geminiResp, originalModel, respBody, nil)
+	chatResp, usage, err := s.geminiResponseToChatCompletions(geminiResp, originalModel, respBody, nil)
 	if err != nil {
 		return nil, s.Options.ChatError(http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 	}
@@ -93,11 +91,18 @@ func (s *ResponseAdapter) HandleChatCompletionsNonStreamingResponseFromGemini(
 // input, output, or cache override returns the supplied usage pointer
 // directly; other usage is copied from bridge extraction.
 func GeminiResponseToChatCompletions(geminiResp map[string]any, originalModel string, rawData []byte, usageOverride *upstream.TokenUsage) (*protocolopenai.ChatCompletionsResponse, *upstream.TokenUsage, error) {
+	return (&ResponseAdapter{}).geminiResponseToChatCompletions(geminiResp, originalModel, rawData, usageOverride)
+}
+
+// geminiResponseToChatCompletions converts buffered output and records tool
+// replay metadata. A positive text or cache override returns the supplied
+// usage pointer, while other counts come from the Gemini payload.
+func (s *ResponseAdapter) geminiResponseToChatCompletions(geminiResp map[string]any, originalModel string, rawData []byte, usageOverride *upstream.TokenUsage) (*protocolopenai.ChatCompletionsResponse, *upstream.TokenUsage, error) {
 	var override *bridge.NativeGeminiUsage
 	if usageOverride != nil {
 		override = &bridge.NativeGeminiUsage{InputTokens: usageOverride.InputTokens, OutputTokens: usageOverride.OutputTokens, CacheReadInputTokens: usageOverride.CacheReadInputTokens, ImageOutputTokens: usageOverride.ImageOutputTokens}
 	}
-	result, usage, usedOverride, err := bridge.NativeGeminiResponseToChatCompletions(bridge.Runtime{Now: time.Now, ReadRandom: rand.Read}, bridge.NativeGeminiRuntime{MessageID: upstream.GenerateAnthropicMsgID, RandomHex: upstream.RandomHex}, geminiResp, originalModel, rawData, override)
+	result, usage, usedOverride, err := bridge.NativeGeminiResponseToChatCompletions(bridge.Runtime{Now: time.Now, ReadRandom: rand.Read}, s.bridgeRuntime(), geminiResp, originalModel, rawData, override)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -111,12 +116,12 @@ func GeminiResponseToChatCompletions(geminiResp map[string]any, originalModel st
 // to Responses with caller model identity. Positive text/cache override counts
 // select the supplied usage pointer directly; image-only or all-zero overrides
 // leave bridge extraction in control.
-func GeminiResponseToResponses(geminiResp map[string]any, originalModel string, rawData []byte, usageOverride *upstream.TokenUsage) (*protocolopenai.ResponsesResponse, *upstream.TokenUsage, error) {
+func (s *ResponseAdapter) geminiResponseToResponses(geminiResp map[string]any, originalModel string, rawData []byte, usageOverride *upstream.TokenUsage) (*protocolopenai.ResponsesResponse, *upstream.TokenUsage, error) {
 	var override *bridge.NativeGeminiUsage
 	if usageOverride != nil {
 		override = &bridge.NativeGeminiUsage{InputTokens: usageOverride.InputTokens, OutputTokens: usageOverride.OutputTokens, CacheReadInputTokens: usageOverride.CacheReadInputTokens, ImageOutputTokens: usageOverride.ImageOutputTokens}
 	}
-	result, usage, usedOverride, err := bridge.NativeGeminiResponseToResponses(bridge.Runtime{Now: time.Now, ReadRandom: rand.Read}, bridge.NativeGeminiRuntime{MessageID: upstream.GenerateAnthropicMsgID, RandomHex: upstream.RandomHex}, geminiResp, originalModel, rawData, override)
+	result, usage, usedOverride, err := bridge.NativeGeminiResponseToResponses(bridge.Runtime{Now: time.Now, ReadRandom: rand.Read}, s.bridgeRuntime(), geminiResp, originalModel, rawData, override)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -152,7 +157,7 @@ func (s *ResponseAdapter) HandleResponsesNonStreamingResponseFromGemini(
 	if err := json.Unmarshal(respBody, &geminiResp); err != nil {
 		return nil, s.Options.CompatError(OpenAICompatResponses, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 	}
-	responsesResp, usage, err := GeminiResponseToResponses(geminiResp, originalModel, respBody, nil)
+	responsesResp, usage, err := s.geminiResponseToResponses(geminiResp, originalModel, respBody, nil)
 	if err != nil {
 		return nil, s.Options.CompatError(OpenAICompatResponses, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 	}
@@ -198,7 +203,8 @@ func (s *ResponseAdapter) WriteGeminiResponsesResponse(
 // Responses events restore tool identity before writing; Chat output owns its
 // optional usage chunk and DONE marker. Serialization or tool-restoration
 // failures skip the affected event. A write failure returns the current
-// usage snapshot with nil error, while a non-EOF read failure returns an error.
+// usage snapshot with nil error. Read failures, malformed frames, and missing
+// completion return an error with the accumulated usage and skip final events.
 // OutputContext retains write failures for the executor to classify alongside
 // the returned usage before completion.
 func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
@@ -222,7 +228,7 @@ func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		return nil, errors.New("streaming not supported")
+		return &StreamResult{Usage: &upstream.TokenUsage{}}, errors.New("streaming not supported")
 	}
 
 	anthState := bridge.NewAnthropicEventToResponsesState(bridge.Runtime{Now: time.Now, ReadRandom: rand.Read})
@@ -235,7 +241,7 @@ func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 	// Responses emission.
 	clientToolRestorer := bridge.NewResponsesClientToolStreamRestorer(clientToolMapping)
 
-	state := bridge.NewNativeGeminiCompatStream(bridge.NativeGeminiRuntime{RandomHex: upstream.RandomHex, MessageID: upstream.GenerateAnthropicMsgID})
+	state := bridge.NewNativeGeminiCompatStream(s.bridgeRuntime())
 
 	// Chunk serialization errors suppress output, while writer errors signal
 	// disconnect to the outer loop so it can return its accumulated usage
@@ -310,42 +316,35 @@ func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 			return resultSnapshot(), nil
 		}
 	}
-	reader := bufio.NewReader(resp.Body)
-	for {
-		line, err := reader.ReadString('\n')
-		if line != "" {
-			trimmed := strings.TrimRight(line, "\r\n")
-			if after, ok0 := strings.CutPrefix(trimmed, "data:"); ok0 {
-				payload := strings.TrimSpace(after)
-				if payload != "" && payload != "[DONE]" {
-					rawBytes := []byte(payload)
-					if isOAuth {
-						if innerBytes, uwErr := UnwrapGeminiResponse(rawBytes); uwErr == nil {
-							rawBytes = innerBytes
-						}
-					}
-
-					// Decode before advancing protocol state; malformed JSON is skipped so
-					// partially populated fields cannot enter downstream conversion for this line.
-					var geminiResp map[string]any
-					if err := json.Unmarshal(rawBytes, &geminiResp); err == nil {
-						s.observeRaw(rawBytes)
-						for event := range state.Process(geminiResp, rawBytes) {
-							if emitAnthropicEvent(event) {
-								return resultSnapshot(), nil
-							}
-						}
-					}
-				}
+	observed, readErr := s.readStream(resp, isOAuth, func(event upstream.GeminiStreamEvent) error {
+		if len(event.Data) == 0 {
+			return c.Err()
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(event.Data, &payload); err != nil {
+			return err
+		}
+		s.observeRaw(event.Data)
+		for message := range state.Process(payload, event.Data) {
+			if emitAnthropicEvent(message) {
+				return c.Err()
 			}
 		}
-
-		if errors.Is(err, io.EOF) {
-			break
+		return c.Err()
+	})
+	// Preserve sparse accounting independently of client delivery and terminal
+	// conversion; a usage-only tail cannot zero previously observed input tokens.
+	if len(observed.UsageJSON) > 0 {
+		var usagePayload map[string]any
+		_ = json.Unmarshal(observed.UsageJSON, &usagePayload)
+		for range state.Process(usagePayload, observed.UsageJSON) {
 		}
-		if err != nil {
-			return nil, fmt.Errorf("stream read error: %w", err)
-		}
+	}
+	if c.Err() != nil {
+		return resultSnapshot(), nil
+	}
+	if readErr != nil {
+		return resultSnapshot(), readErr
 	}
 
 	// Finish the Gemini bridge before downstream finalization so final

@@ -77,14 +77,27 @@
             class="h-4 w-4 rounded-compact border-gray-300 text-primary-600 focus:ring-primary-500"
           />
           <label for="deduct-balance" class="text-sm text-gray-700 dark:text-gray-300">
-            {{ t('payment.admin.deductBalance') }}
+            {{
+              t(
+                isSubscription
+                  ? 'payment.admin.revokeRefundSubscription'
+                  : 'payment.admin.deductBalance',
+              )
+            }}
           </label>
           <span class="text-xs text-gray-500 dark:text-gray-400">{{
-            t('payment.admin.deductBalanceHint')
+            t(
+              isSubscription
+                ? 'payment.admin.revokeRefundSubscriptionHint'
+                : 'payment.admin.deductBalanceHint',
+            )
           }}</span>
         </div>
 
-        <div v-if="form.deduct_balance && userBalance != null" class="mt-3 grid grid-cols-2 gap-3">
+        <div
+          v-if="!isSubscription && form.deduct_balance && userBalance != null"
+          class="mt-3 grid grid-cols-2 gap-3"
+        >
           <div class="rounded-control bg-gray-50 p-3 text-sm dark:bg-dark-700">
             <div class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.userBalance') }}</div>
             <div class="mt-1 font-semibold text-gray-900 dark:text-white">
@@ -100,7 +113,7 @@
         </div>
 
         <div
-          v-if="form.deduct_balance && balanceInsufficient"
+          v-if="!isSubscription && form.deduct_balance && balanceInsufficient"
           class="mt-2 rounded-control bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
         >
           {{ t('payment.admin.insufficientBalance') }}
@@ -110,14 +123,19 @@
           v-if="!form.deduct_balance"
           class="mt-2 rounded-control bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-900/20 dark:text-blue-300"
         >
-          {{ t('payment.admin.noDeduction') }}
+          {{
+            t(isSubscription ? 'payment.admin.keepRefundSubscription' : 'payment.admin.noDeduction')
+          }}
         </div>
       </div>
 
       <div>
         <label class="input-label">{{ t('payment.admin.refundAmount') }}</label>
-        <div class="relative">
-          <span class="input-icon text-gray-500">{{ refundInputSymbol }}</span>
+        <div v-if="isSubscription && order" class="input" data-testid="subscription-refund-amount">
+          {{ formatGatewayAmount(order.pay_amount, order.currency) }}
+        </div>
+        <div v-else class="relative">
+          <span class="input-icon text-gray-500">{{ balanceUnitSymbol }}</span>
           <input
             v-model.number="form.amount"
             type="number"
@@ -128,7 +146,7 @@
             required
           />
         </div>
-        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        <p v-if="!isSubscription" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
           {{ t('payment.admin.maxRefundable') }}:
           {{ order ? formatOrderAmount(maxRefundable, order) : '-' }}
         </p>
@@ -160,7 +178,13 @@
           class="h-4 w-4 rounded-compact border-gray-300 text-red-600 focus:ring-red-500"
         />
         <label for="force-refund" class="text-sm font-medium text-red-600 dark:text-red-400">
-          {{ t('payment.admin.forceRefund') }}
+          {{
+            t(
+              isSubscription
+                ? 'payment.admin.forceSubscriptionRefund'
+                : 'payment.admin.forceRefund',
+            )
+          }}
         </label>
       </div>
     </form>
@@ -194,11 +218,10 @@ import type { PaymentOrder } from '@/api/payment.types'
 import { formatOrderDateTime } from '@/utils/payment/orderUtils'
 import { formatPaymentAmount } from '@/utils/payment/currency'
 
-// AdminRefundDialog.vue collects a refund amount and the administrator's balance deduction
-// and force choices. The requested amount uses the order's entitlement units for balance
-// purchases and the order currency for subscriptions. The refundable remainder subtracts
-// refund_amount only after the order reaches a completed refund state, because pending and
-// requested refunds reuse that field for proposed amounts.
+// AdminRefundDialog.vue collects the administrator's refund and entitlement choices.
+// Balance refunds accept an amount in entitlement units. Subscription refunds display
+// the original channel charge and submit the full order price in its own currency.
+// The subscription checkbox controls whether to pause and later revoke the grant.
 //
 // Opening the dialog initializes the draft from the selected order and clears force
 // consent. A server response requiring force leaves submission disabled until the
@@ -258,6 +281,9 @@ const form = reactive({
   force: false, // current force confirmation choice
 })
 
+// isSubscription selects fixed full refunds and subscription entitlement copy.
+const isSubscription = computed(() => props.order?.order_type === 'subscription')
+
 // actuallyRefunded counts refund_amount only in completed refund states; requested and
 // pending amounts remain proposals and do not reduce the available refund.
 const actuallyRefunded = computed(() => {
@@ -274,12 +300,14 @@ const maxRefundable = computed(() => {
   return props.order.amount - actuallyRefunded.value
 })
 
-// balanceInsufficient compares known user balance with the whole order amount; absent
-// balance data leaves this advisory warning hidden.
+// balanceInsufficient compares available funds with the snapshot-based credit recovery.
+// Missing balance information leaves this advisory warning hidden until backend validation.
 const balanceInsufficient = computed(() => {
   if (props.userBalance == null || !props.order) return false
   return props.userBalance < creditToDeduct.value
 })
+// creditToDeduct prorates historical credited units by the requested refund amount.
+// Orders without a saved recharge snapshot recover the selected amount directly.
 const creditToDeduct = computed(() => {
   const snapshot = props.order?.recharge_snapshot
   const amount = Number(form.amount) || props.order?.amount || 0
@@ -288,31 +316,15 @@ const creditToDeduct = computed(() => {
     : amount
 })
 
-// refundInputSymbol uses balance units for balance orders and the recorded price currency
-// for subscription quantities. Older responses use their payment currency when no price unit exists.
-const refundInputSymbol = computed(() => {
-  if (!props.order) return balanceUnitSymbol
-  if (props.order.order_type === 'balance') return balanceUnitSymbol
-  return (
-    // Currency formatting supplies a localized symbol when possible; retaining the
-    // currency code or yen default keeps the refund input visibly labeled.
-    formatGatewayAmount(0, props.order.amount_currency || props.order.currency).replace(
-      /[\d\s.,\u00a0]/g,
-      '',
-    ) ||
-    props.order.amount_currency ||
-    props.order.currency ||
-    '¥'
-  )
-})
-
 // Opening the dialog resets the draft and force consent for this order; requested refunds
 // preferentially hydrate the user-requested amount before editing.
 watch(
   () => props.show,
   (val) => {
     if (val && props.order) {
-      if (props.order.status === 'REFUND_REQUESTED' && props.order.refund_amount) {
+      if (isSubscription.value) {
+        form.amount = props.order.amount
+      } else if (props.order.status === 'REFUND_REQUESTED' && props.order.refund_amount) {
         form.amount = props.order.refund_amount
       } else {
         form.amount = maxRefundable.value
@@ -322,6 +334,7 @@ watch(
       form.force = false
     }
   },
+  { immediate: true },
 )
 
 // formatDateTime formats an order timestamp through the shared payment date formatter.

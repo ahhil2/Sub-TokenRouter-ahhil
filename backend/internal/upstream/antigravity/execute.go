@@ -171,6 +171,10 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		}
 	}
 	options := target.Response
+	options.Context = ctx
+	if target.Mode == ModeGeminiResponse {
+		options.Candidates = int(gjson.GetBytes(input.Body, "generationConfig.candidateCount").Int())
+	}
 	var modelObserver protocol.ResponseModelObserver
 	defer func() { result.UpstreamResponseModel = modelObserver.Model() }()
 	priorRaw := options.ObserveRaw

@@ -231,7 +231,7 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 		} else if t.OAuth {
 			usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesOAuthStreaming(resp, output, t.Options, started, t.ResponseFormat, t.StreamPrefix, input.ResponseModel)
 		} else {
-			usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesStreaming(resp, output, t.Options, started)
+			usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesStreaming(ctx, resp, output, t.Options)
 		}
 	} else if t.OAuth {
 		usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesOAuthNonStreaming(resp, sink, t.Options, t.ResponseFormat, input.ResponseModel)
@@ -239,6 +239,19 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 		usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesSSEToJSON(ctx, resp, sink, t.Options, t.ResponseFormat)
 	} else {
 		usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesNonStreaming(resp, sink, t.Options)
+	}
+	// Native validation can fail before streaming output or buffered delivery.
+	// Present those failures here; the stream reader owns errors after commitment.
+	if !t.OAuth && !streamJSON && (output == nil || !output.Writer.Written()) {
+		if imageErr, ok := errors.AsType[*OpenAIImagesUpstreamError](err); ok {
+			imageErr.UpstreamRequestID = result.RequestID
+			if t.Options.ObserveError != nil {
+				t.Options.ObserveError(resp.StatusCode, imageErr.Message, "")
+			}
+			if t.Options.WriteHTTPError != nil {
+				t.Options.WriteHTTPError(imageErr)
+			}
+		}
 	}
 	result.Usage = upstream.TokenUsage{
 		InputTokens:              usage.InputTokens,

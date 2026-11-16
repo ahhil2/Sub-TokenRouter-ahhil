@@ -549,6 +549,7 @@ import { vSegmented } from '@/directives/segmented'
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { calculateRechargeCredit, isValidRechargeCredit } from '@/utils/payment/rechargeCredit'
 import UserIdentityBenefits from '@/components/common/UserIdentityBenefits.vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { marked } from 'marked'
@@ -728,8 +729,10 @@ const subscriptionUsdToCnyRate = computed(() => {
   const rate = checkout.value.subscription_usd_to_cny_rate
   return Number.isFinite(rate) && rate > 0 ? rate : 0
 })
-const creditedAmount = computed(
-  () => Math.round(validAmount.value * balanceRechargeMultiplier.value * 100) / 100,
+// creditedAmount previews the rounded wallet credit used by backend checkout validation.
+// Decimal multiplication keeps half-cent ties consistent with persisted recharge amounts.
+const creditedAmount = computed(() =>
+  calculateRechargeCredit(validAmount.value, balanceRechargeMultiplier.value),
 )
 const hasHelpContent = computed(() =>
   Boolean(checkout.value.help_text || checkout.value.help_image_url),
@@ -1000,8 +1003,13 @@ const rechargeFeeBreakdown = computed(() =>
 )
 const totalAmount = computed(() => rechargeFeeBreakdown.value.payAmount)
 
+// amountError reports undeliverable wallet credits before provider limit errors.
+// Empty principal input leaves the validation text blank until a purchase amount exists.
 const amountError = computed(() => {
   if (validAmount.value <= 0) return ''
+  if (!isValidRechargeCredit(creditedAmount.value)) {
+    return t('payment.errors.INVALID_CREDITED_AMOUNT')
+  }
   // No method can handle this amount
   if (!enabledMethods.value.some((m) => amountFitsMethod(validAmount.value, m))) {
     return t('payment.amountNoMethod')
@@ -1017,9 +1025,12 @@ const amountError = computed(() => {
   return ''
 })
 
+// canSubmit admits recharge when credit storage, provider limits, and required Stripe
+// billing fields are valid. The backend rechecks these amounts before creating an order.
 const canSubmit = computed(
   () =>
     validAmount.value > 0 &&
+    isValidRechargeCredit(creditedAmount.value) &&
     amountFitsMethod(validAmount.value, selectedMethod.value) &&
     selectedLimit.value?.available !== false &&
     (!isStripeSelected.value ||

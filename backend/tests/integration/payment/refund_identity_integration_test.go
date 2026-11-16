@@ -3,10 +3,12 @@
 package payment_test
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -93,7 +95,7 @@ func TestIdentityPendingRefundPostgresClampsAvailableBalance(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, client.PaymentOrder.UpdateOneID(order.ID).
 		SetAmount(100).SetPayAmount(100).SetRechargeSnapshot(snapshot).Exec(ctx))
-	require.NoError(t, client.User.UpdateOneID(order.UserID).SetBalance(110).Exec(ctx))
+	require.NoError(t, client.User.UpdateOneID(order.UserID).SetBalance(110).SetTotalRecharged(110).Exec(ctx))
 	var submissions atomic.Int32
 	// The fixture ignores response-write errors for both provider observations;
 	// pending compensation and final deduction assertions independently require
@@ -105,7 +107,9 @@ func TestIdentityPendingRefundPostgresClampsAvailableBalance(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"id":"re_pending_identity","object":"refund","status":"pending"}`))
 			return
 		}
-		_, _ = writer.Write([]byte(`{"id":"re_pending_identity","object":"refund","status":"succeeded"}`))
+		// Query validation binds the provider observation to this payment, amount,
+		// currency and current attempt before recovering the remaining gifted balance.
+		_, _ = fmt.Fprintf(writer, `{"id":"re_pending_identity","object":"refund","status":"succeeded","payment_intent":"pi_test","amount":10000,"currency":"usd","created":%d}`, time.Now().Unix())
 	})
 	plan, warning, err := workflow.PrepareRefund(ctx, order.ID, 100, "pending gift refund", false, true)
 	require.NoError(t, err)
@@ -115,6 +119,9 @@ func TestIdentityPendingRefundPostgresClampsAvailableBalance(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, result.Success)
 	assertRefundPostgresState(t, ctx, client, order.UserID, order.ID, 110, payment.OrderStatusRefundPending, 0)
+	user, err := client.User.Get(ctx, order.UserID)
+	require.NoError(t, err)
+	require.Equal(t, 110.0, user.TotalRecharged)
 
 	// Spending after pending compensation reproduces a lower wallet balance at
 	// confirmation, when the provider's successful refund can no longer be rejected.

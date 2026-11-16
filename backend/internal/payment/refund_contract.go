@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
@@ -23,6 +24,20 @@ import (
 // stored false. Ordinary observation callbacks have their own audit policy,
 // while preparation and success records participate in the transaction that
 // establishes refund progress.
+
+// These labels describe the workflow result independently of its display text so
+// callers can choose whether to refresh, recover, or ask for force confirmation.
+const (
+	RefundResultSucceeded     = "succeeded"      // final refund committed
+	RefundResultPending       = "pending"        // channel settlement incomplete
+	RefundResultFailed        = "failed"         // known channel failure
+	RefundResultRequiresForce = "requires_force" // fresh force choice needed
+)
+
+// ErrRefundOutcomeUnknown marks an attempted channel refund whose outcome
+// requires verification. The workflow retains its prepared deduction and
+// recovery receipt when an adapter wraps this sentinel.
+var ErrRefundOutcomeUnknown = errors.New("refund outcome is unknown")
 
 // RefundPlan retains an order observation, refund intent, and mutable
 // deduction results.
@@ -56,8 +71,12 @@ type RefundPlan struct {
 	// ApplyRefundDeduction requires a positive SubscriptionID and can choose
 	// revocation when adjustment would expire the grant; this value is not
 	// recalculated afterward.
-	SubDaysToDeduct int
-	SubscriptionID  int64 // order-linked grant identity
+	SubDaysToDeduct  int
+	SubscriptionID   int64 // order-linked grant identity
+	SubscriptionHold bool  // use refund suspension
+	// VerifyLegacyRevocation requires the already-applied historical revocation
+	// to be verified before an uncompensated pending refund is marked successful.
+	VerifyLegacyRevocation bool
 	// OperationID correlates committed local preparation and audit records.
 	// Providers receive their own order/amount identifiers for idempotency; the
 	// local operation ID remains outside their request encoding.
@@ -68,6 +87,7 @@ type RefundPlan struct {
 // RefundResult reports local finalization or a warning requiring a caller
 // decision.
 type RefundResult struct {
+	Status string `json:"status,omitempty"` // structured workflow outcome
 	// Success reports that this call accepted local finalization. A warning
 	// result can follow preparation requiring force or an external refund attempt
 	// that remains pending or failed.
@@ -87,7 +107,8 @@ type RefundResult struct {
 // RefundPendingDetail records provider identity and entitlement intent for
 // pending recovery.
 type RefundPendingDetail struct {
-	RefundID string `json:"refundID"` // provider refund operation identity
+	ObservedAt time.Time `json:"-"`        // local pending audit time
+	RefundID   string    `json:"refundID"` // provider refund operation identity
 	// DeductBalance retains the administrator's entitlement recovery choice,
 	// including false. PendingDetail requires this JSON field to be present, and
 	// a missing or null value demands manual verification.
@@ -98,8 +119,10 @@ type RefundPendingDetail struct {
 	BalanceDeducted float64 `json:"balanceDeducted"`
 	// recorded subscription recovery days
 	SubDaysDeducted int `json:"subDaysDeducted"`
-	// recorded order-linked grant identity
-	SubscriptionID int64 `json:"subscriptionID"`
+	// SubscriptionHold marks a version-two grant suspension retained until the
+	// provider confirms success or failure for the recorded refund operation.
+	SubscriptionHold bool  `json:"subscriptionHold,omitempty"`
+	SubscriptionID   int64 `json:"subscriptionID"` // order-linked grant identity
 	// DeductionRollbackOK records whether preparation deductions were
 	// compensated. Legacy PendingDetail decoding starts with true when this field
 	// is omitted; an explicitly stored false remains false.
@@ -113,9 +136,9 @@ type RefundPendingDetail struct {
 // RefundReceipt records committed preparation identity, wallet recovery, and
 // subscription plan quantities.
 type RefundReceipt struct {
-	// Version is one for receipts emitted by PrepareRefund. The persisted
-	// preparation reader rejects other format values before its deduction data is
-	// used for recovery.
+	// Version is two for subscription holds and one for wallet or legacy
+	// deductions. The recovery reader checks the version before interpreting
+	// grant suspension and compensation fields.
 	Version int `json:"version"`
 	// OperationID identifies the committed preparation compared during completion
 	// or compensation. This outer field records receipt identity independently of
@@ -141,6 +164,17 @@ type RefundReceipt struct {
 // RefundRights changes entitlements through the transaction supplied and
 // completed by RefundStore.
 type RefundRights interface {
+	// HoldSubscription selects and suspends the exact user and order grant under
+	// the transaction locks. A missing or ineligible grant returns the billing
+	// not-found error, while a conflicting hold or storage failure propagates.
+	HoldSubscription(context.Context, int64, int64, string) (int64, error)
+	// ResolveSubscriptionHold clears the operation-owned hold and optionally
+	// revokes the grant in the same transaction. A mismatch leaves all rights
+	// untouched so another refund or operator action cannot be overwritten.
+	ResolveSubscriptionHold(context.Context, int64, string, bool) error
+	// VerifyRevokedSubscription confirms the source grant of a legacy refund
+	// is already revoked before finalization records financial success.
+	VerifyRevokedSubscription(context.Context, int64, int64, int64) error
 	// DeductBalance returns the quantity selected for wallet recovery in the
 	// supplied transaction. Production billing locks a non-deleted user's raw
 	// balance and caps a finite nonnegative request at its positive value;
@@ -152,9 +186,8 @@ type RefundRights interface {
 	// balance is outside this cap calculation.
 	DeductBalance(context.Context, int64, float64) (float64, error)
 	// CompensateBalance restores a prior actual wallet deduction in the selected
-	// transaction. The production billing participant uses its positive-credit
-	// path, which also increases cumulative recharges; the outer store completes
-	// persistence.
+	// transaction. It restores available balance without increasing cumulative
+	// recharges. The outer store owns the commit.
 	CompensateBalance(context.Context, int64, float64) error
 	// AdjustSubscription changes the issued subscription by a signed day delta
 	// inside the selected transaction. A deduction that would expire it returns
@@ -190,6 +223,10 @@ type RefundStore interface {
 	// manual verification. ExecuteRefund invokes the provider only after this
 	// operation returns its committed receipt successfully.
 	PrepareRefund(context.Context, *RefundPlan, RefundMutation) (*RefundReceipt, error)
+	// RecordRefundProviderID binds an observed channel reference to a still-current
+	// preparation. Its commit precedes entitlement finalization so a later local
+	// failure can query the same channel operation.
+	RecordRefundProviderID(context.Context, *RefundReceipt, string) error
 	// CompleteRefund claims the prepared receipt or pending operation identity
 	// and writes final refund state with a mandatory success audit in one
 	// transaction. A supplied receipt identifies deductions already performed; an
@@ -239,19 +276,11 @@ type RefundStore interface {
 	PendingDetail(context.Context, int64) (RefundPendingDetail, error)
 }
 
-type (
-	// RefundUser retains the raw current wallet balance observed during refund
-	// planning.
-	RefundUser struct {
-		Balance float64 /* observed raw wallet balance */
-	}
-	// RefundSubscription retains the identity and state of an order-linked
-	// subscription grant.
-	RefundSubscription struct {
-		ID     int64  // issued subscription identity
-		Status string // issued subscription lifecycle state
-	}
-)
+// RefundUser retains the raw current wallet balance observed during refund
+// planning before the transaction locks the user's funds.
+type RefundUser struct {
+	Balance float64 // observed raw wallet balance
+}
 
 // RefundRuntime supplies current rights observations, historical provider
 // resolution, audit, and timing.
@@ -260,10 +289,6 @@ type RefundRuntime struct {
 	// deduction preparation. Forced preparation can continue after a failed read,
 	// leaving its deduction plan unchanged.
 	User func(context.Context, int64) (*RefundUser, error)
-	// Subscriptions reads grants linked to the source order ID. Preparation
-	// selects the first active or pending result and can require force when no
-	// usable grant is observed.
-	Subscriptions func(context.Context, int64) ([]RefundSubscription, error)
 	// Instance resolves the saved historical provider binding for refund
 	// eligibility. A guessed legacy instance does not satisfy that path; the
 	// flags come from the resolved current instance.

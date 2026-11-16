@@ -1,12 +1,11 @@
 package gemini
 
 import (
-	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -21,25 +20,32 @@ import (
 
 // response.go reads Gemini responses, collects streamed content, and writes
 // native or Messages output.
-// Gemini output may arrive as ordinary JSON or one JSON payload per SSE data
-// line, with an optional Code Assist response wrapper. Native output retains
-// the original REST payload, while Messages conversion delegates its event and
-// content rules to the protocol bridge. Observers receive raw payloads before
-// converted output is emitted.
+// Gemini output may arrive as ordinary JSON or bounded SSE events, with an
+// optional Code Assist response wrapper. Shared stream consumption validates
+// complete JSON frames and candidate terminals before conversion. Native output
+// retains payload fields, while Messages delegates event ordering to the bridge.
+// Observers receive validated payloads before converted output is emitted.
 //
-// Buffered stream collection retains content-bearing payloads and combines
-// adjacent text parts with matching thought flags. It copies modified map
-// containers during merging but keeps nested values shared, and merging text
-// retains the earlier part metadata. Stream adapters differ in their handling
-// of decode errors and write failures; those rules belong
-// to their methods, while the executor owns response-body closing.
+// Buffered stream collection keeps candidate content and accumulates sparse
+// usage independently of content frames. Missing completion, malformed input,
+// and explicit upstream errors remain failures with partial usage available for
+// accounting. The shared reader closes its response through an idempotent
+// wrapper, and executor cleanup may close that same wrapper again.
 
 // ResponseOptions supplies payload observers, response readers, header
 // handling, and protocol error mapping.
 type ResponseOptions struct {
+	// Context cancels stream reads when this attempt ends. Nil uses a background
+	// context for direct callers; Executor supplies the current attempt context.
+	Context context.Context
+	Stream  upstream.GeminiStreamOptions // bounded stream read settings
+
 	// ObserveRaw receives upstream payload bytes synchronously before conversion.
 	// Its callback leaves borrowed input unchanged and copies bytes retained after returning.
 	ObserveRaw func([]byte) // raw payload observation callback
+	// RememberToolCall records replay metadata under a generated client ID
+	// before the completed call reaches a Messages or OpenAI client.
+	RememberToolCall func(string, bridge.NativeGeminiToolCall)
 
 	// GoogleError, ReadBody, WriteHeaders, ObserveImages, ReverseTools,
 	// ClaudeError, ChatError, and CompatError are supplied for the output paths
@@ -97,7 +103,7 @@ func (s *ResponseAdapter) HandleNonStreamingResponse(c *upstream.OutputContext, 
 		return nil, s.Options.ClaudeError(http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 	}
 
-	claudeResp, usage := ConvertGeminiToClaudeMessage(geminiResp, originalModel, unwrappedBody, false)
+	claudeResp, usage := s.convertGeminiToClaudeMessage(geminiResp, originalModel, unwrappedBody, false)
 	responseBody, err := json.Marshal(claudeResp)
 	if err != nil {
 		return nil, err
@@ -108,15 +114,15 @@ func (s *ResponseAdapter) HandleNonStreamingResponse(c *upstream.OutputContext, 
 	return usage, nil
 }
 
-// HandleStreamingResponse converts Gemini data lines into synchronous Messages
-// SSE events and returns the bridge's accumulated usage. Callers close
-// the source response body and supply a flusher-capable output context.
+// HandleStreamingResponse converts validated Gemini events into Messages SSE.
+// Callers supply a flushing output context and configured cancellation and read
+// limits; shared consumption owns response-body cleanup and completion validation.
 //
-// The bridge opens the message before payload reads and owns block ordering
-// and final events. Invalid decoded payloads are skipped; non-EOF read errors
-// abort with an error. OutputContext records writer failures even though
-// WriteSSE ignores individual writes. Each data line is processed separately, including a final
-// line without a trailing newline.
+// The bridge opens message metadata before reading and emits successful closing
+// events only after validated completion. Write failures remain in OutputContext
+// while reading continues for accounting, subject to cancellation and idle limits.
+// Read failures preserve partial usage without synthesizing message_stop. A sparse
+// tail refreshes bridge accounting before the final message usage is emitted.
 func (s *ResponseAdapter) HandleStreamingResponse(c *upstream.OutputContext, resp *http.Response, startTime time.Time, originalModel string) (*StreamResult, error) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -126,10 +132,10 @@ func (s *ResponseAdapter) HandleStreamingResponse(c *upstream.OutputContext, res
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		return nil, errors.New("streaming not supported")
+		return &StreamResult{Usage: &upstream.TokenUsage{}}, errors.New("streaming not supported")
 	}
 
-	state := bridge.NewNativeGeminiMessagesStream(bridge.NativeGeminiRuntime{RandomHex: upstream.RandomHex, MessageID: upstream.GenerateAnthropicMsgID})
+	state := bridge.NewNativeGeminiMessagesStream(s.bridgeRuntime())
 
 	writeEvent := func(event bridge.NativeMessageEvent) {
 		if event.Name != "" {
@@ -145,56 +151,40 @@ func (s *ResponseAdapter) HandleStreamingResponse(c *upstream.OutputContext, res
 	for event := range state.Begin(upstream.GenerateAnthropicMsgID(), originalModel) {
 		writeEvent(event)
 	}
-	reader := bufio.NewReader(resp.Body)
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("stream read error: %w", err)
+	observed, err := s.readStream(resp, true, func(event upstream.GeminiStreamEvent) error {
+		if len(event.Data) == 0 {
+			return nil
 		}
-
-		if !strings.HasPrefix(line, "data:") {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			continue
+		s.observeRaw(event.Data)
+		s.Options.ObserveImages(event.Data)
+		var payload map[string]any
+		if err := json.Unmarshal(event.Data, &payload); err != nil {
+			return err
 		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" || payload == "[DONE]" {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			continue
+		for message := range state.Process(payload, event.Data) {
+			writeEvent(message)
 		}
-
-		unwrappedBytes, err := UnwrapGeminiResponse([]byte(payload))
-		if err != nil {
-			continue
-		}
-		s.observeRaw(unwrappedBytes)
-		s.Options.ObserveImages(unwrappedBytes)
-
-		// Discard a malformed decoded payload before bridge processing so a
-		// partially decoded content map cannot alter the Messages event state for
-		// this line.
-		var geminiResp map[string]any
-		if err := json.Unmarshal(unwrappedBytes, &geminiResp); err != nil {
-			continue
-		}
-
-		for event := range state.Process(geminiResp, unwrappedBytes) {
-			writeEvent(event)
-		}
-
-		// Process a final data line even when EOF arrives without a trailing newline.
-		if errors.Is(err, io.EOF) {
-			break
+		return nil
+	})
+	// Refresh sparse usage before final conversion so absent tail fields cannot
+	// replace input or cache counters that were observed in earlier frames.
+	if len(observed.UsageJSON) > 0 {
+		var usagePayload map[string]any
+		_ = json.Unmarshal(observed.UsageJSON, &usagePayload)
+		for range state.Process(usagePayload, observed.UsageJSON) {
 		}
 	}
-
+	result := &StreamResult{Usage: LegacyNativeGeminiUsage(state.Usage())}
+	if c.Err() != nil {
+		return result, nil
+	}
+	if err != nil {
+		return result, err
+	}
 	for event := range state.Finish() {
 		writeEvent(event)
 	}
-	return &StreamResult{Usage: LegacyNativeGeminiUsage(state.Usage())}, nil
+	return result, c.Err()
 }
 
 // WriteSSE serializes data into an event/data frame and invokes optional
@@ -234,191 +224,31 @@ func UnwrapIfNeeded(isOAuth bool, raw []byte) []byte {
 	return inner
 }
 
-// CollectGeminiSSE collects decoded map payloads from individual data
-// lines into one response and returns the latest extracted usage. Callers own
-// the reader; DONE or EOF finishes collection. A DONE line returns before
-// pending read-error handling; otherwise non-EOF errors discard the returned
-// snapshots.
-//
-// JSON decode errors are ignored, so a partially decoded nonnil map can
-// participate in collection. Content-bearing payloads are preferred over later
-// metadata-only payloads, and their parts accumulate in encounter order.
-// Adjacent same-thought text is joined before containers are merged into the
-// selected response. Optional raw observers run synchronously for each
-// participating map and can retain accounting observations even when a later
-// read fails.
-func CollectGeminiSSE(body io.Reader, isOAuth bool, observers ...func([]byte)) (map[string]any, *upstream.TokenUsage, error) {
-	reader := bufio.NewReader(body)
-
-	// Keep content and metadata observations separately because a terminal
-	// usage-only payload can follow text; conversion still needs the content
-	// snapshot alongside its latest usage.
-	var last map[string]any
-	var lastWithParts map[string]any
-	var collectedParts []any
-	usage := &upstream.TokenUsage{}
-
-	for {
-		line, err := reader.ReadString('\n')
-		if line != "" {
-			trimmed := strings.TrimRight(line, "\r\n")
-			if after, ok := strings.CutPrefix(trimmed, "data:"); ok {
-				payload := strings.TrimSpace(after)
-				switch payload {
-				case "", "[DONE]":
-					if payload == "[DONE]" {
-						return MergeCollectedGeminiParts(PickGeminiCollectResult(last, lastWithParts), collectedParts), usage, nil
-					}
-				default:
-					var parsed map[string]any
-					var rawBytes []byte
-					if isOAuth {
-						// Use the extracted OAuth response bytes before map decoding so
-						// collection sees inner generation content; decode errors are ignored
-						// and the nonnil map check decides participation.
-						innerBytes, err := UnwrapGeminiResponse([]byte(payload))
-						if err == nil {
-							rawBytes = innerBytes
-							_ = json.Unmarshal(innerBytes, &parsed)
-						}
-					} else {
-						rawBytes = []byte(payload)
-						_ = json.Unmarshal(rawBytes, &parsed)
-					}
-					// A nonnil decoded map participates even after a JSON error, matching
-					// this collector partial-map behavior; observers see the corresponding
-					// raw payload before merging.
-					if parsed != nil {
-						for _, observe := range observers {
-							if observe != nil {
-								observe(rawBytes)
-							}
-						}
-						last = parsed
-						if u := ExtractGeminiUsage(rawBytes); u != nil {
-							usage = u
-						}
-						if parts := ExtractGeminiParts(parsed); len(parts) > 0 {
-							lastWithParts = parsed
-							collectedParts = AppendCollectedGeminiParts(collectedParts, parts)
-						}
-					}
-				}
-			}
-		}
-
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, nil, err
-		}
+// collectSSE delegates candidate-preserving collection for a buffered client response.
+// Shared consumption enforces cancellation, framing, completion, and idle limits.
+// Partial content and accumulated usage remain available beside failures for diagnostics.
+func (s *ResponseAdapter) collectSSE(resp *http.Response, isOAuth bool) (map[string]any, *upstream.TokenUsage, error) {
+	options := s.Options.Stream
+	if isOAuth {
+		options.Unwrap = UnwrapGeminiResponse
 	}
-
-	return MergeCollectedGeminiParts(PickGeminiCollectResult(last, lastWithParts), collectedParts), usage, nil
+	collected, observed, err := upstream.CollectGeminiStream(s.Options.Context, resp, options, s.observeRaw)
+	usage := ExtractGeminiUsage(observed.UsageJSON)
+	if usage == nil {
+		usage = &upstream.TokenUsage{}
+	}
+	return collected, usage, err
 }
 
-// PickGeminiCollectResult selects the nonnil content-bearing snapshot before
-// the last snapshot through the bridge. Supplied maps remain shared; when
-// neither exists, the bridge returns a fresh empty object for conversion.
-func PickGeminiCollectResult(last map[string]any, lastWithParts map[string]any) map[string]any {
-	return bridge.NativePickGeminiCollectResult(last, lastWithParts)
-}
-
-// AppendCollectedGeminiParts shallow-copies incoming parts and joins adjacent
-// text when incoming text is nonempty and boolean thought flags match. The
-// returned slice can reuse collected storage, so callers use the returned
-// value and serialize mutation.
-//
-// Joining copies the preceding map, appends new text, and retains its
-// metadata; other attributes on the incoming text part are not merged.
-// Nontext, empty incoming text, and differently flagged parts remain separate
-// shallow copies, while nested values stay shared. This represents ordered
-// text deltas and does not deduplicate cumulative payloads.
-func AppendCollectedGeminiParts(collected []any, parts []map[string]any) []any {
-	for _, part := range parts {
-		partCopy := make(map[string]any, len(part))
-		maps.Copy(partCopy, part)
-
-		text, hasText := partCopy["text"].(string)
-		if hasText && text != "" && len(collected) > 0 {
-			if previous, ok := collected[len(collected)-1].(map[string]any); ok {
-				previousText, previousHasText := previous["text"].(string)
-				previousThought, _ := previous["thought"].(bool)
-				currentThought, _ := partCopy["thought"].(bool)
-				// Join text only across adjacent matching thought channels so reasoning
-				// and visible text remain distinct; keep earlier metadata when adding the
-				// next delta text.
-				if previousHasText && previousThought == currentThought {
-					previousCopy := make(map[string]any, len(previous))
-					maps.Copy(previousCopy, previous)
-					previousCopy["text"] = previousText + text
-					collected[len(collected)-1] = previousCopy
-					continue
-				}
-			}
-		}
-
-		collected = append(collected, partCopy)
+// readStream applies this platform's envelope decoder to shared Gemini consumption.
+// OAuth and Code Assist readers unwrap their response field before validation;
+// native REST readers retain their JSON object. The shared consumer owns body cleanup.
+func (s *ResponseAdapter) readStream(resp *http.Response, wrapped bool, consume func(upstream.GeminiStreamEvent) error) (upstream.GeminiStreamResult, error) {
+	options := s.Options.Stream
+	if wrapped {
+		options.Unwrap = UnwrapGeminiResponse
 	}
-	return collected
-}
-
-// MergeCollectedGeminiParts places collected parts in the first candidate of a
-// shallowly copied response. Empty parts returns the supplied response
-// directly; otherwise callers receive copied modified containers and a new
-// parts slice.
-//
-// The response map, candidates slice, first candidate map, and its content map
-// are copied before replacement, retaining unrelated entries and nested
-// references. Missing or unsuitable containers are created, with model role
-// used for new content. Part values themselves stay shared, so the returned
-// structure supports container replacement rather than arbitrary independent
-// mutation of nested data.
-func MergeCollectedGeminiParts(response map[string]any, collectedParts []any) map[string]any {
-	if len(collectedParts) == 0 {
-		return response
-	}
-
-	// Copy each container changed by first-candidate replacement, while leaving
-	// unrelated nested values shared, so assigning collected parts does not
-	// overwrite the source response containers.
-	result := make(map[string]any)
-	maps.Copy(result, response)
-
-	candidates, ok := result["candidates"].([]any)
-	if !ok || len(candidates) == 0 {
-		candidates = []any{map[string]any{}}
-	} else {
-		candidates = append([]any(nil), candidates...)
-	}
-
-	candidate, ok := candidates[0].(map[string]any)
-	if !ok {
-		candidate = make(map[string]any)
-		candidates[0] = candidate
-	} else {
-		candidateCopy := make(map[string]any, len(candidate))
-		maps.Copy(candidateCopy, candidate)
-		candidate = candidateCopy
-		candidates[0] = candidate
-	}
-
-	content, ok := candidate["content"].(map[string]any)
-	if !ok {
-		content = map[string]any{"role": "model"}
-		candidate["content"] = content
-	} else {
-		contentCopy := make(map[string]any, len(content))
-		maps.Copy(contentCopy, content)
-		content = contentCopy
-		candidate["content"] = content
-	}
-
-	content["parts"] = append([]any(nil), collectedParts...)
-	result["candidates"] = candidates
-
-	return result
+	return upstream.ReadGeminiStream(s.Options.Context, resp, options, consume)
 }
 
 // HandleNativeNonStreamingResponse reads through the caller body limiter,
@@ -465,115 +295,58 @@ func (s *ResponseAdapter) HandleNativeNonStreamingResponse(c *upstream.OutputCon
 	return &upstream.TokenUsage{}, nil
 }
 
-// HandleNativeStreamingResponse forwards native data lines and returns the
-// latest parsed usage. Callers close resp.Body and supply a
-// flusher-capable OutputContext; header forwarding follows HasHeaderFilter.
+// HandleNativeStreamingResponse delivers complete Gemini JSON events and partial usage.
+// Upstream comments and DONE never reach the native SDK. The shared reader owns
+// response-body cleanup. OutputContext retains downstream write failures for
+// the executor to classify independently of upstream read errors.
 //
-// OAuth data lines are unwrapped and rewritten as complete data frames, while
-// REST lines retain their incoming spelling. Empty data and DONE pass through,
-// and nondata lines are also forwarded. Writer failures remain in OutputContext
-// while reading continues; non-EOF read errors return an
-// error and discard the returned stream snapshot.
+// Candidate completion is attached to the exact normalized frame that establishes
+// it, keeping protocol terminal observations tied to actual provider evidence.
+// Provider errors and missing completion return failures instead of manufacturing
+// a successful EOF; already observed usage remains available on those returns.
 func (s *ResponseAdapter) HandleNativeStreamingResponse(c *upstream.OutputContext, resp *http.Response, startTime time.Time, isOAuth bool) (*NativeStreamResult, error) {
 	if s.Options.DebugHeaders {
-		logger.LegacyPrintf("service.gemini_messages_compat", "[GeminiAPI] ========== Streaming Response Headers ==========")
 		for key, values := range resp.Header {
 			if strings.HasPrefix(strings.ToLower(key), "x-ratelimit") {
 				logger.LegacyPrintf("service.gemini_messages_compat", "[GeminiAPI] %s: %v", key, values)
 			}
 		}
-		logger.LegacyPrintf("service.gemini_messages_compat", "[GeminiAPI] ====================================================")
 	}
-
 	if s.Options.HasHeaderFilter {
 		s.Options.WriteHeaders(c.Writer.Header(), resp.Header)
 	}
-
 	c.Status(resp.StatusCode)
+	c.Header("Content-Type", "text/event-stream; charset=utf-8")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
-
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "text/event-stream; charset=utf-8"
-	}
-	c.Header("Content-Type", contentType)
-
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		return nil, errors.New("streaming not supported")
-	}
-
-	reader := bufio.NewReader(resp.Body)
-	usage := &upstream.TokenUsage{}
-
-	for {
-		line, err := reader.ReadString('\n')
-		if line != "" {
-			trimmed := strings.TrimRight(line, "\r\n")
-			if after, ok0 := strings.CutPrefix(trimmed, "data:"); ok0 {
-				payload := strings.TrimSpace(after)
-				// Keep empty data and DONE lines as received because they describe stream
-				// framing and completion independently of JSON payload conversion and
-				// usage extraction.
-				if payload == "[DONE]" {
-					c.NextEvent(false, true)
-				}
-				if payload == "" || payload == "[DONE]" {
-					_, _ = io.WriteString(c.Writer, line)
-					flusher.Flush()
-				} else {
-					var rawToWrite string
-					rawToWrite = payload
-
-					var rawBytes []byte
-					if isOAuth {
-						innerBytes, err := UnwrapGeminiResponse([]byte(payload))
-						if err == nil {
-							rawToWrite = string(innerBytes)
-							rawBytes = innerBytes
-						}
-					} else {
-						rawBytes = []byte(payload)
-					}
-
-					if u := ExtractGeminiUsage(rawBytes); u != nil {
-						usage = u
-					}
-					s.observeRaw(rawBytes)
-					s.Options.ObserveImages(rawBytes)
-
-					observed := geminiwire.ObservePayload(rawBytes)
-					c.NextEvent(observed.Semantic, observed.Terminal)
-					if isOAuth {
-						// The unwrapped OAuth payload is a rebuilt event rather than the source
-						// line; terminate it with a blank line so native clients receive a
-						// complete frame.
-						_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", rawToWrite)
-					} else {
-						// REST output keeps the original data line because it already carries
-						// the native payload spelling and its newline framing from the selected
-						// upstream.
-						_, _ = io.WriteString(c.Writer, line)
-					}
-					flusher.Flush()
-				}
-			} else {
-				_, _ = io.WriteString(c.Writer, line)
-				flusher.Flush()
-			}
+	result := &NativeStreamResult{Usage: &upstream.TokenUsage{}}
+	observed, err := s.readStream(resp, isOAuth, func(event upstream.GeminiStreamEvent) error {
+		if len(event.Data) == 0 {
+			return nil
 		}
-
-		if errors.Is(err, io.EOF) {
-			break
+		if usage := ExtractGeminiUsage(event.Data); usage != nil {
+			result.Usage = usage
 		}
-		if err != nil {
-			return nil, err
+		s.observeRaw(event.Data)
+		s.Options.ObserveImages(event.Data)
+		if c.Err() != nil {
+			return nil
 		}
+		c.NextEvent(geminiwire.ObservePayload(event.Data).Semantic, event.Terminal)
+		if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", event.Data); err != nil {
+			return nil
+		}
+		c.Writer.Flush()
+		return nil
+	})
+	if usage := ExtractGeminiUsage(observed.UsageJSON); usage != nil {
+		result.Usage = usage
 	}
-
-	return &NativeStreamResult{Usage: usage}, nil
+	if c.Err() != nil {
+		return result, nil
+	}
+	return result, err
 }
 
 // UnwrapGeminiResponse extracts the raw object or array in response as new
@@ -593,8 +366,22 @@ func UnwrapGeminiResponse(raw []byte) ([]byte, error) {
 // of the decoded map, and includeInlineData selects the bridge image-text
 // representation in the returned Messages body.
 func ConvertGeminiToClaudeMessage(geminiResp map[string]any, originalModel string, rawData []byte, includeInlineData bool) (map[string]any, *upstream.TokenUsage) {
-	result, usage := bridge.NativeConvertGeminiToClaudeMessage(bridge.NativeGeminiRuntime{MessageID: upstream.GenerateAnthropicMsgID, RandomHex: upstream.RandomHex}, geminiResp, originalModel, rawData, includeInlineData)
+	return (&ResponseAdapter{}).convertGeminiToClaudeMessage(geminiResp, originalModel, rawData, includeInlineData)
+}
+
+// convertGeminiToClaudeMessage converts a buffered reply and records its tool replay metadata.
+func (s *ResponseAdapter) convertGeminiToClaudeMessage(geminiResp map[string]any, originalModel string, rawData []byte, includeInlineData bool) (map[string]any, *upstream.TokenUsage) {
+	result, usage := bridge.NativeConvertGeminiToClaudeMessage(s.bridgeRuntime(), geminiResp, originalModel, rawData, includeInlineData)
 	return result, LegacyNativeGeminiUsage(usage)
+}
+
+// bridgeRuntime supplies the adapter's ID generators and scoped replay callback.
+func (s *ResponseAdapter) bridgeRuntime() bridge.NativeGeminiRuntime {
+	return bridge.NativeGeminiRuntime{
+		MessageID:        upstream.GenerateAnthropicMsgID,
+		RandomHex:        upstream.RandomHex,
+		RememberToolCall: s.Options.RememberToolCall,
+	}
 }
 
 // ExtractGeminiUsage copies bridge token buckets into upstream usage,

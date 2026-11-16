@@ -57,8 +57,8 @@ type ImageResponseOptions struct {
 	// Backfill converts the API-key nonstream body after usage observation; that
 	// reader requires this callback even when it returns unchanged bytes.
 	Backfill func([]byte) []byte
-	// ReadLimit bounds retained plain JSON and buffered native SSE events in bytes.
-	// Legacy streaming passthrough retains its existing independent line allocation.
+	// ReadLimit bounds retained plain JSON and each native SSE frame in bytes.
+	// Buffered consumers also apply it to their accumulated final image output.
 	ReadLimit func() int64
 	// ReadBody consumes buffered JSON under the caller's size and error policy.
 	// Nonstream readers and streamed Images JSON conversion require this callback.
@@ -72,6 +72,9 @@ type ImageResponseOptions struct {
 	// ObserveError records response failures before return, using status and
 	// message plus an optional caller-provided diagnostic summary.
 	ObserveError func(int, string, string)
+	// ObserveStreamError records a terminal native-stream failure after response
+	// commitment. The reader writes its error frame separately on the same goroutine.
+	ObserveStreamError func(*OpenAIImagesUpstreamError)
 	// WriteHTTPError presents nonretryable OAuth nonstream errors and buffered
 	// image-stream failures. JSON validation failures apply to either credential type.
 	WriteHTTPError func(*OpenAIImagesUpstreamError) bool

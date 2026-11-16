@@ -127,7 +127,7 @@
                 {{ t('payment.admin.queryRefundStatus') }}
               </button>
               <button
-                v-else-if="row.status === 'COMPLETED' || row.status === 'PARTIALLY_REFUNDED'"
+                v-else-if="row.status === 'COMPLETED'"
                 @click="openRefundDialog(row)"
                 class="inline-flex items-center gap-1 rounded-compact px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
               >
@@ -403,6 +403,49 @@
       </template>
     </BaseDialog>
 
+    <BaseDialog
+      :show="refundReferenceOrder !== null"
+      :title="t('payment.admin.verifyStripeRefund')"
+      width="narrow"
+      @close="closeRefundReferenceDialog"
+    >
+      <form id="refund-reference-form" class="space-y-3" @submit.prevent="submitRefundReference">
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          {{ t('payment.admin.verifyStripeRefundHint', { order: refundReferenceOrder?.id }) }}
+        </p>
+        <div>
+          <label class="input-label" for="stripe-refund-reference">
+            {{ t('payment.admin.stripeRefundReference') }}
+          </label>
+          <input
+            id="stripe-refund-reference"
+            v-model.trim="refundReference"
+            class="input font-mono"
+            type="text"
+            placeholder="re_"
+            autocomplete="off"
+            spellcheck="false"
+            required
+          />
+        </div>
+      </form>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <button type="button" class="btn btn-secondary" @click="closeRefundReferenceDialog">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="submit"
+            form="refund-reference-form"
+            class="btn btn-primary"
+            :disabled="!refundReference || refundReferenceSubmitting"
+          >
+            {{ t('payment.admin.verifyStripeRefund') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
+
     <AdminRefundDialog
       :show="showRefundDialog"
       :order="selectedOrder"
@@ -446,7 +489,7 @@ import { formatPaymentAmount } from '@/utils/payment/currency'
 // order currency.
 //
 // Refund responses determine whether the dialog closes or remains open for force consent.
-// A successful or pending result refreshes the list, while require_force retains the draft
+// A successful, pending, or unconfirmed refund refreshes the list; require_force retains the draft
 // and exposes the server warning. Force expiration requires a reason and confirmation, and
 // a status conflict closes its stale confirmation before reloading orders. Per-order
 // refund-query indicators track which row has an outstanding query.
@@ -528,6 +571,18 @@ const refundWarning = ref('')
 // refundQueryingIds tracks rows with outstanding refund status queries; each completion
 // removes its identifier from the latest set.
 const refundQueryingIds = ref(new Set<number>())
+// refundReferenceOrder and refundReference retain the order and draft for
+// Stripe verification. Only a lookup that explicitly asks for a reference
+// opens this form. Closing it clears the input before another order uses it.
+const refundReferenceOrder = ref<PaymentOrder | null>(null) // selected verification order
+const refundReference = ref('') // entered channel reference
+// refundReferenceSubmitting reuses the per-order query state so an active
+// verification cannot be submitted twice from the reference dialog.
+const refundReferenceSubmitting = computed(
+  () =>
+    refundReferenceOrder.value !== null &&
+    refundQueryingIds.value.has(refundReferenceOrder.value.id),
+)
 // orderAuditLogs belongs to the detail dialog and is cleared before fetching another
 // selected order to remove previous entries.
 const orderAuditLogs = ref<AuditLog[]>([])
@@ -639,6 +694,7 @@ const statusFilterOptions = computed(() => [
   { value: 'FAILED', label: t('payment.status.failed') },
   { value: 'REFUNDED', label: t('payment.status.refunded') },
   { value: 'REFUND_REQUESTED', label: t('payment.status.refund_requested') },
+  { value: 'REFUNDING', label: t('payment.status.refunding') },
   { value: 'REFUND_PENDING', label: t('payment.status.refund_pending') },
   { value: 'REFUND_FAILED', label: t('payment.status.refund_failed') },
 ])
@@ -804,16 +860,10 @@ function closeRefundDialog() {
   refundWarning.value = ''
 }
 
-// isRefundPendingWarning recognizes pending markers in English or Chinese warning text.
-// Missing text becomes empty, and the current matching rule determines whether the caller
-// treats a response as pending.
-function isRefundPendingWarning(warning: string | undefined): boolean {
-  return /pending|处理中|待/.test(String(warning || '').toLowerCase())
-}
-
 // handleRefund submits the dialog draft for the currently selected order and interprets
-// the refund response. Success closes the editor and starts a list refresh. A warning
-// recognized as pending follows the same close-and-refresh path with a warning message. A
+// the refund response. Success closes the editor and starts a list refresh. A pending
+// result follows the same close-and-refresh path with a warning message. An
+// unconfirmed outcome closes the editor and refreshes the claimed refund state. A
 // force requirement keeps the editor open and exposes server guidance so the administrator
 // can consent before resubmitting. Other failures retain the draft, and the submitting
 // indicator clears after response handling.
@@ -838,48 +888,92 @@ async function handleRefund(data: {
       loadOrders()
       return
     }
-    if (isRefundPendingWarning(res.data.warning)) {
+    if (res.data.status === 'pending') {
       appStore.showWarning(t('payment.admin.refundPending'))
       closeRefundDialog()
       loadOrders()
       return
     }
-    if (res.data.require_force) {
+    if (res.data.status === 'requires_force' || res.data.require_force) {
       // The server requires fresh force consent, so retain the open refund draft and
       // expose its warning before allowing the administrator to resubmit.
       refundRequireForce.value = true
-      refundWarning.value = res.data.warning || ''
+      refundWarning.value =
+        selectedOrder.value?.order_type === 'subscription'
+          ? t('payment.admin.subscriptionRefundForceHint')
+          : res.data.warning || ''
       return
     }
     appStore.showError(res.data.warning || t('common.error'))
   } catch (err: unknown) {
+    if (extractApiErrorCode(err) === 'REFUND_RECOVERY_REQUIRED') {
+      // The external refund may have completed. Close the stale submission form and
+      // reload its claimed state before another action can be selected for this order.
+      closeRefundDialog()
+      await loadOrders()
+      appStore.showWarning(t('payment.errors.REFUND_RECOVERY_REQUIRED'))
+      return
+    }
     appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
   } finally {
     refundSubmitting.value = false
   }
 }
 
+// closeRefundReferenceDialog clears the current order and typed reference.
+function closeRefundReferenceDialog() {
+  refundReferenceOrder.value = null
+  refundReference.value = ''
+}
+
+// submitRefundReference asks the server to verify the entered ID against the
+// captured order. A blank draft leaves the dialog open without querying the
+// remote payment provider.
+async function submitRefundReference() {
+  const order = refundReferenceOrder.value
+  if (order && refundReference.value) {
+    await handleQueryRefund(order, refundReference.value)
+  }
+}
+
 // handleQueryRefund asks the API to resolve a refund already associated with the supplied
 // order. The order ID enters the busy set until the request finishes, and successful
 // responses refresh the list after reporting success, pending, or failure guidance.
-// Completion removes only this order's ID from a copy of the latest set. Other rows'
-// outstanding queries therefore keep their indicators when this request completes or
-// fails.
-async function handleQueryRefund(order: PaymentOrder) {
+// A missing Stripe reference opens the verification dialog when another order
+// is not already being edited. Completion clears only this order's busy state.
+async function handleQueryRefund(order: PaymentOrder, refundID?: string) {
+  if (refundQueryingIds.value.has(order.id)) return
   // Track this row independently of other queries; replacing the set publishes its busy
   // indicator while preserving identifiers for outstanding requests.
   refundQueryingIds.value = new Set(refundQueryingIds.value).add(order.id)
   try {
-    const res = await adminPaymentAPI.queryRefund(order.id)
+    const res = await adminPaymentAPI.queryRefund(order.id, refundID)
+    if (refundID && refundReferenceOrder.value?.id === order.id) {
+      closeRefundReferenceDialog()
+    }
     if (res.data.success) {
       appStore.showSuccess(t('payment.admin.refundSuccess'))
-    } else if (isRefundPendingWarning(res.data.warning)) {
+    } else if (res.data.status === 'pending') {
       appStore.showWarning(t('payment.admin.refundPending'))
     } else {
       appStore.showError(res.data.warning || t('common.error'))
     }
     loadOrders()
   } catch (err: unknown) {
+    const code = extractApiErrorCode(err)
+    if (code === 'REFUND_REFERENCE_REQUIRED') {
+      if (!refundReferenceOrder.value) {
+        refundReferenceOrder.value = order
+      } else if (refundReferenceOrder.value.id !== order.id) {
+        appStore.showWarning(t('payment.errors.REFUND_REFERENCE_REQUIRED'))
+      }
+      return
+    }
+    if (code === 'REFUND_RECOVERY_REQUIRED') {
+      appStore.showWarning(t('payment.errors.REFUND_RECOVERY_REQUIRED'))
+      await loadOrders()
+      return
+    }
     appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
   } finally {
     // Read the latest set at completion so clearing this row does not discard indicators

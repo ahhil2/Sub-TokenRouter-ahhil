@@ -297,7 +297,7 @@ func TestAntigravityCompatStreamErrorCommitsSingleTerminalFrame(t *testing.T) {
 
 // TestAntigravityCompatKeepaliveAfterFirstEvent leaves a Responses stream idle
 // after its first content frame. Client output includes a ping and SSE content
-// type, and the reader completes after producer closure.
+// type, and the reader completes after a generation terminal and producer closure.
 func TestAntigravityCompatKeepaliveAfterFirstEvent(t *testing.T) {
 	svc := newAntigravityCompatibilityFixture(
 		googleforward.Options{MaxLineSize: 500 * 1024 * 1024, StreamKeepalive: 1},
@@ -321,6 +321,8 @@ func TestAntigravityCompatKeepaliveAfterFirstEvent(t *testing.T) {
 	)
 	require.NoError(t, err)
 	time.Sleep(1200 * time.Millisecond)
+	_, err = io.WriteString(writer, "data: {\"response\":{\"candidates\":[{\"finishReason\":\"STOP\"}]}}\n\n")
+	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 	require.NoError(t, <-done)
 	require.Contains(t, recorder.Body.String(), ": ping\n\n")

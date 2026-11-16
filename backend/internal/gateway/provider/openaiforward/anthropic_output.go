@@ -30,8 +30,8 @@ import (
 // includes every input bucket.
 //
 // Buffered conversion waits for a message_start before producing JSON, while
-// streaming conversion commits SSE headers and records the first decoded event
-// as its timing observation. An idle timeout closes the upstream body; buffered
+// streaming conversion prepares SSE output before reading. An idle timeout
+// closes the upstream body; buffered
 // output reports a failure with no result, and streaming output returns
 // collected usage beside that error. Responses streaming continues conversion
 // state after client disconnection, while Chat streaming continues usage
@@ -163,15 +163,14 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
+		// Canonicalize sparse usage before conversion so cache-only tails reach
+		// billing and downstream clients with the same accumulated prompt partition.
+		protocolanthropic.NormalizeStreamUsage([]byte(payload), &event, &usage)
 
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
-			protocolanthropic.MergeAnthropicUsage(&usage, event.Message.Usage)
 		}
 		if event.Type == "message_delta" {
-			if event.Usage != nil {
-				protocolanthropic.MergeAnthropicUsage(&usage, *event.Usage)
-			}
 			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
 				finalResp.StopReason = bridge.AnthropicStopReasonPtr(event.Delta.StopReason)
 			}
@@ -181,10 +180,10 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 		}
 		if event.Type == "content_block_delta" && event.Delta != nil && finalResp != nil && event.Index != nil {
 			idx := *event.Index
-			// Deltas address blocks in append order. The upper-bound check skips
-			// later blocks, but a negative upstream index passes it and panics
-			// when the selected delta accesses Content.
-			if idx < len(finalResp.Content) {
+			// Deltas address blocks in append order. Reject positions outside the
+			// accumulated content so malformed upstream indices cannot panic or alter
+			// a different block during response reconstruction.
+			if idx >= 0 && idx < len(finalResp.Content) {
 				switch event.Delta.Type {
 				case "text_delta":
 					finalResp.Content[idx].Text += event.Delta.Text
@@ -205,17 +204,9 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 		return nil, fmt.Errorf("upstream stream ended without response")
 	}
 
-	// Replace message usage when accumulated uncached input or output is
-	// positive; cache-only observations still reach completion through the
-	// separate accumulator while client conversion retains message_start usage.
-	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-		finalResp.Usage = protocolanthropic.AnthropicUsage{
-			InputTokens:              usage.InputTokens,
-			OutputTokens:             usage.OutputTokens,
-			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     usage.CacheReadInputTokens,
-		}
-	}
+	// Cache-only tails carry billable observations even when uncached input and
+	// output remain zero, so conversion receives the full accumulated partition.
+	finalResp.Usage = protocolanthropic.UsageFromTokens(usage)
 
 	responsesResp := bridge.AnthropicToResponsesResponse(o.Runtime, finalResp)
 	responsesResp.Model = originalModel
@@ -339,17 +330,6 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 	// After client disconnection, keep advancing conversion state and draining usage.
 	// The final output token count arrives in a trailing message_delta event.
 	processAnthropicEvent := func(event *protocolanthropic.AnthropicStreamEvent) {
-		// Measure the first decoded vendor event, including metadata-only events,
-		// from request start; this observation can precede the first client-visible
-		// converted chunk.
-
-		if event.Type == "message_delta" && event.Usage != nil {
-			protocolanthropic.MergeAnthropicUsage(&usage, *event.Usage)
-		}
-		if event.Type == "message_start" && event.Message != nil {
-			protocolanthropic.MergeAnthropicUsage(&usage, event.Message.Usage)
-		}
-
 		events := bridge.AnthropicEventToResponsesEvents(o.Runtime, event, state)
 		if clientDisconnected {
 			return
@@ -416,6 +396,9 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
+		// Canonicalize sparse usage before conversion so cache-only tails reach
+		// billing and downstream clients with the same accumulated prompt partition.
+		protocolanthropic.NormalizeStreamUsage([]byte(payload), &event, &usage)
 
 		processAnthropicEvent(&event)
 	}
@@ -554,15 +537,14 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
+		// Canonicalize sparse usage before conversion so cache-only tails reach
+		// billing and downstream clients with the same accumulated prompt partition.
+		protocolanthropic.NormalizeStreamUsage([]byte(payload), &event, &usage)
 
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
-			protocolanthropic.MergeAnthropicUsage(&usage, event.Message.Usage)
 		}
 		if event.Type == "message_delta" {
-			if event.Usage != nil {
-				protocolanthropic.MergeAnthropicUsage(&usage, *event.Usage)
-			}
 			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
 				finalResp.StopReason = bridge.AnthropicStopReasonPtr(event.Delta.StopReason)
 			}
@@ -572,10 +554,10 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 		}
 		if event.Type == "content_block_delta" && event.Delta != nil && finalResp != nil && event.Index != nil {
 			idx := *event.Index
-			// Deltas address blocks in append order. The upper-bound check skips
-			// later blocks, but a negative upstream index passes it and panics
-			// when the selected delta accesses Content.
-			if idx < len(finalResp.Content) {
+			// Deltas address blocks in append order. Reject positions outside the
+			// accumulated content so malformed upstream indices cannot panic or alter
+			// a different block during response reconstruction.
+			if idx >= 0 && idx < len(finalResp.Content) {
 				switch event.Delta.Type {
 				case "text_delta":
 					finalResp.Content[idx].Text += event.Delta.Text
@@ -596,17 +578,9 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 		return nil, fmt.Errorf("upstream stream ended without response")
 	}
 
-	// Replace message usage when accumulated uncached input or output is
-	// positive; cache-only observations still reach completion through the
-	// separate accumulator while client conversion retains message_start usage.
-	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-		finalResp.Usage = protocolanthropic.AnthropicUsage{
-			InputTokens:              usage.InputTokens,
-			OutputTokens:             usage.OutputTokens,
-			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     usage.CacheReadInputTokens,
-		}
-	}
+	// Cache-only tails carry billable observations even when uncached input and
+	// output remain zero, so conversion receives the full accumulated partition.
+	finalResp.Usage = protocolanthropic.UsageFromTokens(usage)
 
 	responsesResp := bridge.AnthropicToResponsesResponse(o.Runtime, finalResp)
 	ccResp := bridge.ResponsesToChatCompletions(o.Runtime, responsesResp, originalModel)
@@ -750,19 +724,6 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 	}
 
 	processAnthropicEvent := func(event *protocolanthropic.AnthropicStreamEvent) bool {
-		// Measure the first decoded vendor event, including metadata-only events,
-		// from request start; this observation can precede the first client-visible
-		// converted chunk.
-
-		// Update usage before the disconnect guard so trailing message_delta tokens
-		// remain available even after conversion output has stopped for that client.
-		if event.Type == "message_delta" && event.Usage != nil {
-			protocolanthropic.MergeAnthropicUsage(&usage, *event.Usage)
-		}
-		if event.Type == "message_start" && event.Message != nil {
-			protocolanthropic.MergeAnthropicUsage(&usage, event.Message.Usage)
-		}
-
 		// After output failure, skip ordinary event conversion while the outer reader
 		// continues consuming lines; accumulated usage still reaches the returned
 		// partial observation.
@@ -820,6 +781,9 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
+		// Canonicalize sparse usage before conversion so cache-only tails reach
+		// billing and downstream clients with the same accumulated prompt partition.
+		protocolanthropic.NormalizeStreamUsage([]byte(payload), &event, &usage)
 
 		if processAnthropicEvent(&event) {
 			return resultWithUsage(), nil

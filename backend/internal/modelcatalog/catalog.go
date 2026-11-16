@@ -21,7 +21,8 @@ import (
 // capabilities. Qualified keys retain each provider's complete entry, while a
 // bare key prefers one identified first party record and otherwise remains
 // ambiguous when several records compete. Public model metadata is queryable
-// even when its price fields are absent.
+// even when its price fields are absent. Aliases from other hosts cannot occupy
+// a recognized provider's namespace or replace public author identities.
 //
 // An ambiguous bare name can still acquire public attributes when every
 // competing entry names the same canonical model. That metadata path leaves
@@ -176,6 +177,9 @@ func Offline() ([]byte, error) {
 // Bare-name selection prefers a unique first party entry, with the author's
 // own endpoint preferred among those entries. Multiple remaining candidates
 // produce a pricing ambiguity instead of selecting by map iteration order.
+// Qualified identities accept aliases from their own service; public author
+// identities also accept a first-party offering linked to that exact model
+// when the author has no serving-provider qualifier in the catalog.
 // Public metadata can resolve attributes for that bare name when all provider
 // records agree on one canonical identity. Callers apply supplements to the
 // returned mutable catalog before sharing its maps through views or indexes.
@@ -195,14 +199,16 @@ func Parse(body []byte) (*Catalog, error) {
 	hash := sha256.Sum256(body)
 	catalog := &Catalog{Version: hex.EncodeToString(hash[:]), Entries: map[string]Entry{}, Providers: map[string]bool{}, Ambiguous: map[string]bool{}}
 	bare := map[string][]Entry{}
+	publicIdentities := make(map[string]bool, len(source.Models))
 	for id := range source.Models {
 		lab, model, ok := strings.Cut(id, "/")
 		if !ok || lab == "" || model == "" {
 			return nil, fmt.Errorf("invalid canonical model ID: %s", id)
 		}
+		publicIdentities[normalize(id)] = true
 	}
 	for provider, models := range source.Providers {
-		catalog.Providers[provider] = true
+		catalog.Providers[normalize(provider)] = true
 		lab, knownOrigin := firstPartyProviderLab(provider)
 		for id, model := range models.Models {
 			entry, err := model.entry(id, provider)
@@ -228,6 +234,24 @@ func Parse(body []byte) (*Catalog, error) {
 	for id, candidates := range bare {
 		if _, exact := catalog.Entries[id]; exact {
 			continue
+		}
+		// Qualified service names remain owned by that service. Public author
+		// identities can additionally use their own linked first-party offering
+		// when the author has no serving-provider qualifier in this catalog.
+		prefix, _, qualified := strings.Cut(id, "/")
+		if qualified && (catalog.Providers[prefix] || publicIdentities[id]) {
+			scoped := make([]Entry, 0, len(candidates))
+			for _, entry := range candidates {
+				sameProvider := normalize(entry.Provider) == prefix
+				samePublicModel := !catalog.Providers[prefix] && entry.FirstParty && normalize(entry.Canonical) == id
+				if sameProvider || samePublicModel {
+					scoped = append(scoped, entry)
+				}
+			}
+			candidates = scoped
+			if len(candidates) == 0 {
+				continue
+			}
 		}
 		var preferred []Entry
 		for _, entry := range candidates {

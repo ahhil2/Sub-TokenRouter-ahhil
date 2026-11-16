@@ -95,11 +95,16 @@ type ExchangeOptions struct {
 	// downgraded request conversion callback
 	ConvertRetry func([]byte) ([]byte, error)
 	ReplaceBody  func([]byte) // subsequent request body replacement
+	// RepairToolReplay replaces OpenAI-compatible history with its legacy
+	// representation after a signature rejection. True permits one repair.
+	RepairToolReplay func() bool
 }
 
 // ExchangeResult carries a selected response or a separate native token
 // estimate.
 type ExchangeResult struct {
+	CandidateCount int // final request candidate count
+
 	// Response and EstimatedTokens represent alternative outcomes. A nonnil
 	// response body belongs to the caller; a native estimate outcome has no
 	// response body to close.
@@ -124,6 +129,7 @@ type ExchangeResult struct {
 func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeResult, error) {
 	requestIDHeader := options.RequestIDHeader
 	var resp *http.Response
+	candidateCount := 1
 	signatureRetryStage := 0
 	// Rebuild the request and its ID-header selection for every attempt,
 	// including after caller body replacement. Captured HTTP error bytes survive
@@ -145,6 +151,7 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 			return ExchangeResult{}, options.BuildError(err)
 		}
 		requestIDHeader = idHeader
+		candidateCount = requestCandidateCount(upstreamReq)
 
 		resp, err = options.Do(upstreamReq)
 		// Stop canceled exchanges before diagnostics or fallback estimates. A
@@ -329,5 +336,5 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 		break
 	}
 
-	return ExchangeResult{Response: resp, RequestIDHeader: requestIDHeader}, nil
+	return ExchangeResult{Response: resp, RequestIDHeader: requestIDHeader, CandidateCount: candidateCount}, nil
 }

@@ -51,9 +51,9 @@ func TestImageRequestRoutingAndMultipart(t *testing.T) {
 }
 
 // TestImageOutcomePreservesPartialAndTransportBoundaries combines failed
-// partial streams with successful OAuth, API-key JSON and API-key SSE
-// outcomes. It checks count and retention separately, including a retained
-// SSE success with zero observed images.
+// partial streams with buffered native output and OAuth failure policy.
+// It checks observed-count retention separately from successful requested-count
+// substitution, including a retained SSE success with zero observed images.
 func TestImageOutcomePreservesPartialAndTransportBoundaries(t *testing.T) {
 	failure := errors.New("read failure")
 	cases := []struct {
@@ -67,7 +67,10 @@ func TestImageOutcomePreservesPartialAndTransportBoundaries(t *testing.T) {
 		count              int   // expected retained image count
 		retain             bool  // expected result retention decision
 	}{
-		{"nonstream error", false, false, false, 1, failure, 0, false},
+		{"API JSON error with image", false, false, false, 1, failure, 1, true},
+		{"API buffered SSE error with image", false, false, true, 1, failure, 1, true},
+		{"API buffered error without image", false, false, true, 0, failure, 0, false},
+		{"OAuth buffered error", false, true, true, 1, failure, 0, false},
 		{"stream partial", true, false, true, 2, failure, 2, true},
 		{"stream empty error", true, true, true, 0, failure, 0, false},
 		{"API SSE no fallback", true, false, true, 0, nil, 0, true},

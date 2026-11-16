@@ -36,8 +36,8 @@ import (
 // ResponsesBuffered returns Responses JSON assembled from Anthropic events and
 // retains merged usage plus raw response-model evidence for completion. The
 // input Lines and Output must be usable; its caller owns response closure.
-// Content deltas refer to accumulated block positions and require nonnegative
-// upstream indices.
+// Content deltas outside the accumulated block range are ignored during
+// response reconstruction, including negative indices supplied by upstream.
 //
 // A reader failure before a usable stop reason writes 502 and returns the
 // observation result with that error. A stop permits completed JSON despite
@@ -89,16 +89,15 @@ func ResponsesBuffered(in Response, out Output, originalModel, mappedModel strin
 		if event.Type == "" {
 			event.Type = eventType
 		}
+		// Resolve compatible cache fields before conversion so the returned usage
+		// and client events share the same accumulated prompt partition.
+		protocolanthropic.NormalizeStreamUsage([]byte(payload), &event, &usage)
 
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
-			protocolanthropic.MergeAnthropicUsage(&usage, event.Message.Usage)
 		}
 
 		if event.Type == "message_delta" {
-			if event.Usage != nil {
-				protocolanthropic.MergeAnthropicUsage(&usage, *event.Usage)
-			}
 			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
 				finalResp.StopReason = bridge.AnthropicStopReasonPtr(event.Delta.StopReason)
 			}
@@ -108,11 +107,11 @@ func ResponsesBuffered(in Response, out Output, originalModel, mappedModel strin
 			finalResp.Content = append(finalResp.Content, *event.ContentBlock)
 		}
 		if event.Type == "content_block_delta" && event.Delta != nil && finalResp != nil && event.Index != nil {
-			// Deltas address the accumulated block order rather than appending new
-			// blocks. Indices beyond known blocks are ignored; the upstream must
-			// supply nonnegative positions because this guard checks only the upper bound.
+			// Deltas address accumulated blocks. Reject positions outside that range
+			// so malformed upstream indices cannot panic or alter unrelated content
+			// during response reconstruction.
 			idx := *event.Index
-			if idx < len(finalResp.Content) {
+			if idx >= 0 && idx < len(finalResp.Content) {
 				switch event.Delta.Type {
 				case "text_delta":
 					finalResp.Content[idx].Text += event.Delta.Text
@@ -143,17 +142,9 @@ func ResponsesBuffered(in Response, out Output, originalModel, mappedModel strin
 		return nil, fmt.Errorf("upstream stream ended without response")
 	}
 
-	// Promote merged token observations into the final message only when input
-	// or output is positive. A cache-only observation remains in the returned
-	// Result while the original message usage stays available for client conversion.
-	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-		finalResp.Usage = protocolanthropic.AnthropicUsage{
-			InputTokens:              usage.InputTokens,
-			OutputTokens:             usage.OutputTokens,
-			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     usage.CacheReadInputTokens,
-		}
-	}
+	// The accumulated snapshot includes cache-only observations from later frames.
+	// Copy it before conversion so message_start cannot hide those final counts.
+	finalResp.Usage = protocolanthropic.UsageFromTokens(usage)
 
 	responsesResp := bridge.AnthropicToResponsesResponse(in.Runtime, finalResp)
 	responsesResp.Model = originalModel // logical client model
@@ -265,13 +256,6 @@ func ResponsesStreaming(in Response, out Output, originalModel, mappedModel stri
 			firstChunk = false
 		}
 
-		if event.Type == "message_delta" && event.Usage != nil {
-			protocolanthropic.MergeAnthropicUsage(&usage, *event.Usage)
-		}
-		if event.Type == "message_start" && event.Message != nil {
-			protocolanthropic.MergeAnthropicUsage(&usage, event.Message.Usage)
-		}
-
 		events := bridge.AnthropicEventToResponsesEvents(in.Runtime, event, state)
 		if slices.ContainsFunc(events, writeEvent) {
 			return true
@@ -314,6 +298,9 @@ func ResponsesStreaming(in Response, out Output, originalModel, mappedModel stri
 		if event.Type == "" {
 			event.Type = eventType
 		}
+		// Resolve compatible cache fields before conversion so the returned usage
+		// and client events share the same accumulated prompt partition.
+		protocolanthropic.NormalizeStreamUsage([]byte(payload), &event, &usage)
 
 		if processEvent(&event) {
 			return resultWithUsage(), nil
@@ -342,7 +329,8 @@ func ResponsesStreaming(in Response, out Output, originalModel, mappedModel stri
 // ChatBuffered returns Chat JSON assembled from Anthropic events through a
 // Responses intermediate and retains merged usage plus raw model observations.
 // Input Lines and Output must be usable, and the caller owns response closure.
-// Content deltas require nonnegative indices into the accumulated block order.
+// Content deltas outside the accumulated block range are ignored during
+// reconstruction, including negative positions supplied by upstream.
 //
 // A read failure with no usable stop writes 502 and returns captured observations
 // with the error. A stop permits final output alongside that error, while frame
@@ -393,16 +381,15 @@ func ChatBuffered(in Response, out Output, originalModel, mappedModel string, re
 		if event.Type == "" {
 			event.Type = eventType
 		}
+		// Resolve compatible cache fields before conversion so the returned usage
+		// and client events share the same accumulated prompt partition.
+		protocolanthropic.NormalizeStreamUsage([]byte(payload), &event, &usage)
 
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
-			protocolanthropic.MergeAnthropicUsage(&usage, event.Message.Usage)
 		}
 
 		if event.Type == "message_delta" {
-			if event.Usage != nil {
-				protocolanthropic.MergeAnthropicUsage(&usage, *event.Usage)
-			}
 			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
 				finalResp.StopReason = bridge.AnthropicStopReasonPtr(event.Delta.StopReason)
 			}
@@ -411,11 +398,11 @@ func ChatBuffered(in Response, out Output, originalModel, mappedModel string, re
 			finalResp.Content = append(finalResp.Content, *event.ContentBlock)
 		}
 		if event.Type == "content_block_delta" && event.Delta != nil && finalResp != nil && event.Index != nil {
-			// Deltas address the accumulated block order rather than appending new
-			// blocks. Indices beyond known blocks are ignored; the upstream must
-			// supply nonnegative positions because this guard checks only the upper bound.
+			// Deltas address accumulated blocks. Reject positions outside that range
+			// so malformed upstream indices cannot panic or alter unrelated content
+			// during response reconstruction.
 			idx := *event.Index
-			if idx < len(finalResp.Content) {
+			if idx >= 0 && idx < len(finalResp.Content) {
 				switch event.Delta.Type {
 				case "text_delta":
 					finalResp.Content[idx].Text += event.Delta.Text
@@ -446,17 +433,9 @@ func ChatBuffered(in Response, out Output, originalModel, mappedModel string, re
 		return nil, fmt.Errorf("upstream stream ended without response")
 	}
 
-	// Promote merged token observations into the final message only when input
-	// or output is positive. A cache-only observation remains in the returned
-	// Result while the original message usage stays available for client conversion.
-	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-		finalResp.Usage = protocolanthropic.AnthropicUsage{
-			InputTokens:              usage.InputTokens,
-			OutputTokens:             usage.OutputTokens,
-			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     usage.CacheReadInputTokens,
-		}
-	}
+	// The accumulated snapshot includes cache-only observations from later frames.
+	// Copy it before conversion so message_start cannot hide those final counts.
+	finalResp.Usage = protocolanthropic.UsageFromTokens(usage)
 
 	responsesResp := bridge.AnthropicToResponsesResponse(in.Runtime, finalResp)
 	ccResp := bridge.ResponsesToChatCompletions(in.Runtime, responsesResp, originalModel)
@@ -553,13 +532,6 @@ func ChatStreaming(in Response, out Output, originalModel, mappedModel string, r
 			firstChunk = false
 		}
 
-		if event.Type == "message_delta" && event.Usage != nil {
-			protocolanthropic.MergeAnthropicUsage(&usage, *event.Usage)
-		}
-		if event.Type == "message_start" && event.Message != nil {
-			protocolanthropic.MergeAnthropicUsage(&usage, event.Message.Usage)
-		}
-
 		responsesEvents := bridge.AnthropicEventToResponsesEvents(in.Runtime, event, anthState)
 		for _, resEvt := range responsesEvents {
 			ccChunks := bridge.ResponsesEventToChatChunks(&resEvt, ccState)
@@ -591,6 +563,9 @@ func ChatStreaming(in Response, out Output, originalModel, mappedModel string, r
 		if event.Type == "" {
 			event.Type = eventType
 		}
+		// Resolve compatible cache fields before conversion so the returned usage
+		// and client events share the same accumulated prompt partition.
+		protocolanthropic.NormalizeStreamUsage([]byte(payload), &event, &usage)
 
 		if processAnthropicEvent(&event) {
 			return resultWithUsage(), nil

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // gemini_native_test.go checks native request assembly, grouped client
@@ -437,4 +438,123 @@ func TestNativeConvertClaudeMessagesMixedToolConfiguration(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNativeGeminiReplayKeepsFirstToolSignatureFallback replays two tool
+// steps with unsigned cached calls. The first call in each step needs the
+// compatibility marker, while its unsigned parallel sibling stays unsigned.
+func TestNativeGeminiReplayKeepsFirstToolSignatureFallback(t *testing.T) {
+	history := []byte(`{"messages":[
+		{"role":"user","content":"lookup"},
+		{"role":"assistant","content":[
+			{"type":"text","text":"Checking"},
+			{"type":"tool_use","id":"a","name":"lookup","input":{}},
+			{"type":"tool_use","id":"b","name":"lookup","input":{}}
+		]},
+		{"role":"user","content":[
+			{"type":"tool_result","tool_use_id":"a","content":"first"},
+			{"type":"tool_result","tool_use_id":"b","content":"second"}
+		]},
+		{"role":"assistant","content":[{"type":"tool_use","id":"c","name":"lookup","input":{}}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"c","content":"third"}]}
+	]}`)
+	wire, err := NativeConvertClaudeMessagesToGeminiGenerateContent(NativeGeminiOptions{
+		DummyThoughtSignature: "compatibility-marker",
+		LookupToolCall: func(id string) (NativeGeminiToolCall, bool) {
+			return NativeGeminiToolCall{ID: "upstream-" + id}, true
+		},
+	}, history)
+	require.NoError(t, err)
+	require.Equal(t, "compatibility-marker", gjson.GetBytes(wire, "contents.1.parts.1.thoughtSignature").String())
+	require.False(t, gjson.GetBytes(wire, "contents.1.parts.2.thoughtSignature").Exists())
+	require.Equal(t, "compatibility-marker", gjson.GetBytes(wire, "contents.3.parts.0.thoughtSignature").String())
+	require.Equal(t, "upstream-c", gjson.GetBytes(wire, "contents.4.parts.0.functionResponse.id").String())
+}
+
+// TestNativeConvertGeminiToClaudeMessagePreservesCachedPrompt supplies a cached
+// Gemini prompt and checks the serialized Messages buckets. Cache-only input
+// must remain distinguishable from an absent prompt observation.
+func TestNativeConvertGeminiToClaudeMessagePreservesCachedPrompt(t *testing.T) {
+	for _, cached := range []int{0, 60, 100} {
+		payload := map[string]any{"usageMetadata": map[string]any{
+			"promptTokenCount": 100, "cachedContentTokenCount": cached,
+			"candidatesTokenCount": 10,
+		}}
+		raw, err := json.Marshal(payload)
+		require.NoError(t, err)
+		response, usage := NativeConvertGeminiToClaudeMessage(
+			NativeGeminiRuntime{MessageID: func() string { return "msg_cache" }},
+			payload, "gemini", raw, false,
+		)
+		encoded, err := json.Marshal(response)
+		require.NoError(t, err)
+		var decoded AnthropicResponse
+		require.NoError(t, json.Unmarshal(encoded, &decoded))
+		require.Equal(t, 100-cached, decoded.Usage.InputTokens)
+		require.Equal(t, cached, decoded.Usage.CacheReadInputTokens)
+		require.Equal(t, usage.CacheReadInputTokens, decoded.Usage.CacheReadInputTokens)
+		require.Equal(t, 10, decoded.Usage.OutputTokens)
+	}
+}
+
+// TestNativeGeminiMessagesThinkingHistory converts a signed thought and an
+// answer, then replays that response alongside redacted and legacy thinking.
+// Buffered Messages keeps readable thinking without its upstream signature.
+// Replaying the response must leave only the answer and the new user prompt.
+func TestNativeGeminiMessagesThinkingHistory(t *testing.T) {
+	raw := []byte(`{"candidates":[{"content":{"parts":[` +
+		`{"thought":true,"text":"reason","thoughtSignature":"opaque"},` +
+		`{"thought":true,"thoughtSignature":"signature-only"},{"text":"answer"}]}}]}`)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(raw, &payload))
+	runtime := NativeGeminiRuntime{MessageID: func() string { return "msg_fixture" }}
+	response, _ := NativeConvertGeminiToClaudeMessage(runtime, payload, "gemini", raw, false)
+	blocks, ok := response["content"].([]any)
+	require.True(t, ok)
+	require.Equal(t, []any{
+		map[string]any{"type": "thinking", "thinking": "reason", "signature": ""},
+		map[string]any{"type": "text", "text": "answer"},
+	}, blocks)
+
+	request, err := json.Marshal(map[string]any{
+		"messages": []any{
+			map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "redacted_thinking", "data": "redacted"},
+				map[string]any{"thinking": "legacy reasoning", "signature": ""},
+			}},
+			map[string]any{"role": "assistant", "content": blocks},
+			map[string]any{"role": "user", "content": "next"},
+		},
+	})
+	require.NoError(t, err)
+	converted, err := NativeConvertClaudeMessagesToGeminiGenerateContent(NativeGeminiOptions{}, request)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"contents":[{"role":"model","parts":[{"text":"answer"}]},{"role":"user","parts":[{"text":"next"}]}]}`, string(converted))
+}
+
+// TestNativeGeminiThinkingCanReplayToResponses switches a buffered Gemini
+// reply to an OpenAI Responses route. Its signed thought must never become
+// encrypted_content, and the assistant answer must remain in the history.
+func TestNativeGeminiThinkingCanReplayToResponses(t *testing.T) {
+	raw := []byte(`{"candidates":[{"content":{"parts":[` +
+		`{"thought":true,"text":"plan","thoughtSignature":"gemini-opaque"},` +
+		`{"text":"answer"}]}}]}`)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(raw, &payload))
+	runtime := NativeGeminiRuntime{MessageID: func() string { return "msg_fixture" }}
+	response, _ := NativeConvertGeminiToClaudeMessage(runtime, payload, "gemini", raw, false)
+	content, err := json.Marshal(response["content"])
+	require.NoError(t, err)
+	converted, err := AnthropicToResponses(&AnthropicRequest{
+		Model: "gpt-6.1-sol",
+		Messages: []AnthropicMessage{
+			{Role: "assistant", Content: content},
+			{Role: "user", Content: json.RawMessage(`"next"`)},
+		},
+	}, RequestOptions{})
+	require.NoError(t, err)
+	require.JSONEq(t, `[
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}
+	]`, string(converted.Input))
 }

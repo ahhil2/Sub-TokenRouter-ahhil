@@ -28,6 +28,9 @@ import (
 const (
 	DefaultBalanceRechargeMultiplier = 1.0  // one-to-one recharge credit
 	ProviderAmountTolerance          = 0.01 // legacy absolute payment margin
+	// BalanceCreditCeiling is exclusive because wallet and redeem values use
+	// numeric(20,8), leaving twelve integer digits for credited reasoning points.
+	BalanceCreditCeiling = 1e12
 )
 
 // NormalizeBalanceRechargeMultiplier returns a usable positive finite
@@ -108,4 +111,11 @@ func PaymentAmountToleranceForCurrency(currency string) float64 {
 	}
 	// Convert the API scale into a half-minor-unit comparison margin.
 	return math.Pow10(-minorUnit) / 2
+}
+
+// IsValidCreditedBalance reports whether rounded credits fit positive wallet
+// and redemption storage amounts. Checkout rejects zero and oversized credits
+// before persisting an order or requesting payment from the provider.
+func IsValidCreditedBalance(amount float64) bool {
+	return amount > 0 && amount < BalanceCreditCeiling && !math.IsNaN(amount) && !math.IsInf(amount, 0)
 }

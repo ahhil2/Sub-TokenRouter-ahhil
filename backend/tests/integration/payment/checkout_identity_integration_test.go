@@ -4,6 +4,7 @@ package payment_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 
@@ -14,6 +15,8 @@ import (
 	identitypostgres "github.com/TokenFlux/TokenRouter/internal/identity/postgres"
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 	paymentpostgres "github.com/TokenFlux/TokenRouter/internal/payment/postgres"
+	paymenttestkit "github.com/TokenFlux/TokenRouter/internal/payment/testkit"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/promotion"
 	promotionpostgres "github.com/TokenFlux/TokenRouter/internal/promotion/postgres"
 	"github.com/TokenFlux/TokenRouter/internal/settings"
@@ -120,4 +123,50 @@ func TestCheckoutIdentitySnapshotAndRebatePostgres(t *testing.T) {
 	require.Equal(t, 10.0, quota)
 	require.Equal(t, 10.0, ledgerAmount)
 	require.Equal(t, 1, ledgerCount)
+}
+
+// TestCheckoutRejectsUndeliverableCreditsPostgres submits valid principals whose
+// configured rate produces zero or oversized wallet credit. Rejected purchases
+// leave PostgreSQL order counts unchanged, including unsupported order types.
+func TestCheckoutRejectsUndeliverableCreditsPostgres(t *testing.T) {
+	ctx := t.Context()
+	client := testEntClient(t)
+	buyer, err := client.User.Create().SetEmail("credit-bounds@example.invalid").
+		SetPasswordHash("fixture").SetUsername("buyer").Save(ctx)
+	require.NoError(t, err)
+	settingsStore := settings.New(settingspostgres.NewSettingRepository(client))
+	keys := []string{payment.SettingPaymentEnabled, payment.SettingBalanceRechargeMult}
+	original, err := settingsStore.GetMultiple(ctx, keys)
+	require.NoError(t, err)
+	// Restore shared settings after validation so subsequent payment fixtures observe
+	// their own configured rates and enablement, including originally absent keys.
+	t.Cleanup(func() {
+		for _, key := range keys {
+			require.NoError(t, settingsStore.Delete(context.Background(), key))
+		}
+		require.NoError(t, settingsStore.SetMultiple(context.Background(), original))
+	})
+	orders := paymentpostgres.NewOrderStore(client, paymentpostgres.OrderStoreRuntime{})
+	configuration := paymenttestkit.Configuration(client, settingsStore, nil)
+	checkout := payment.NewCheckout(orders, configuration, nil, nil, payment.CheckoutRuntime{
+		User: func(context.Context, int64) (*payment.Buyer, error) {
+			return &payment.Buyer{ID: buyer.ID, Email: buyer.Email, Status: payment.EntityStatusActive}, nil
+		},
+	})
+	before, err := client.PaymentOrder.Query().Count(ctx)
+	require.NoError(t, err)
+	request := payment.CreateOrderRequest{UserID: buyer.ID, Amount: 100, PaymentType: payment.TypeAlipay, OrderType: payment.OrderTypeBalance}
+	for _, rate := range []float64{1e-8, 1e11, 1e308} {
+		require.NoError(t, settingsStore.SetMultiple(ctx, map[string]string{
+			payment.SettingPaymentEnabled: "true", payment.SettingBalanceRechargeMult: fmt.Sprint(rate),
+		}))
+		_, err := checkout.CreateOrder(ctx, request)
+		require.Equal(t, "INVALID_CREDITED_AMOUNT", apperror.Reason(err))
+	}
+	request.OrderType = "wallet"
+	_, err = checkout.CreateOrder(ctx, request)
+	require.Equal(t, "INVALID_CHECKOUT_ORDER_TYPE", apperror.Reason(err))
+	after, err := client.PaymentOrder.Query().Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
 }

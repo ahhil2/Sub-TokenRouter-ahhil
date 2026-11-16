@@ -33,10 +33,12 @@ import (
 // paymentRefundRights adapts transaction-bound billing changes for payment
 // refund persistence.
 type paymentRefundRights struct {
-	// balances and subscriptions are constructed from RefundStore's selected Ent
-	// transaction. RefundStore owns its completion, so both rights operations participate in that same transaction lifetime.
-	balances      *billingpostgres.BalanceStore // refund balance participant
-	subscriptions *billing.SubscriptionService  // refund subscription participant
+	// balances, subscriptions and mutations share RefundStore's selected Ent
+	// transaction. RefundStore commits their wallet, grant and hold operations
+	// together with the matching order transition.
+	balances      *billingpostgres.BalanceStore          // refund balance participant
+	subscriptions *billing.SubscriptionService           // refund subscription participant
+	mutations     *billingpostgres.SubscriptionMutations // refund subscription locks
 }
 
 // providePaymentRuntime assembles checkout, queries, refunds, fulfillment, and
@@ -48,7 +50,7 @@ type paymentRefundRights struct {
 func providePaymentRuntime(client *dbent.Client, registry *payment.Registry, balancer payment.LoadBalancer, redeem *billing.RedeemService, subscriptions *billing.SubscriptionService, affiliate *promotion.AffiliateService, notification *notificationcore.NotificationEmailService, instances *paymentpostgres.InstanceStore, routingGroups *routingpostgres.GroupStore, identityUsers *identitypostgres.UserStore, coreConfig *payment.ConfigService, key payment.EncryptionKey, settings *identity.OAuthSettings, tasks *lifecycle.Tasks, calendar timezone.Calendar) *payment.Runtime {
 	bindings := payment.NewProviderBindings(instances, registry, balancer, payment.BindingRuntime{Factory: paymentadapter.CreateProvider, RegistryFactory: paymentadapter.CreateProvider, Warn: slog.Warn}, false)
 	store := paymentpostgres.NewRefundStore(client, func(tx *dbent.Tx) payment.RefundRights {
-		return paymentRefundRights{balances: billingpostgres.BalanceInTx(tx), subscriptions: billingpostgres.SubscriptionsInTx(tx, billingGroups{Repository: routingGroups}, billing.DateRuntime{Now: time.Now, Calendar: &calendar})}
+		return newPaymentRefundRights(tx, billingGroups{Repository: routingGroups}, billing.DateRuntime{Now: time.Now, Calendar: &calendar})
 	})
 	audit := func(ctx context.Context, id int64, action, operator string, detail map[string]any) {
 		// This audit callback reports write failure through logging and returns
@@ -66,13 +68,6 @@ func providePaymentRuntime(client *dbent.Client, registry *payment.Registry, bal
 			return nil, e
 		}
 		return &payment.RefundUser{Balance: u.Balance}, e
-	}, Subscriptions: func(ctx context.Context, id int64) ([]payment.RefundSubscription, error) {
-		rows, e := subscriptions.ListSubscriptionsBySourceOrderID(ctx, id)
-		out := make([]payment.RefundSubscription, len(rows))
-		for i, v := range rows {
-			out[i] = payment.RefundSubscription{ID: v.ID, Status: v.Status}
-		}
-		return out, e
 	}, Warn: slog.Warn, Provider: bindings.GetRefundProvider, Observe: func(ctx context.Context) func() { return timing.ObserveDependency(ctx, "payment") }, Audit: func(ctx context.Context, id int64, action, operator string, detail map[string]any) {
 		// This audit callback reports write failure through logging and returns
 		// no error; the payment operation therefore retains its own result independently of diagnostic persistence.
@@ -139,6 +134,17 @@ func providePaymentRuntime(client *dbent.Client, registry *payment.Registry, bal
 	return &payment.Runtime{Checkout: checkout, OrderQueries: queries, RefundWorkflow: workflow, OrderLifecycle: orderLifecycle, ProviderBindings: bindings}
 }
 
+// newPaymentRefundRights binds the refund's wallet and subscription operations
+// to the store-owned transaction so rights and refund state commit together.
+// RefundStore remains responsible for committing or rolling back the transaction.
+func newPaymentRefundRights(tx *dbent.Tx, groups billing.SubscriptionGroupReader, clock billing.DateRuntime) paymentRefundRights {
+	return paymentRefundRights{
+		balances:      billingpostgres.BalanceInTx(tx),
+		subscriptions: billingpostgres.SubscriptionsInTx(tx, groups, clock),
+		mutations:     billingpostgres.SubscriptionMutationsInTx(tx),
+	}
+}
+
 // DeductBalance delegates refund deduction to the transaction-bound billing
 // balance writer.
 func (p paymentRefundRights) DeductBalance(ctx context.Context, id int64, amount float64) (float64, error) {
@@ -163,4 +169,36 @@ func (p paymentRefundRights) AdjustSubscription(ctx context.Context, id int64, d
 // subscription transaction participant.
 func (p paymentRefundRights) RevokeSubscription(ctx context.Context, id int64) error {
 	return p.subscriptions.RevokeSubscription(ctx, id)
+}
+
+// HoldSubscription applies the order-owned suspension through the bound
+// billing transaction and returns the exact grant identity.
+func (p paymentRefundRights) HoldSubscription(ctx context.Context, userID, orderID int64, operationID string) (int64, error) {
+	return p.mutations.HoldRefundSubscription(ctx, userID, orderID, operationID)
+}
+
+// ResolveSubscriptionHold clears the marker under the refund's transaction
+// locks. Successful refunds then revoke through billing before commit so a
+// chain update failure rolls back the marker change too.
+//
+// The store owns this transaction and supplies the recorded operation identity.
+// Failure of either mutation prevents its completion write from committing.
+// A definitive provider failure passes revoke=false, releasing the marker while
+// retaining the grant's dates and quota usage for continued billing eligibility.
+func (p paymentRefundRights) ResolveSubscriptionHold(ctx context.Context, id int64, operationID string, revoke bool) error {
+	// Release and optional revocation share one transaction, so clearing the
+	// marker cannot expose a grant whose successful refund still needs revocation.
+	if err := p.mutations.ClearRefundSubscriptionHold(ctx, id, operationID); err != nil {
+		return err
+	}
+	if revoke {
+		return p.subscriptions.RevokeSubscription(ctx, id)
+	}
+	return nil
+}
+
+// VerifyRevokedSubscription checks the legacy grant against its original order
+// under the bound transaction before recording a previously completed revocation.
+func (p paymentRefundRights) VerifyRevokedSubscription(ctx context.Context, userID, orderID, id int64) error {
+	return p.mutations.VerifyRevokedRefundSubscription(ctx, userID, orderID, id)
 }

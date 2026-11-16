@@ -361,7 +361,7 @@ make build
 
 Vue 的最低版本为 `3.5.42`，该版本修复了 `@vue/server-renderer` 属性名检查中的 XSS 漏洞。`frontend/pnpm-workspace.yaml` 将低于 `1.2.2` 的 `source-map-js` 依赖提升到修复版本，覆盖 Vue 编译器和 i18n 引入的索引偏移 DoS 漏洞。更新这些依赖时同步维护锁文件，并运行前端测试、生产构建和安全扫描。
 
-Axios 的 Node 重定向依赖 `follow-redirects` 通过 workspace override 固定低版本的替换值为 `1.16.1`，修复数组形式请求头和特殊字符敏感请求头在跨域重定向时的剥离问题。对应公告为 [GHSA-q3jh-wrc6-jgq8](https://github.com/advisories/GHSA-q3jh-wrc6-jgq8) 和 [GHSA-8r9p-f939-6h3c](https://github.com/advisories/GHSA-8r9p-f939-6h3c)；安全检查继续使用现有高危例外规则。
+Axios 的 Node 重定向依赖 `follow-redirects` 通过 workspace override 将低于 `1.16.2` 的版本替换为 `1.16.2`，覆盖跨域重定向时敏感请求头泄漏的修复。对应公告为 [GHSA-q3jh-wrc6-jgq8](https://github.com/advisories/GHSA-q3jh-wrc6-jgq8)、[GHSA-8r9p-f939-6h3c](https://github.com/advisories/GHSA-8r9p-f939-6h3c) 和 [GHSA-mrwp-f3q8-3g9p](https://github.com/advisories/GHSA-mrwp-f3q8-3g9p)；安全检查继续使用现有高危例外规则。
 
 Vue I18n 使用 `11.4.14` 或更高的 11.x 版本，消息编译器与运行库同步升级，以修复 [GHSA-83rm-6c8r-g728](https://github.com/advisories/GHSA-83rm-6c8r-g728) 中的翻译参数 HTML 转义问题。应用使用 `legacy: false` 的组合式 API；升级时验证语言切换、占位符和全部语言消息编译，并重新构建前端。
 

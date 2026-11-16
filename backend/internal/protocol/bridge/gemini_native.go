@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -16,18 +17,18 @@ import (
 
 // gemini_native.go converts Messages requests to native Gemini and Gemini
 // replies to Messages.
-// Native GenerateContent conversion connects Messages history to Gemini
-// function names before REST sanitization removes invocation IDs. The shared
-// ID/name map resolves later tool results, caller-selected thought markers
-// fill missing call signatures, and final-model thinking controls arrive as
-// options rather than being guessed from client model spelling. Accepted
-// functions combined with built-in search enable server-side tool invocation
-// reporting in the generated request.
+// Native GenerateContent conversion connects Messages tool results to the
+// calls that produced them. A caller can resolve a generated client ID to
+// the original Gemini ID and signature. Older history uses the function
+// name and the caller's compatibility marker. Thinking controls arrive as
+// options after the gateway resolves the upstream model.
 //
 // Buffered responses and native iterators use the first candidate and keep
-// observed token counts separate from converted content. Prompt counts lose
-// their cached portion for Messages accounting, thinking adds to output
-// counts, and image counts identify a subset of candidate output. Native
+// observed token counts separate from converted content. Reasoning is returned
+// separately from visible text and skipped when rebuilding Messages history
+// for Gemini, where its replay signature can belong to another upstream.
+// Messages input excludes cached tokens, thinking adds to output counts, and
+// image counts identify a subset of candidate output. Native
 // schema cleanup copies ordinary JSON maps and arrays, narrows type arrays,
 // and uses checked numeric increments for integer exclusive minima; unsupported
 // constructs can lose validation information. The internal Gemini dialect has
@@ -53,6 +54,10 @@ type NativeGeminiOptions struct {
 	// DummyThoughtSignature fills missing call signatures with this exact string;
 	// the converter supplies no default, so callers choose their model's marker.
 	DummyThoughtSignature string
+	// LookupToolCall resolves a client call ID within the selected upstream's
+	// scope. A hit with an empty signature preserves an unsigned parallel call
+	// after the first call, where Gemini validates the step's signature.
+	LookupToolCall func(string) (NativeGeminiToolCall, bool)
 	// Thinking is inserted into generationConfig when nonnil; native conversion
 	// serializes the supplied object without resolving model capabilities or copying it.
 	Thinking *GeminiThinkingConfig
@@ -67,6 +72,23 @@ type NativeGeminiRuntime struct {
 	// RandomHex is required when a function call becomes a tool block; native
 	// converters pass eight bytes and prepend toolu_ to the callback result.
 	RandomHex func(int) string
+	// RememberToolCall records original metadata under the generated client ID
+	// before the client can replay the call. Nil disables cross-request replay.
+	RememberToolCall func(string, NativeGeminiToolCall)
+}
+
+// NativeGeminiToolCall holds the upstream fields needed to replay a Gemini invocation.
+type NativeGeminiToolCall struct {
+	ID        string // original Gemini call identifier
+	Signature string // original Gemini thought signature
+}
+
+// nativeGeminiBufferedTool holds one tool's output block and accumulated input.
+type nativeGeminiBufferedTool struct {
+	// tool and block share the generated client ID. The block stays in its
+	// original content position while later parts update the tool's arguments.
+	tool  nativeGeminiStreamTool // accumulated tool and signature
+	block map[string]any         // client Messages tool block
 }
 
 // NativeConvertGeminiToClaudeMessage builds an assistant message from the
@@ -74,14 +96,16 @@ type NativeGeminiRuntime struct {
 // MessageID and, for calls, RandomHex; rawData supplies usage independently of
 // the decoded candidate map.
 //
-// Nonempty thought text becomes thinking, other text remains visible, and
-// opted-in inline images passing MIME and base64 checks become Markdown data
-// URLs. Each function part gets a generated tool ID and makes tool_use win
-// over finish-reason mapping; upstream IDs and thought signatures are not
-// copied. Function argument values remain shared with geminiResp. Missing
-// usage yields zero counts in a nonnil value. The message usage map carries
-// input/output counts, while cache and image counts remain in the companion
-// usage value.
+// Thought text becomes thinking with an empty signature. Other text remains
+// visible, and opted-in inline images passing MIME and base64 checks become
+// Markdown data URLs. Each function part makes tool_use take precedence over
+// finish-reason mapping. Parts with the same explicit ID contribute to one
+// block using the same argument assembly as the streaming codecs. Tool
+// blocks use generated IDs and record the completed metadata before return.
+// Missing usage yields zero counts in a nonnil value. The message usage map
+// carries disjoint input, output, and cache-read counts so OpenAI conversion can
+// reconstruct inclusive prompt totals. Image counts remain in the companion
+// usage value because Messages has no corresponding output-token category.
 func NativeConvertGeminiToClaudeMessage(runtime NativeGeminiRuntime, geminiResp map[string]any, originalModel string, rawData []byte, includeInlineData bool) (map[string]any, *NativeGeminiUsage) {
 	usage := NativeExtractGeminiUsage(rawData)
 	// A buffered answer still needs an input/output usage object when metadata is
@@ -91,7 +115,8 @@ func NativeConvertGeminiToClaudeMessage(runtime NativeGeminiRuntime, geminiResp 
 	}
 
 	contentBlocks := make([]any, 0)
-	sawToolUse := false
+	var tools []*nativeGeminiBufferedTool
+	toolsByID := make(map[string]*nativeGeminiBufferedTool)
 	if candidates, ok := geminiResp["candidates"].([]any); ok && len(candidates) > 0 {
 		if cand, ok := candidates[0].(map[string]any); ok {
 			if content, ok := cand["content"].(map[string]any); ok {
@@ -101,21 +126,21 @@ func NativeConvertGeminiToClaudeMessage(runtime NativeGeminiRuntime, geminiResp 
 						if !ok {
 							continue
 						}
-						// Preserve the first candidate's supplied part order; thought text uses
-						// the Messages thinking field while other nonempty text uses its visible
-						// text field.
-						if text, ok := pm["text"].(string); ok && text != "" {
-							if thought, _ := pm["thought"].(bool); thought {
-								contentBlocks = append(contentBlocks, map[string]any{
-									"type":     "thinking",
-									"thinking": text,
-								})
-							} else {
-								contentBlocks = append(contentBlocks, map[string]any{
-									"type": "text",
-									"text": text,
-								})
-							}
+						text, _ := pm["text"].(string)
+						thought, _ := pm["thought"].(bool)
+						// Expose only the summary because a client can replay its history
+						// through a different provider that cannot interpret a Gemini signature.
+						if thought && text != "" {
+							contentBlocks = append(contentBlocks, map[string]any{
+								"type":      "thinking",
+								"thinking":  text,
+								"signature": "",
+							})
+						} else if text != "" {
+							contentBlocks = append(contentBlocks, map[string]any{
+								"type": "text",
+								"text": text,
+							})
 						}
 						// OpenAI-compatible buffered clients receive inline images through
 						// Markdown text; restrict this path to supported MIME labels and
@@ -130,21 +155,27 @@ func NativeConvertGeminiToClaudeMessage(runtime NativeGeminiRuntime, geminiResp 
 								})
 							}
 						}
-						if fc, ok := pm["functionCall"].(map[string]any); ok {
-							name, _ := fc["name"].(string)
-							// Use the generic tool label for a missing or whitespace-only function
-							// name so the emitted Messages invocation still has a named tool.
-							if strings.TrimSpace(name) == "" {
-								name = "tool"
+						if fc, ok := pm["functionCall"].(map[string]any); ok && fc != nil {
+							call := newNativeGeminiStreamTool(pm, fc)
+							// Collected parts can revisit a call after another tool
+							// has started. Its explicit ID still selects the original block.
+							if prior := toolsByID[call.id]; prior != nil {
+								prior.tool.appendArgs(call)
+								continue
 							}
-							args := fc["args"]
-							sawToolUse = true
-							contentBlocks = append(contentBlocks, map[string]any{
-								"type":  "tool_use",
-								"id":    "toolu_" + runtime.RandomHex(8),
-								"name":  name,
-								"input": args,
-							})
+							tool := call.open(runtime)
+							tool.appendArgs(call)
+							block := map[string]any{
+								"type": "tool_use",
+								"id":   tool.clientID,
+								"name": tool.name,
+							}
+							buffered := &nativeGeminiBufferedTool{tool: tool, block: block}
+							if tool.id != "" {
+								toolsByID[tool.id] = buffered
+							}
+							tools = append(tools, buffered)
+							contentBlocks = append(contentBlocks, block)
 						}
 					}
 				}
@@ -152,10 +183,25 @@ func NativeConvertGeminiToClaudeMessage(runtime NativeGeminiRuntime, geminiResp 
 		}
 	}
 
+	for _, buffered := range tools {
+		// Publish assembled JSON as an object. An absent input means no
+		// arguments, while malformed input remains visible as supplied text.
+		args := buffered.tool.args
+		switch {
+		case completeGeminiToolArgs(args):
+			buffered.block["input"] = json.RawMessage(args)
+		case strings.TrimSpace(args) == "":
+			buffered.block["input"] = map[string]any{}
+		default:
+			buffered.block["input"] = args
+		}
+		buffered.tool.remember(runtime)
+	}
+
 	// Any emitted function call takes precedence over the upstream finish reason,
 	// because the resulting Messages turn asks the client for tool output.
 	stopReason := NativeMapGeminiFinishReasonToClaudeStopReason(NativeExtractGeminiFinishReason(geminiResp))
-	if sawToolUse {
+	if len(tools) > 0 {
 		stopReason = "tool_use"
 	}
 
@@ -168,8 +214,9 @@ func NativeConvertGeminiToClaudeMessage(runtime NativeGeminiRuntime, geminiResp 
 		"stop_reason":   stopReason,
 		"stop_sequence": nil,
 		"usage": map[string]any{
-			"input_tokens":  usage.InputTokens,
-			"output_tokens": usage.OutputTokens,
+			"input_tokens":            usage.InputTokens,
+			"output_tokens":           usage.OutputTokens,
+			"cache_read_input_tokens": usage.CacheReadInputTokens,
 		},
 	}
 
@@ -440,8 +487,8 @@ func NativeMapGeminiFinishReasonToClaudeStopReason(finishReason string) string {
 // optional system, tools, generation settings, and thinking are converted when
 // present.
 //
-// A fresh call-ID map connects tool results to earlier function names before
-// invocation IDs are stripped for REST output. History conversion keeps string
+// A fresh call-ID map connects tool results to earlier function names and
+// retained upstream IDs. History conversion keeps string
 // whitespace and supports base64 image blocks. Thinking is inserted from
 // options rather than inferred here. The request is rebuilt with ordinary JSON
 // decoding, so generic numbers use float64; the result contains the supported
@@ -500,47 +547,7 @@ func NativeConvertClaudeMessagesToGeminiGenerateContent(options NativeGeminiOpti
 		out["generationConfig"] = generationConfig
 	}
 
-	// Resolve Messages tool-result identity to function names before removing
-	// call and response IDs from the native REST request produced by this
-	// converter.
-	NativeStripGeminiFunctionIDs(out)
 	return json.Marshal(out)
-}
-
-// NativeStripGeminiFunctionIDs removes id fields in place from object
-// functionCall and functionResponse parts under contents. It expects
-// JSON-decoded arrays/maps; callers finish result-name correlation before this
-// native REST sanitization.
-func NativeStripGeminiFunctionIDs(req map[string]any) {
-	// Native REST history carries function identity by name after Messages
-	// correlation; remove invocation IDs from both call and result records in the
-	// shared request maps.
-	contents, ok := req["contents"].([]any)
-	if !ok {
-		return
-	}
-	for _, c := range contents {
-		cm, ok := c.(map[string]any)
-		if !ok {
-			continue
-		}
-		contentParts, ok := cm["parts"].([]any)
-		if !ok {
-			continue
-		}
-		for _, p := range contentParts {
-			pm, ok := p.(map[string]any)
-			if !ok {
-				continue
-			}
-			if fc, ok := pm["functionCall"].(map[string]any); ok && fc != nil {
-				delete(fc, "id")
-			}
-			if fr, ok := pm["functionResponse"].(map[string]any); ok && fr != nil {
-				delete(fr, "id")
-			}
-		}
-	}
 }
 
 // NativeExtractClaudeSystemText returns trimmed system text from a string or
@@ -576,16 +583,21 @@ func NativeExtractClaudeSystemText(system any) string {
 
 // NativeConvertClaudeMessagesToGeminiContents converts JSON-decoded Messages
 // history using a writable call-ID/name map. A nonarray messages value fails,
-// non-map turns are skipped, and every accepted turn yields a content record
-// even when no supported part remains.
+// non-map turns and turns containing only omitted reasoning are skipped.
 //
 // Trimmed, lowercased assistant roles become model; all other roles become
 // user. String content retains all whitespace, while multi-block text drops
 // blanks and single-block text keeps them. Calls record nonblank IDs/names and
-// receive trimmed signatures or the supplied marker. Results resolve names
-// from prior calls or use tool. Base64 images require nonempty MIME/data
-// strings but receive no image validation, unknown blocks become serialized
-// text, and nested argument values remain shared with input maps.
+// replay their original ID and signature when the lookup succeeds. Older calls
+// receive their supplied signature or the compatibility marker. Results resolve
+// the name and retained upstream ID from the preceding call, or use tool as
+// their fallback name. Contiguous results for known calls follow invocation
+// order so even providers without IDs can pair same-name calls.
+// Thinking and redacted thinking are omitted
+// because Messages history cannot establish the origin of their replay data.
+// Base64 images require nonempty MIME/data strings but receive no image
+// validation. Other unknown blocks become serialized text, and nested
+// argument values remain shared with input maps.
 func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, messages any, toolUseIDToName map[string]string) ([]any, error) {
 	arr, ok := messages.([]any)
 	if !ok {
@@ -593,6 +605,9 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 	}
 
 	out := make([]any, 0, len(arr))
+	upstreamCallIDs := make(map[string]string)
+	callOrder := make(map[string]int)
+	nextCall := 0
 	for _, m := range arr {
 		mm, ok := m.(map[string]any)
 		if !ok {
@@ -609,6 +624,8 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 		}
 
 		parts := make([]any, 0)
+		omittedReasoning := false
+		firstCall := true
 		switch content := mm["content"].(type) {
 		case string:
 			// String content stays intact, including blanks, so the native request
@@ -620,6 +637,7 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 			// omit blank text beside other content while retaining each accepted
 			// block's whitespace.
 			singleBlock := len(content) == 1
+			content = orderGeminiToolResults(content, callOrder)
 
 			for _, block := range content {
 				bm, ok := block.(map[string]any)
@@ -627,6 +645,13 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 					continue
 				}
 				bt, _ := bm["type"].(string)
+				// Some Messages clients omit the discriminator on thinking history.
+				// Recognize its dedicated field before falling back to plain JSON text.
+				if bt == "" {
+					if _, ok := bm["thinking"]; ok {
+						bt = "thinking"
+					}
+				}
 				switch bt {
 				case "text":
 					if text, ok := bm["text"].(string); ok {
@@ -634,6 +659,10 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 							parts = append(parts, map[string]any{"text": text})
 						}
 					}
+				case "thinking", "redacted_thinking":
+					// Messages can carry reasoning from a previous provider. Omit its
+					// opaque replay data and keep it out of the current Gemini prompt.
+					omittedReasoning = true
 				case "tool_use":
 					// Capture call names under their supplied IDs before later result
 					// conversion; only the emptiness check is trimmed, so map keys retain
@@ -642,22 +671,43 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 					name, _ := bm["name"].(string)
 					if strings.TrimSpace(id) != "" && strings.TrimSpace(name) != "" {
 						toolUseIDToName[id] = name
+						callOrder[id] = nextCall
+						nextCall++
 					}
-					signature, _ := bm["signature"].(string)
-					signature = strings.TrimSpace(signature)
-					// Trim the supplied call signature and fill an empty result with the
-					// caller's marker; this native path has no separate thinking-history
-					// downgrade policy.
-					if signature == "" {
-						signature = options.DummyThoughtSignature
+					call := map[string]any{"name": name, "args": bm["input"]}
+					part := map[string]any{"functionCall": call}
+					// Resolve this client ID once so the call and result use the
+					// same original ID even if its cached metadata expires mid-request.
+					var replay NativeGeminiToolCall
+					var known bool
+					if id != "" && options.LookupToolCall != nil {
+						replay, known = options.LookupToolCall(id)
 					}
-					parts = append(parts, map[string]any{
-						"thoughtSignature": signature,
-						"functionCall": map[string]any{
-							"name": name,
-							"args": bm["input"],
-						},
-					})
+					if known {
+						if replay.ID != "" {
+							call["id"] = replay.ID
+							upstreamCallIDs[id] = replay.ID
+						}
+						// Strict Gemini models validate the first call in each
+						// step. Preserve the marker fallback when that call
+						// arrived unsigned, and keep unsigned siblings intact.
+						if replay.Signature != "" {
+							part["thoughtSignature"] = replay.Signature
+						} else if firstCall && options.DummyThoughtSignature != "" {
+							part["thoughtSignature"] = options.DummyThoughtSignature
+						}
+					} else {
+						// Legacy history keeps its signature fallback so older
+						// clients and calls outside this replay scope still work.
+						signature, _ := bm["signature"].(string)
+						signature = strings.TrimSpace(signature)
+						if signature == "" {
+							signature = options.DummyThoughtSignature
+						}
+						part["thoughtSignature"] = signature
+					}
+					firstCall = false
+					parts = append(parts, part)
 				case "tool_result":
 					toolUseID, _ := bm["tool_use_id"].(string)
 					name := toolUseIDToName[toolUseID]
@@ -666,14 +716,16 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 					if name == "" {
 						name = "tool"
 					}
-					parts = append(parts, map[string]any{
-						"functionResponse": map[string]any{
-							"name": name,
-							"response": map[string]any{
-								"content": NativeExtractClaudeContentText(bm["content"]),
-							},
+					response := map[string]any{
+						"name": name,
+						"response": map[string]any{
+							"content": NativeExtractClaudeContentText(bm["content"]),
 						},
-					})
+					}
+					if upstreamID := upstreamCallIDs[toolUseID]; upstreamID != "" {
+						response["id"] = upstreamID
+					}
+					parts = append(parts, map[string]any{"functionResponse": response})
 				case "image":
 					// Only base64 sources with nonempty MIME/data fields become native
 					// inlineData; encoded image validation is left to other request handling
@@ -693,9 +745,8 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 						}
 					}
 				default:
-					// Unknown block kinds, including unhandled thinking representations, are
-					// serialized into visible text; an encoding failure omits that block and
-					// keeps the remaining turn.
+					// Preserve the legacy text fallback for other unknown blocks. If
+					// serialization fails, keep the rest of the accepted turn.
 					if b, err := json.Marshal(bm); err == nil {
 						parts = append(parts, map[string]any{"text": string(b)})
 					}
@@ -706,12 +757,68 @@ func NativeConvertClaudeMessagesToGeminiContents(options NativeGeminiOptions, me
 			// so this converter does not silently remove an accepted message record.
 		}
 
+		// Omit a reasoning-only turn because Gemini needs at least one part and
+		// an empty placeholder would introduce assistant content absent from history.
+		if omittedReasoning && len(parts) == 0 {
+			continue
+		}
 		out = append(out, map[string]any{
 			"role":  gRole,
 			"parts": parts,
 		})
 	}
 	return out, nil
+}
+
+// orderGeminiToolResults puts contiguous known tool results in invocation order.
+// Clients can return results in completion order, while older Gemini providers
+// match same-name calls by position. Preserve unknown blocks and ordinary
+// content in place, since moving a result across those boundaries could change
+// its turn. Copy only when a group needs sorting, because decoded history may
+// still be used by another attempt.
+func orderGeminiToolResults(content []any, callOrder map[string]int) []any {
+	var ordered []any
+	start := 0
+	// Keep the order within each known result run. Unknown results and
+	// ordinary content form boundaries because their positions cannot be inferred.
+	orderOf := func(value any) (int, bool) {
+		block, _ := value.(map[string]any)
+		id, _ := block["tool_use_id"].(string)
+		order, ok := callOrder[id]
+		return order, ok && block["type"] == "tool_result"
+	}
+	for start < len(content) {
+		last, ok := orderOf(content[start])
+		if !ok {
+			start++
+			continue
+		}
+		end := start + 1
+		reorder := false
+		for ; end < len(content); end++ {
+			next, known := orderOf(content[end])
+			if !known {
+				break
+			}
+			reorder = reorder || next < last
+			last = next
+		}
+		if reorder {
+			if ordered == nil {
+				ordered = slices.Clone(content)
+			}
+			slices.SortStableFunc(ordered[start:end], func(a, b any) int {
+				aOrder, _ := orderOf(a)
+				bOrder, _ := orderOf(b)
+				return aOrder - bOrder
+			})
+		}
+		start = end
+	}
+	if ordered != nil {
+		return ordered
+	}
+	return content
 }
 
 // NativeExtractClaudeContentText returns a string tool result or concatenated

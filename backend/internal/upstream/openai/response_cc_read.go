@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
@@ -19,7 +20,7 @@ import (
 // response_cc_read.go reads Chat Completions JSON and stream chunks while
 // recording usage, processing tier, and output content.
 // Chat response scanning observes raw payloads before typed chunk conversion,
-// retaining the latest usage and processing tier for attempt finalization.
+// retaining accumulated usage and processing tier for attempt finalization.
 // The shared upstream body observer captures content arrival before these
 // chunks undergo compatibility conversion and downstream buffering.
 //
@@ -50,8 +51,9 @@ type CCResponseOptions struct {
 // CCStreamScanState retains Chat usage and output observations for caller
 // finalization.
 type CCStreamScanState struct {
-	// Usage retains the latest parsed Chat usage; no observation leaves its
-	// counters zero, and conversion callers can apply their terminal usage precedence.
+	// Usage retains accumulated raw Chat counts, including image categories and
+	// usable observations from chunks rejected by typed decoding. No observation
+	// leaves its counters zero; sparse tails retain omitted buckets.
 	Usage wire.ForwardUsage
 
 	ServiceTier string // observed upstream processing tier
@@ -74,6 +76,7 @@ type CCStreamScanState struct {
 // scanning.
 func ScanCCStream(resp *http.Response, options CCResponseOptions, logPrefix, requestID string, startTime time.Time, emit func(*wire.ChatCompletionsChunk)) CCStreamScanState {
 	var st CCStreamScanState
+	var usageAccumulator wire.UsageAccumulator
 
 	scanner := NewCompatSSEScanner(resp.Body, options.MaxLineSize)
 	for scanner.Scan() {
@@ -93,9 +96,12 @@ func ScanCCStream(resp *http.Response, options CCResponseOptions, logPrefix, req
 		// Observe the echoed model and tier for billing. Chat chunks have no event type
 		// and therefore use the untyped-payload tier observation path.
 		options.ObserveChunk([]byte(payload))
-
-		if u := wire.ExtractCCStreamUsage(payload); u != nil {
-			st.Usage = *u
+		var snapshot *wire.ResponsesUsage
+		if node := gjson.Get(payload, "usage"); node.IsObject() {
+			// Preserve usable accounting even when another chunk field cannot decode;
+			// only successfully decoded chunks proceed to client protocol conversion.
+			snapshot = usageAccumulator.Observe([]byte(node.Raw))
+			st.Usage = usageAccumulator.ForwardUsage()
 		}
 
 		var chunk wire.ChatCompletionsChunk
@@ -109,6 +115,11 @@ func ScanCCStream(resp *http.Response, options CCResponseOptions, logPrefix, req
 			continue
 		}
 
+		if snapshot != nil {
+			// Normalize the same accumulated snapshot for billing and typed output;
+			// sparse tail observations must not discard cache counts read earlier.
+			chunk.Usage = wire.ChatUsageFromResponses(snapshot)
+		}
 		emit(&chunk)
 	}
 	st.ServiceTier = options.ServiceTier()

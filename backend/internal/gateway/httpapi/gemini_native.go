@@ -155,12 +155,13 @@ func NewGeminiNativeHandler(options GeminiNativeOptions, backend GeminiNativeBac
 	return &GeminiNativeHandler{executor: executor, options: options, backend: backend, prompt: prompt, concurrency: concurrency, newID: newID}
 }
 
-// WriteGoogleError writes a Google JSON error with the selected HTTP status.
+// WriteGoogleError writes a Google error in JSON or the committed SSE format.
 // Model-attribute failure state can replace status and message before the
 // shared HTTP-to-Google status mapping chooses the error name.
 func WriteGoogleError(c *gin.Context, status int, message string) {
 	status, message = modelAttributeError(c, status, message)
-	c.JSON(status, gin.H{"error": gin.H{"code": status, "message": message, "status": HTTPStatusToGoogleStatus(status)}})
+	body, _ := json.Marshal(gin.H{"error": gin.H{"code": status, "message": message, "status": HTTPStatusToGoogleStatus(status)}})
+	writeGoogleErrorBody(c, status, body)
 }
 
 // geminiNativeIsolationError reports whether an isolation error was presented

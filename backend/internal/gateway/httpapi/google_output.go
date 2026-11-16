@@ -40,6 +40,9 @@ type GoogleBoundary struct {
 // preparation.
 func (o GoogleOutput) RequestContext() context.Context { return o.Context.Request.Context() }
 
+// APIKeyID returns the authenticated Key ID for Gemini tool replay scoping.
+func (o GoogleOutput) APIKeyID() int64 { return APIKeyIDFromContext(o.Context) }
+
 // GetHeader reads an inbound HTTP header from the current request. A nil
 // Context returns an empty string, allowing callers that gather optional
 // header signals to omit them.
@@ -88,7 +91,13 @@ func (o GoogleOutput) Count(n int) { o.Context.JSON(200, map[string]any{"totalTo
 // native error bytes. Outer error handling uses that marker to suppress another
 // response even when the client write fails.
 func (o GoogleOutput) GeminiErrorBody(status int, content string, body []byte) {
-	WriteForwardGeminiErrorBody(o.Context, status, content, body, o.Commit)
+	if !o.Context.Writer.Written() {
+		if beginGoogleError(o.Context) {
+			o.Context.Data(status, content, body)
+		}
+		return
+	}
+	writeGoogleErrorBody(o.Context, status, body)
 }
 
 // ReadBody performs a bounded upstream read with OpenAI-format oversize

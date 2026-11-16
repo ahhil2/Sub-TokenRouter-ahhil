@@ -513,3 +513,14 @@ func TestCreateOrderResponseSeparatesPriceCurrency(t *testing.T) {
 		t.Fatalf("unexpected price/payment fields: amount=%v %s, paid=%v %s", result.Amount, result.AmountCurrency, result.PayAmount, result.Currency)
 	}
 }
+
+// TestCheckoutRejectsUnknownOrderTypes submits noncanonical purchase types with
+// a valid principal. They must fail before balance terms or subscription plans
+// are selected, preventing unknown types from bypassing recharge rates.
+func TestCheckoutRejectsUnknownOrderTypes(t *testing.T) {
+	checkout := NewCheckout(nil, nil, nil, nil, CheckoutRuntime{})
+	for _, orderType := range []string{"wallet", "Balance", "balance ", " "} {
+		_, err := checkout.ValidateOrderInput(context.Background(), CreateOrderRequest{OrderType: orderType, Amount: 100}, &PaymentConfig{})
+		require.Equal(t, "INVALID_CHECKOUT_ORDER_TYPE", apperror.Reason(err))
+	}
+}

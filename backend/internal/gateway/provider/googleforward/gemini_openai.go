@@ -1,6 +1,7 @@
 package googleforward
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
@@ -198,7 +200,20 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 	// sent upstream.
 	mappedModel := providercore.ResolveForwardMappedModel(gatewayprovider.ExecutionRecord(provider), req.Model, provideradapter.ModelDefaults())
 
-	geminiReq, err := convertClaudeMessagesToGeminiGenerateContent(claudeBody)
+	toolScope := session.GeminiToolScope{APIKeyID: c.APIKeyID(), ProviderID: provider.Record.ID, Model: mappedModel}
+	toolOptions := s.geminiToolOptions(toolScope)
+	replayedTool := false
+	if lookup := toolOptions.LookupToolCall; lookup != nil {
+		// Only enable signature repair when this request used cached metadata.
+		// Older requests should reach the same error policy without an extra attempt.
+		toolOptions.LookupToolCall = func(id string) (protocolbridge.NativeGeminiToolCall, bool) {
+			call, found := lookup(id)
+			replayedTool = replayedTool || found
+			return call, found
+		}
+	}
+
+	geminiReq, err := protocolbridge.NativeConvertClaudeMessagesToGeminiGenerateContent(toolOptions, claudeBody)
 	if err != nil {
 		return nil, c.GeminiOpenAICompatError(protocol, http.StatusBadRequest, "invalid_request_error", err.Error())
 	}
@@ -210,7 +225,6 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 	if err != nil {
 		return nil, c.GeminiOpenAICompatError(protocol, http.StatusBadRequest, "invalid_request_error", err.Error())
 	}
-	geminiReq = ensureGeminiFunctionCallThoughtSignatures(geminiReq)
 
 	proxyURL := ""
 	if provider.Record.ProxyID != nil && provider.Record.Proxy != nil {
@@ -222,19 +236,30 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 		useUpstreamStream = true
 	}
 
-	buildReq, requestIDHeader := s.buildGeminiChatCompletionsUpstreamRequestFunc(
-		provider,
-		mappedModel,
-		geminiReq,
-		clientStream,
-		useUpstreamStream,
-	)
+	plan := s.geminiRequestPlan(provider, mappedModel, "", false, clientStream, useUpstreamStream, false)
 
 	options := s.geminiExchangeOptions(c, ctx, provider, mappedModel, geminiExchangeOpenAI, protocol)
-	options.Build = buildReq
-	options.RequestIDHeader = requestIDHeader
+	options.Build = func(ctx context.Context) (*http.Request, string, error) {
+		return gemininative.BuildRequest(ctx, geminiReq, plan)
+	}
+	options.RequestIDHeader = "x-request-id"
 	options.Do = func(req *http.Request) (*http.Response, error) {
 		return s.Transport.Do(req, proxyURL, provider.Record.ID, provider.Record.Concurrency)
+	}
+	if replayedTool {
+		options.RepairToolReplay = func() bool {
+			fallback, err := convertClaudeMessagesToGeminiGenerateContent(claudeBody)
+			if err == nil {
+				fallback, err = applyGeminiModelParameters(fallback, originalBody, attributes, true)
+			}
+			if err != nil || bytes.Equal(fallback, geminiReq) {
+				return false
+			}
+			// A rejected signature can have expired. Retry with the same
+			// client history and the existing compatibility marker.
+			geminiReq = fallback
+			return true
+		}
 	}
 	var requestID string
 	var compatibilityResult *protocolforward.MessagesResult
@@ -249,7 +274,7 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 		Model:          mappedModel,
 		Mode:           gemininative.OpenAIResponse,
 		Exchange:       options,
-		Response:       s.geminiResponseAdapter(c).Options,
+		Response:       s.geminiResponseAdapter(c, toolScope).Options,
 		StartedAt:      startTime,
 		UpstreamStream: useUpstreamStream,
 		OAuth:          provider.Record.Type == capability.ProviderTypeOAuth,
@@ -333,7 +358,14 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 		return compatibilityResult, executeErr
 	}
 	if executeErr != nil {
-		return nil, executeErr
+		executeErr = s.streamFailure(ctx, c, provider, result, executeErr, func(status int, body []byte) error {
+			return c.GeminiOpenAICompatMappedError(provider, status, result.RequestID, body, protocol)
+		})
+		// Retain usage and delivery observations when a validated stream fails so
+		// completion can account for work already performed by the selected provider.
+		if !result.HasUsage && !result.Served {
+			return nil, executeErr
+		}
 	}
 	requestID = result.RequestID
 	usage := &result.Usage
@@ -356,23 +388,6 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 		ImageCount:            imageCount,
 		ImageSize:             imageSize,
 		ImageInputSize:        imageInputSize,
-		ClientDisconnect:      false,
-	}, nil
-}
-
-// buildGeminiChatCompletionsUpstreamRequestFunc retains the prepared bytes and
-// provider plan in a build callback. The caller keeps those inputs usable until
-// exchange finishes; token and project callbacks read provider state during
-// builds.
-func (s *Gemini) buildGeminiChatCompletionsUpstreamRequestFunc(
-	provider *gatewayprovider.ExecutionProvider,
-	mappedModel string,
-	geminiReq []byte,
-	clientStream bool,
-	useUpstreamStream bool,
-) (func(context.Context) (*http.Request, string, error), string) {
-	plan := s.geminiRequestPlan(provider, mappedModel, "", false, clientStream, useUpstreamStream, false)
-	return func(ctx context.Context) (*http.Request, string, error) {
-		return gemininative.BuildRequest(ctx, geminiReq, plan)
-	}, "x-request-id"
+		ClientDisconnect:      result.ClientDisconnect,
+	}, executeErr
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/wechatpay-apiv3/wechatpay-go/services/payments/h5"
 	"github.com/wechatpay-apiv3/wechatpay-go/services/payments/jsapi"
 	"github.com/wechatpay-apiv3/wechatpay-go/services/payments/native"
+	"github.com/wechatpay-apiv3/wechatpay-go/services/refunddomestic"
 
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
@@ -765,5 +766,25 @@ func TestCreatePaymentMobileH5ReturnsNoAuthErrorWithoutNativeFallback(t *testing
 	}
 	if !strings.Contains(err.Error(), "NO_AUTH") {
 		t.Fatalf("error = %v, want NO_AUTH", err)
+	}
+}
+
+// TestWxpayAbnormalRefundRetainsPending distinguishes WeChat's operator-recoverable
+// abnormal state from a closed refund. Unknown replies must remain unresolved
+// so local recovery cannot restore entitlements after an unverified outcome.
+func TestWxpayAbnormalRefundRetainsPending(t *testing.T) {
+	abnormal := refunddomestic.STATUS_ABNORMAL
+	closed := refunddomestic.STATUS_CLOSED
+	future := refunddomestic.Status("FUTURE_STATUS")
+	if got := wxpayRefundStatus(&refunddomestic.Refund{Status: &abnormal}); got != payment.ProviderStatusPending {
+		t.Fatalf("abnormal status = %q", got)
+	}
+	if got := wxpayRefundStatus(&refunddomestic.Refund{Status: &closed}); got != payment.ProviderStatusFailed {
+		t.Fatalf("closed status = %q", got)
+	}
+	for _, response := range []*refunddomestic.Refund{nil, {}, {Status: &future}} {
+		if got := wxpayRefundStatus(response); got != "" {
+			t.Fatalf("unverified status = %q", got)
+		}
 	}
 }

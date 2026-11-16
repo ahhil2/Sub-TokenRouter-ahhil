@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -284,6 +285,50 @@ func TestAirwallexRefundRejectsUnsettledStatus(t *testing.T) {
 	}
 }
 
+// TestAirwallexRefundClassifiesSubmissionRejections uses the refund endpoint
+// to distinguish validation and access rejections from ambiguous HTTP errors.
+// Only the verified pre-execution rejections permit local compensation.
+func TestAirwallexRefundClassifiesSubmissionRejections(t *testing.T) {
+	for _, tc := range []struct {
+		name    string // response case name
+		status  int    // channel response status
+		body    string // channel response body
+		unknown bool   // requires manual reconciliation
+	}{
+		{name: "invalid argument", status: 400, body: `{"code":"invalid_argument"}`},
+		{name: "payment validation error", status: 400, body: `{"code":"validation_error"}`},
+		{name: "forbidden", status: 403, body: `{"code":"permission_denied"}`},
+		{name: "missing payment intent", status: 400, body: `{"code":"resource_not_found"}`},
+		{name: "amount above limit", status: 400, body: `{"code":"amount_above_limit"}`},
+		{name: "invalid payment state", status: 400, body: `{"code":"invalid_status_for_operation"}`},
+		{name: "operation unsupported", status: 400, body: `{"code":"operation_not_supported"}`},
+		{name: "ambiguous bad request", status: 400, body: `{"code":"provider_unavailable"}`, unknown: true},
+		{name: "malformed bad request", status: 400, body: `{"code":"invalid_argument"`, unknown: true},
+		{name: "duplicate request", status: 409, body: `{"code":"duplicate_request"}`, unknown: true},
+		{name: "server error", status: 500, body: `{"code":"internal_error"}`, unknown: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				switch req.URL.Path {
+				case "/api/v1/authentication/login":
+					_, _ = io.WriteString(w, `{"token":"fixture","expires_at":"2099-01-01T00:00:00Z"}`)
+				case "/api/v1/pa/refunds/create":
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, tc.body)
+				default:
+					http.NotFound(w, req)
+				}
+			}))
+			defer server.Close()
+			provider := mustTestAirwallexProvider(t, server)
+			resp, err := provider.Refund(t.Context(), payment.RefundRequest{TradeNo: "int_fixture", Amount: "42.60"})
+			require.Error(t, err)
+			require.Nil(t, resp)
+			require.Equal(t, tc.unknown, errors.Is(err, payment.ErrRefundOutcomeUnknown))
+		})
+	}
+}
+
 // TestAirwallexAuthErrorIncludesCredentialGuidance supplies an unauthorized
 // loopback login response before checkout creation. It expects the channel
 // diagnostic plus fixed environment endpoints and account-setting guidance in
@@ -430,5 +475,51 @@ func signedAirwallexHeaders(rawBody, timestamp, secret string) map[string]string
 	return map[string]string{
 		"x-timestamp": timestamp,
 		"x-signature": hex.EncodeToString(mac.Sum(nil)),
+	}
+}
+
+// TestAirwallexRefundQueryBindsPreparedPayment serves settled refunds belonging
+// to another purchase or amount. Recovery accepts only the complete matching
+// reference and rejects missing identity before reporting monetary success.
+func TestAirwallexRefundQueryBindsPreparedPayment(t *testing.T) {
+	for _, tc := range []struct {
+		name  string // named response mismatch
+		field string // changed JSON field
+		value any    // mismatching provider value
+	}{
+		{name: "matching"},
+		{name: "refund identity", field: "id", value: "refund_other"},
+		{name: "payment identity", field: "payment_intent_id", value: "intent_other"},
+		{name: "missing payment identity", field: "payment_intent_id", value: ""},
+		{name: "amount", field: "amount", value: 41.6},
+		{name: "currency", field: "currency", value: "EUR"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := map[string]any{"id": "refund_fixture", "payment_intent_id": "intent_fixture", "amount": 42.6, "currency": "USD", "status": "SETTLED"}
+			if tc.field != "" {
+				response[tc.field] = tc.value
+			}
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				switch req.URL.Path {
+				case "/api/v1/authentication/login":
+					_, _ = io.WriteString(w, `{"token":"fixture","expires_at":"2099-01-01T00:00:00Z"}`)
+				case "/api/v1/pa/refunds/refund_fixture":
+					require.Equal(t, http.MethodGet, req.Method)
+					require.NoError(t, json.NewEncoder(w).Encode(response))
+				default:
+					http.NotFound(w, req)
+				}
+			}))
+			t.Cleanup(server.Close)
+			provider := mustTestAirwallexProvider(t, server)
+			result, err := provider.QueryRefund(t.Context(), payment.RefundQueryRequest{RefundID: "refund_fixture", TradeNo: "intent_fixture", Amount: "42.60", Currency: "USD"})
+			if tc.field != "" {
+				require.Error(t, err)
+				require.Nil(t, result)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, payment.ProviderStatusSuccess, result.Status)
+		})
 	}
 }

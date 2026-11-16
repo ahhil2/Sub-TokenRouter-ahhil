@@ -301,7 +301,7 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 		return legacyHTTPResult, err
 	}
 	// Requested-count substitution belongs to eligible successful transport paths.
-	// Failed attempts need positive streamed image evidence before retaining a result.
+	// Failed attempts retain completed native images in both client delivery modes.
 	imageCount, retain := gatewaymedia.ImageOutcome(parsed.Stream, false, upstreamopenai.IsEventStreamResponse(result.UpstreamHeaders), parsed.N, result.ObservedImages, err)
 	if !retain {
 		return nil, err

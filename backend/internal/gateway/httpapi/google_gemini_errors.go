@@ -1,11 +1,15 @@
 package httpapi
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
@@ -32,6 +36,10 @@ import (
 // providers. Commit markers and route-specific Responses output keep outer
 // error handling from appending another response after a final error has
 // already been presented.
+
+// googleErrorWrittenKey deduplicates final errors after retries have ended, without
+// treating a successful response terminal as a previously delivered error.
+const googleErrorWrittenKey = "google_final_error_written"
 
 // GeminiOutput holds the current HTTP request and fixed output options.
 type GeminiOutput struct {
@@ -75,8 +83,8 @@ func (s *GeminiOutput) GeminiCustomCodeSkippedError(provider *gatewayprovider.Ex
 
 // GeminiNativeUpstreamError unwraps an OAuth body when needed and writes it
 // with the upstream status. Diagnostics are recorded before committing the
-// response, and absent Content-Type defaults to JSON; the response remains
-// caller-owned.
+// response. Pending responses keep the upstream body and content type; a
+// committed stream receives a native SSE error. The response remains caller-owned.
 func (s *GeminiOutput) GeminiNativeUpstreamError(provider *gatewayprovider.ExecutionProvider, resp *http.Response, respBody []byte, requestID string, isOAuth bool) error {
 	c := s.Context
 
@@ -106,7 +114,13 @@ func (s *GeminiOutput) GeminiNativeUpstreamError(provider *gatewayprovider.Execu
 		contentType = "application/json"
 	}
 	MarkResponseCommitted(c)
-	c.Data(resp.StatusCode, contentType, respBody)
+	if !c.Writer.Written() {
+		if beginGoogleError(c) {
+			c.Data(resp.StatusCode, contentType, respBody)
+		}
+	} else {
+		writeGoogleErrorBody(c, resp.StatusCode, respBody)
+	}
 	if upstreamMsg == "" {
 		return fmt.Errorf("gemini upstream error: %d", resp.StatusCode)
 	}
@@ -173,10 +187,7 @@ func (s *GeminiOutput) GeminiMappedError(provider *gatewayprovider.ExecutionProv
 		"upstream_error",
 		"Upstream request failed",
 	); matched {
-		c.JSON(status, gin.H{
-			"type":  "error",
-			"error": gin.H{"type": errType, "message": errMsg},
-		})
+		_ = s.ClaudeError(status, errType, errMsg)
 		if upstreamMsg == "" {
 			upstreamMsg = errMsg
 		}
@@ -295,10 +306,7 @@ func (s *GeminiOutput) GeminiMappedError(provider *gatewayprovider.ExecutionProv
 		}
 	}
 
-	c.JSON(statusCode, gin.H{
-		"type":  "error",
-		"error": gin.H{"type": errType, "message": errMsg},
-	})
+	_ = s.ClaudeError(statusCode, errType, errMsg)
 	if upstreamMsg == "" {
 		return fmt.Errorf("upstream error: %d", upstreamStatus)
 	}
@@ -310,12 +318,9 @@ func (s *GeminiOutput) GeminiMappedError(provider *gatewayprovider.ExecutionProv
 // classifying whether this attempt can still be retried.
 func (s *GeminiOutput) ClaudeError(status int, errType, message string) error {
 	c := s.Context
-
-	MarkResponseCommitted(c)
-	c.JSON(status, gin.H{
-		"type":  "error",
-		"error": gin.H{"type": errType, "message": message},
-	})
+	if beginGoogleError(c) {
+		WriteAnthropicStreamError(c, status, errType, "", message, c.Writer.Written(), MarkOpsStreamError)
+	}
 	return fmt.Errorf("%s", message)
 }
 
@@ -323,16 +328,7 @@ func (s *GeminiOutput) ClaudeError(status int, errType, message string) error {
 // mapping. It returns the supplied message as an error after writing, allowing
 // execution to report the same failure to its caller.
 func (s *GeminiOutput) GoogleError(status int, message string) error {
-	c := s.Context
-
-	MarkResponseCommitted(c)
-	c.JSON(status, gin.H{
-		"error": gin.H{
-			"code":    status,
-			"message": message,
-			"status":  HTTPStatusToGoogleStatus(status),
-		},
-	})
+	WriteGoogleError(s.Context, status, message)
 	return fmt.Errorf("%s", message)
 }
 
@@ -454,8 +450,8 @@ func (s *GeminiOutput) GeminiOpenAICompatMappedError(
 }
 
 // GeminiOpenAICompatError writes the envelope selected by the compatible
-// client protocol. Responses uses ForwardConversionOutput and a commit
-// callback; other values use ChatError, with the message returned as an error.
+// client protocol. Committed streams receive an SSE error, while pending
+// responses use JSON. The supplied message is also returned as an error.
 func (s *GeminiOutput) GeminiOpenAICompatError(
 	protocol gemininative.OpenAICompatProtocol,
 	status int,
@@ -465,19 +461,84 @@ func (s *GeminiOutput) GeminiOpenAICompatError(
 	c := s.Context
 
 	if protocol == gemininative.OpenAICompatResponses {
-		(&ForwardConversionOutput{Context: c, Responses: true, Commit: func() { MarkResponseCommitted(c) }}).Error(status, errType, message)
+		if beginGoogleError(c) {
+			if c.Writer.Written() {
+				DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, status, errType, errType, message, true, true)
+			} else {
+				c.JSON(status, gin.H{"error": gin.H{"code": errType, "message": message}})
+			}
+		}
 		return fmt.Errorf("%s", message)
 	}
 	return s.ChatError(status, errType, message)
 }
 
-// ChatError commits and writes the supplied OpenAI Chat rejection as JSON.
-// Callers use it before streaming output starts and retain the returned error
-// for attempt completion. Its commit marker tells outer error handling that
-// this rejection has already been presented.
+// ChatError writes one OpenAI Chat error using the current response format.
+// Pending responses use JSON and committed streams use SSE. Its commit marker
+// tells outer error handling that this rejection has already been presented.
 func (s *GeminiOutput) ChatError(status int, errType, message string) error {
-	WriteForwardChatError(s.Context, status, errType, message)
+	c := s.Context
+	if beginGoogleError(c) {
+		DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, status, errType, "", message, c.Writer.Written(), true)
+	}
 	return fmt.Errorf("%s", message)
+}
+
+// beginGoogleError selects one final error for the active Google-backed response.
+// Cancellation suppresses output to a departed client. A previous successful
+// terminal does not prevent a later explicit provider error from being reported.
+func beginGoogleError(c *gin.Context) bool {
+	if c.GetBool(googleErrorWrittenKey) || (c.Request != nil && c.Request.Context().Err() != nil) {
+		return false
+	}
+	c.Set(googleErrorWrittenKey, true)
+	MarkResponseCommitted(c)
+	return true
+}
+
+// writeGoogleErrorBody chooses JSON or native data-only SSE for final Google errors.
+// Existing JSON error fields survive normalization; non-JSON responses become a
+// safe Google envelope. A committed SSE response retains its HTTP status.
+//
+// Local error delivery excludes upstream timing and emits one flushed SSE frame
+// through the response sink. Headers already sent to the client remain unchanged.
+// Deduplication happens before delivery so a failed client write cannot trigger
+// another attempt to present the same terminal from an outer error handler.
+func writeGoogleErrorBody(c *gin.Context, status int, body []byte) {
+	if !beginGoogleError(c) {
+		return
+	}
+	if !c.Writer.Written() || !strings.Contains(strings.ToLower(c.Writer.Header().Get("Content-Type")), "text/event-stream") {
+		c.Data(status, "application/json; charset=utf-8", body)
+		return
+	}
+	message := logredact.SanitizeUpstreamQueries(upstream.ExtractErrorMessage(body))
+	if message == "" {
+		message = http.StatusText(status)
+	}
+	value := gjson.GetBytes(body, "error")
+	if !json.Valid(body) || !value.IsObject() {
+		body, _ = json.Marshal(gin.H{"error": gin.H{"code": status, "message": message, "status": HTTPStatusToGoogleStatus(status)}})
+	}
+	// Complete the native error envelope without discarding provider details.
+	// Sanitized messages prevent upstream query credentials from entering client errors.
+	body, _ = sjson.SetBytes(body, "error.message", message)
+	code := int(gjson.GetBytes(body, "error.code").Int())
+	if code < 400 || code > 599 {
+		code = status
+	}
+	body, _ = sjson.SetBytes(body, "error.code", code)
+	if name := gjson.GetBytes(body, "error.status"); name.Type != gjson.String || name.String() == "" {
+		body, _ = sjson.SetBytes(body, "error.status", HTTPStatusToGoogleStatus(code))
+	}
+	var compact bytes.Buffer
+	_ = json.Compact(&compact, body)
+	MarkOpsStreamFailure(c, "upstream_error", "", message, status)
+	sink := NewResponseSink(c)
+	sink.timing = nil
+	if err := sink.Emit(upstream.OutputEvent{Data: []byte("data: " + compact.String() + "\n\n"), Terminal: true, Flush: true}); err != nil {
+		_ = c.Error(err)
+	}
 }
 
 // HTTPStatusToGoogleStatus returns the shared Google status name for an HTTP

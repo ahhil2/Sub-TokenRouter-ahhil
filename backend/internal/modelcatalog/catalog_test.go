@@ -7,10 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A bare identity can have ambiguous relay prices and still have reliable
-// public attributes. Fixtures vary canonical authorship and original endpoints
-// to verify metadata lookup, first party preference, explicit zero prices, and
-// missing price values independently.
+// catalog_test.go checks model identity ownership and the separation between
+// public attributes and provider prices. Fixtures vary canonical authorship,
+// qualified aliases, and missing prices so metadata lookup cannot silently
+// select another service's billing record.
 
 // ambiguousImageCatalog supplies different relay modalities and prices with
 // one shared public image model identity.
@@ -31,6 +31,54 @@ const ambiguousImageCatalog = `{
 		}}}
 	}
 }`
+
+// TestCatalogProtectsQualifiedAliases supplies hosted names that collide with
+// author and service identities. Prices remain attached to their own provider,
+// while public metadata and legitimate author aliases stay queryable.
+func TestCatalogProtectsQualifiedAliases(t *testing.T) {
+	catalog, err := Parse([]byte(`{
+		"models":{
+			"xai/public":{"limit":{"context":2000000}},
+			"lab/public-only":{"limit":{"context":80}},
+			"nvidia/model":{"limit":{"context":300}},
+			"zhipuai/model":{"limit":{"context":80}}
+		},
+		"providers":{
+			"xai":{"models":{"other":{}}},
+			"OpenAI":{"models":{"other":{}}},
+			"nvidia":{"models":{"nvidia/model":{"limit":{"context":400},"cost":{"input":1,"output":2}}}},
+			"zai":{"models":{"zhipuai/model":{"canonical_model_id":"zhipuai/model","limit":{"context":100},"cost":{"input":1,"output":2}}}},
+			"google-vertex":{"models":{
+				"xai/public":{"limit":{"context":128000},"cost":{"input":9,"output":10}},
+				"lab/public-only":{"limit":{"context":7},"cost":{"input":9,"output":10}},
+				"openai/missing":{"limit":{"context":7},"cost":{"input":9,"output":10}},
+				"custom/path":{"limit":{"context":12},"cost":{"input":1,"output":2}}
+			}}
+		}
+	}`))
+	require.NoError(t, err)
+	for id, context := range map[string]int{"xai/public": 2000000, "lab/public-only": 80} {
+		entry, found := catalog.Lookup([]string{id})
+		require.True(t, found)
+		require.Equal(t, context, *entry.Attributes.Context)
+		require.Nil(t, entry.Cost.Input)
+		hosted, found := catalog.Lookup([]string{"google-vertex/" + id})
+		require.True(t, found)
+		require.Equal(t, 9.0, *hosted.Cost.Input)
+	}
+	require.NotContains(t, catalog.Entries, "openai/missing")
+	require.Contains(t, catalog.Entries, "google-vertex/openai/missing")
+	require.True(t, catalog.RequiresExact("OPENAI/missing"))
+	for id, provider := range map[string]string{
+		"nvidia/model": "nvidia", "nvidia/nvidia/model": "nvidia",
+		"zhipuai/model": "zai", "zai/zhipuai/model": "zai", "custom/path": "google-vertex",
+	} {
+		entry, found := catalog.Lookup([]string{id})
+		require.True(t, found)
+		require.Equal(t, provider, entry.Provider)
+		require.Equal(t, 1.0, *entry.Cost.Input)
+	}
+}
 
 // TestLookupAttributesCanonicalFallback uses relay entries that agree on a
 // public author identity. Bare metadata must use copied public attributes while

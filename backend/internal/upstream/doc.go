@@ -17,6 +17,8 @@
 //   - error_message.go, model_error.go, stream_error.go: error classification
 //     and client messages.
 //   - client_tools_stream.go: Responses client-tool stream conversion.
+//   - gemini_stream.go, gemini_collect.go: bounded Gemini stream validation,
+//     completion detection, and sparse usage collection.
 //   - http_profile.go, path_segment.go, session_identity.go, wait.go: transport,
 //     paths, sessions, and cancellable waits.
 package upstream

@@ -89,6 +89,11 @@ func (s *Checkout) CreateOrder(ctx context.Context, req CreateOrderRequest) (*Cr
 		limitAmount = plan.Price
 	} else if req.OrderType == OrderTypeBalance {
 		orderAmount = CalculateCreditedBalance(req.Amount, cfg.BalanceRechargeMultiplier)
+		// Validate the rounded entitlement before creating an external payment;
+		// zero or oversized credits cannot be delivered by the redemption wallet.
+		if !IsValidCreditedBalance(orderAmount) {
+			return nil, infraerrors.BadRequest("INVALID_CREDITED_AMOUNT", "credited balance must be at least 0.01 and less than 1000000000000")
+		}
 	}
 	methodFee := cfg.EffectiveMethodFee(req.PaymentType)
 	methodCurrency := DefaultPaymentCurrency
@@ -165,12 +170,14 @@ func (s *Checkout) CreateOrder(ctx context.Context, req CreateOrderRequest) (*Cr
 	return resp, nil
 }
 
-// ValidateOrderInput checks balance enablement or delegates subscription
-// sale-plan lookup using nonnil configuration. Other order types follow the
-// finite positive amount and inclusive configured min/max checks; it returns
-// nil plan for those amount-based purchases and does not validate a closed
-// order-type enum here.
+// ValidateOrderInput rejects unsupported order types before selecting balance
+// or subscription rules. CreateOrder normalizes omitted types to balance;
+// balance purchases require finite positive principal within configured limits,
+// while subscriptions delegate sale-plan lookup using nonnil configuration.
 func (s *Checkout) ValidateOrderInput(ctx context.Context, req CreateOrderRequest, cfg *PaymentConfig) (*SubscriptionPlan, error) {
+	if req.OrderType != OrderTypeBalance && req.OrderType != OrderTypeSubscription {
+		return nil, infraerrors.BadRequest("INVALID_CHECKOUT_ORDER_TYPE", "order_type must be balance or subscription")
+	}
 	if req.OrderType == OrderTypeBalance && cfg.BalanceDisabled {
 		return nil, infraerrors.Forbidden("BALANCE_PAYMENT_DISABLED", "balance recharge has been disabled")
 	}

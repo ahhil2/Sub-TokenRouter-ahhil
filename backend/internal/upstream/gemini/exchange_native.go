@@ -38,6 +38,7 @@ import (
 func ExchangeNative(ctx context.Context, options ExchangeOptions) (ExchangeResult, error) {
 	requestIDHeader := options.RequestIDHeader
 	var resp *http.Response
+	candidateCount := 1
 	// Rebuild the request and its ID-header selection for every attempt,
 	// including after caller body replacement. Captured HTTP error bytes survive
 	// stream closing before another request or final error mapping.
@@ -58,6 +59,7 @@ func ExchangeNative(ctx context.Context, options ExchangeOptions) (ExchangeResul
 			return ExchangeResult{}, options.BuildError(err)
 		}
 		requestIDHeader = idHeader
+		candidateCount = requestCandidateCount(upstreamReq)
 
 		resp, err = options.Do(upstreamReq)
 		// Stop canceled exchanges before diagnostics or fallback estimates. A
@@ -180,5 +182,5 @@ func ExchangeNative(ctx context.Context, options ExchangeOptions) (ExchangeResul
 		break
 	}
 
-	return ExchangeResult{Response: resp, RequestIDHeader: requestIDHeader}, nil
+	return ExchangeResult{Response: resp, RequestIDHeader: requestIDHeader, CandidateCount: candidateCount}, nil
 }

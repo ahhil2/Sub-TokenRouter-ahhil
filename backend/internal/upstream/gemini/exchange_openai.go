@@ -32,10 +32,14 @@ import (
 // Transport retries use the same attempt count and context-aware backoff.
 // Cancellation stops before another attempt and retains its error identity.
 // Final transport failure returns the caller-mapped error, while final
-// HTTP failure retains captured bytes for protocol error mapping.
+// HTTP failure retains captured bytes for protocol error mapping. A rejected
+// cached tool signature can retry once with compatibility metadata before
+// any response output; that repair does not consume an ordinary retry slot.
 func ExchangeOpenAI(ctx context.Context, options ExchangeOptions) (ExchangeResult, error) {
 	requestIDHeader := options.RequestIDHeader
 	var resp *http.Response
+	candidateCount := 1
+	repairedReplay := false
 	// Rebuild the request and its ID-header selection for every attempt,
 	// including after caller body replacement. Captured HTTP error bytes survive
 	// stream closing before another request or final error mapping.
@@ -56,6 +60,7 @@ func ExchangeOpenAI(ctx context.Context, options ExchangeOptions) (ExchangeResul
 			return ExchangeResult{}, options.BuildError(err)
 		}
 		requestIDHeader = idHeader
+		candidateCount = requestCandidateCount(upstreamReq)
 
 		resp, err = options.Do(upstreamReq)
 		// Stop canceled exchanges before diagnostics or fallback estimates. A
@@ -98,6 +103,19 @@ func ExchangeOpenAI(ctx context.Context, options ExchangeOptions) (ExchangeResul
 		resp = rebuilt
 		if matched {
 			break
+		}
+
+		// A cached signature can become invalid even on the same provider.
+		// Rebuild one request with legacy tool history after a signature 400.
+		if resp.StatusCode == http.StatusBadRequest && !repairedReplay && options.RepairToolReplay != nil {
+			body := options.ReadError(resp)
+			_ = resp.Body.Close()
+			if IsGeminiSignatureRelatedError(body) && options.RepairToolReplay() {
+				repairedReplay = true
+				attempt--
+				continue
+			}
+			resp.Body = io.NopCloser(bytes.NewReader(body))
 		}
 
 		if resp.StatusCode >= 400 && options.ShouldRetry(resp.StatusCode) {
@@ -161,5 +179,5 @@ func ExchangeOpenAI(ctx context.Context, options ExchangeOptions) (ExchangeResul
 		break
 	}
 
-	return ExchangeResult{Response: resp, RequestIDHeader: requestIDHeader}, nil
+	return ExchangeResult{Response: resp, RequestIDHeader: requestIDHeader, CandidateCount: candidateCount}, nil
 }

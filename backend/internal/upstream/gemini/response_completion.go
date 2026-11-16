@@ -21,12 +21,13 @@ import (
 // conversion. Messages selects collected usage when its input or output is
 // positive, while OpenAI conversion also accepts a positive cache count.
 // Native and OpenAI paths return zero counters when conversion supplies no
-// usage. Response-body ownership remains with the executor, and downstream
-// write errors remain observable through the OutputContext.
+// usage. The reader and executor share an idempotent response closer, and
+// downstream write errors remain observable through the OutputContext.
 
 // CompleteMessages selects streamed conversion, collected OAuth SSE, or
 // buffered conversion for the client response. Callers align upstream framing
-// with stream/useUpstreamStream and own resp.Body closing.
+// with stream/useUpstreamStream and close resp.Body after completion; shared
+// stream reading may already have closed its underlying transport.
 //
 // For a buffered upstream stream, content parts are collected before Messages
 // conversion and the collected usage replaces converted usage when its input
@@ -42,21 +43,21 @@ func (s *ResponseAdapter) CompleteMessages(c *upstream.OutputContext, resp *http
 	if stream {
 		streamRes, err := s.HandleStreamingResponse(c, resp, startTime, originalModel)
 		if err != nil {
-			return nil, err
+			return streamRes.Usage, err
 		}
 		usage = streamRes.Usage
 	} else {
 		if useUpstreamStream {
-			collected, usageObj, err := CollectGeminiSSE(resp.Body, true, s.Options.ObserveRaw)
+			collected, usageObj, err := s.collectSSE(resp, true)
 			if err != nil {
-				return nil, s.Options.ClaudeError(http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
+				return usageObj, err
 			}
 			// Collected maps contain decoded JSON values. Their encoding has no custom
 			// marshaler or reference cycle; optional raw observers already received each
 			// participating payload.
 			collectedBytes, _ := json.Marshal(collected)
 			s.Options.ObserveImages(collectedBytes)
-			claudeResp, usageObj2 := ConvertGeminiToClaudeMessage(collected, originalModel, collectedBytes, false)
+			claudeResp, usageObj2 := s.convertGeminiToClaudeMessage(collected, originalModel, collectedBytes, false)
 			if body, err := json.Marshal(claudeResp); err == nil {
 				c.NextEvent(bridge.CompatJSONHasContent(body), true)
 				c.Data(http.StatusOK, "application/json; charset=utf-8", body)
@@ -93,21 +94,22 @@ func (s *ResponseAdapter) CompleteMessages(c *upstream.OutputContext, resp *http
 // images before output. Direct buffered forwarding retains upstream status,
 // whereas collection emits a successful combined response. Stream adapters
 // supply parsed usage for the execution owner.
-// Read and conversion failures return before a completed result is supplied.
+// Read failures retain accumulated usage beside the error so the executor can
+// account for provider work before presenting the failed attempt.
 func (s *ResponseAdapter) CompleteNative(c *upstream.OutputContext, resp *http.Response, startTime time.Time, stream, useUpstreamStream, isOAuth bool) (*upstream.TokenUsage, error) {
 	var usage *upstream.TokenUsage
 
 	if stream {
 		streamRes, err := s.HandleNativeStreamingResponse(c, resp, startTime, isOAuth)
 		if err != nil {
-			return nil, err
+			return streamRes.Usage, err
 		}
 		usage = streamRes.Usage
 	} else {
 		if useUpstreamStream {
-			collected, usageObj, err := CollectGeminiSSE(resp.Body, isOAuth, s.Options.ObserveRaw)
+			collected, usageObj, err := s.collectSSE(resp, isOAuth)
 			if err != nil {
-				return nil, s.Options.GoogleError(http.StatusBadGateway, "Failed to read upstream stream")
+				return usageObj, err
 			}
 			// Collection supplies ordinary JSON-decoded maps, so serialization errors
 			// are discarded on this combined native path; raw observers have already
@@ -135,7 +137,8 @@ func (s *ResponseAdapter) CompleteNative(c *upstream.OutputContext, resp *http.R
 
 // CompleteOpenAI selects Chat or Responses output and streamed, collected, or
 // buffered Gemini input handling. Callers supply callbacks for the selected
-// protocol and retain response-body ownership through completion.
+// protocol and close the response body after completion; stream consumption
+// shares an idempotent closer with that execution cleanup.
 //
 // Buffered upstream SSE is collected before conversion and its usage is
 // offered as the complete override observation; the bridge decides whether
@@ -151,20 +154,20 @@ func (s *ResponseAdapter) CompleteOpenAI(c *upstream.OutputContext, resp *http.R
 	if clientStream {
 		streamRes, err := s.HandleOpenAICompatStreamingResponseFromGemini(c, resp, startTime, originalModel, isOAuth, includeUsage, protocol, clientToolMapping)
 		if err != nil {
-			return nil, err
+			return streamRes.Usage, err
 		}
 		usage = streamRes.Usage
 	} else if useUpstreamStream {
-		collected, usageObj, err := CollectGeminiSSE(resp.Body, isOAuth, s.Options.ObserveRaw)
+		collected, usageObj, err := s.collectSSE(resp, isOAuth)
 		if err != nil {
-			return nil, s.Options.CompatError(protocol, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
+			return usageObj, err
 		}
 		// Collected maps contain decoded JSON values. Encoding them has no custom
 		// marshaler or reference cycle; optional raw observers already received the
 		// participating payloads.
 		collectedBytes, _ := json.Marshal(collected)
 		if protocol == OpenAICompatResponses {
-			responsesResp, usageObj2, convertErr := GeminiResponseToResponses(collected, originalModel, collectedBytes, usageObj)
+			responsesResp, usageObj2, convertErr := s.geminiResponseToResponses(collected, originalModel, collectedBytes, usageObj)
 			if convertErr != nil {
 				return nil, s.Options.CompatError(protocol, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 			}
@@ -173,7 +176,7 @@ func (s *ResponseAdapter) CompleteOpenAI(c *upstream.OutputContext, resp *http.R
 			}
 			usage = usageObj2
 		} else {
-			chatResp, usageObj2, convertErr := GeminiResponseToChatCompletions(collected, originalModel, collectedBytes, usageObj)
+			chatResp, usageObj2, convertErr := s.geminiResponseToChatCompletions(collected, originalModel, collectedBytes, usageObj)
 			if convertErr != nil {
 				return nil, s.Options.CompatError(protocol, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 			}
