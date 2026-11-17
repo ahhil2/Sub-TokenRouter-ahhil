@@ -18,7 +18,8 @@ import (
 //
 // The effective rate takes the first available source: a personal override, then an
 // AHHilAI group override, then the group default discounted for bonus_5 and bonus_10
-// members (factors come from billing.IdentityRateDiscountSQL). A user with none of these
+// members when identity_discount_exempt is false (factors come from
+// billing.IdentityRateDiscountSQL). A user with none of these
 // has no effective multiplier, and callers use the undiscounted group default. Bulk edits
 // run in one transaction under a lock on the identity row, record the previous overrides
 // in the change audit, and use set-based statements so the number of round trips does not
@@ -29,8 +30,13 @@ import (
 // priority; callers append a filter and ORDER BY group_id,priority for DISTINCT ON.
 var effectiveIdentityRatesSQL = buildEffectiveIdentityRatesSQL()
 
-// buildEffectiveIdentityRatesSQL builds the effective rate candidate query with the
-// discount identities and factors taken from the billing discount table.
+// buildEffectiveIdentityRatesSQL builds candidate balance rates in descending
+// precedence: personal overrides, AHHilAI overrides, and identity discounts.
+// Discount factors come from the billing table, and original-price groups exclude
+// only the discount candidates. Their callers then use the group's default rate
+// when no explicit override exists. A configured zero remains a candidate, so
+// disabling membership discounts cannot replace a free personal or AHHilAI rate.
+// @project-doc docs/domains/user_identity_groups.md#pricing
 func buildEffectiveIdentityRatesSQL() string {
 	codes, factor := billing.IdentityRateDiscountSQL("m.identity_code")
 	return `SELECT DISTINCT ON (group_id) group_id,rate_multiplier FROM (
@@ -42,7 +48,7 @@ func buildEffectiveIdentityRatesSQL() string {
     UNION ALL
     SELECT g.id,g.rate_multiplier*` + factor + `,2 AS priority FROM groups g
     JOIN user_identity_memberships m ON m.user_id=$1 AND m.identity_code IN (` + codes + `)
-    WHERE g.deleted_at IS NULL
+    WHERE g.deleted_at IS NULL AND NOT g.identity_discount_exempt
 ) rates`
 }
 

@@ -134,6 +134,7 @@ func CloneGroupForDuplicate(source *Group, operationID string) *Group {
 		AdvancedSchedulerOverrides:      policy.CloneGroupAdvancedSchedulerOverrides(source.AdvancedSchedulerOverrides),
 		DisplayBrand:                    source.DisplayBrand,
 		RateMultiplier:                  source.RateMultiplier,
+		IdentityDiscountExempt:          source.IdentityDiscountExempt,
 		RoutingPolicy:                   source.RoutingPolicy.Clone(),
 		IsExclusive:                     source.IsExclusive,
 		Status:                          DuplicateGroupInactiveStatus,

@@ -10,6 +10,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// TestGroupMappersExposeOriginalPrice serializes an enabled group for users,
+// administrator details, and administrator lists. Every response retains the
+// saved policy, and disabled groups expose false rather than omitting the field.
+func TestGroupMappersExposeOriginalPrice(t *testing.T) {
+	group := &routing.Group{ID: 7, Name: "original-price", IdentityDiscountExempt: true}
+	for _, enabled := range []bool{true, false} {
+		group.IdentityDiscountExempt = enabled
+		for _, response := range []any{
+			GroupFromService(group), GroupFromServiceAdmin(group), AdminGroupSummaryFromRouting(group),
+		} {
+			encoded, err := json.Marshal(response)
+			require.NoError(t, err)
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(encoded, &decoded))
+			require.Contains(t, decoded, "identity_discount_exempt")
+			require.Equal(t, enabled, decoded["identity_discount_exempt"])
+		}
+	}
+}
+
 // TestGroupMapperExposesOpenAIFastOnlyToAdmins serializes a group with forced
 // Fast enabled through user and administrator mappers. User JSON omits
 // force/free billing policy fields, and administrator JSON exposes force

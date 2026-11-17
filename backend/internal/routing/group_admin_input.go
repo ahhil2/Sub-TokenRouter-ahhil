@@ -41,9 +41,12 @@ type CreateGroupInput struct {
 	SortOrder *int // administrative display sort position
 	// RateMultiplier is supplied as the group's base price multiplier. CreateGroup
 	// rejects values that compare less than or equal to zero.
-	RateMultiplier          float64 // base user price multiplier
-	IsExclusive             bool    // exclusive group access flag
-	SessionIsolationEnabled bool    // cross-group session isolation flag
+	RateMultiplier float64 // base user price multiplier
+	// IdentityDiscountExempt disables bonus_5 and bonus_10 balance discounts for
+	// this group. Omission keeps identity discounts enabled for newly created groups.
+	IdentityDiscountExempt  bool
+	IsExclusive             bool // exclusive group access flag
+	SessionIsolationEnabled bool // cross-group session isolation flag
 
 	// AllowImageGeneration and AllowBatchImageGeneration are compatibility inputs
 	// used when the full protocol set is omitted or LegacyProtocolInput is true.
@@ -186,6 +189,9 @@ type UpdateGroupInput struct {
 	// RateMultiplier retains the current value when nil. A supplied value that
 	// compares less than or equal to zero is rejected before persistence.
 	RateMultiplier *float64 // base user price multiplier
+	// IdentityDiscountExempt retains the current policy when nil. True skips
+	// discount memberships, while false restores the normal identity discount rules.
+	IdentityDiscountExempt *bool
 	// IsExclusive retains the saved access mode when nil. An explicit false makes
 	// the group eligible for ordinary public visibility checks.
 	IsExclusive *bool // exclusive group access flag

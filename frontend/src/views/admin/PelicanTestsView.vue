@@ -45,6 +45,9 @@
                     ? t('pelican.every', { minutes: task.interval_minutes })
                     : t('pelican.paused')
                 }}</p
+                ><p class="text-xs text-gray-500">{{
+                  t('pelican.timeoutSummary', { seconds: task.timeout_seconds })
+                }}</p
                 ><p v-if="task.enabled" class="text-xs text-gray-500"
                   >{{ t('pelican.nextRun') }}: {{ formatTime(task.next_run_at) }}</p
                 ><p
@@ -177,6 +180,19 @@
             required
             class="input"
         /></label>
+        <label class="block space-y-2 text-sm"
+          ><span>{{ t('pelican.timeout') }}</span
+          ><input
+            v-model.number="form.timeout_seconds"
+            name="timeout_seconds"
+            type="number"
+            min="1"
+            max="3600"
+            step="1"
+            required
+            class="input"
+          /><span class="block text-xs text-gray-500">{{ t('pelican.timeoutHint') }}</span></label
+        >
         <div class="flex items-center justify-between gap-4 text-sm"
           ><span>{{ t('pelican.enabled') }}</span
           ><Toggle v-model="form.enabled" :disabled="!editID" :aria-label="t('pelican.enabled')"
@@ -252,9 +268,15 @@ import type { AdminGroupSummary } from '@/api/groups.types'
 
 /**
  * PelicanTestsView.vue manages scheduled model drawing tasks and inspects their
- * execution results. Administrators choose groups and models, configure task intervals
- * and publication consent, and inspect generated output through the same preview
- * component used by the public gallery.
+ * execution results. Administrators choose groups and models, configure task
+ * intervals, generation time limits, and publication consent, and inspect output
+ * through the preview component used by the public gallery. Editing copies the
+ * selected task into a separate draft that is submitted through the administrator API.
+ *
+ * Model and history loads use request versions to discard responses for earlier
+ * selections. Polling refreshes task status while the page is visible, and unmount
+ * clears the timer and invalidates pending loads. Configuration edits are disabled
+ * while a task is queued or running so its active execution keeps its saved budget.
  */
 
 const { t } = useI18n()
@@ -275,11 +297,14 @@ const editID = ref<number>()
 const modelsLoading = ref(false)
 const selected = ref<PelicanResult | null>(null)
 const confirmDelete = ref<{ task?: number; result?: number } | null>(null)
+// The editor owns this task draft; saving sends its generation budget together
+// with scheduling settings, and opening another task replaces all editable fields.
 const form = reactive<PelicanTaskInput>({
   group_id: 0,
   model: '',
   enabled: false,
   interval_minutes: 360,
+  timeout_seconds: 300,
   public_consent: false,
 })
 const groupOptions = computed(() =>
@@ -353,6 +378,11 @@ function groupChanged() {
   form.model = ''
   void loadModels()
 }
+/**
+ * edit opens an independent task draft and loads the selected group's models.
+ * Existing tasks restore their saved generation limit; new tasks start paused
+ * with a five-minute budget and a six-hour interval.
+ */
 function edit(task?: PelicanTask) {
   editID.value = task?.id
   Object.assign(form, {
@@ -360,6 +390,7 @@ function edit(task?: PelicanTask) {
     model: task?.model || '',
     enabled: task?.enabled || false,
     interval_minutes: task?.interval_minutes || 360,
+    timeout_seconds: task?.timeout_seconds ?? 300,
     public_consent: task?.public_consent || false,
   })
   editing.value = true

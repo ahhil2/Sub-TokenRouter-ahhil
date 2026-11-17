@@ -57,6 +57,11 @@ export default {
     time: '时间',
     keyOwner: '归属成员',
     createKey: '创建团队密钥',
+    createKeyDescription:
+      '密钥归你本人管理，使用团队所有者的余额、订阅和分组权益，计费方式为自动。',
+    keyNameRequired: '请输入密钥名称',
+    keyGroupsLoadFailed: '无法加载团队可用分组',
+    keysRefreshFailed: '密钥已创建，但团队密钥列表刷新失败，请刷新页面查看。',
     maskedKey: '密钥',
     group: '分组',
     disable: '禁用',

@@ -63,8 +63,8 @@ type DashboardStats struct {
 
 	AverageDurationMs float64 `json:"average_duration_ms"` // reported mean duration milliseconds
 
-	Rpm int64 `json:"rpm"` // five minute average request rate
-	Tpm int64 `json:"tpm"` // five minute input output token rate
+	Rpm int64 `json:"rpm"` // requests in the preceding minute
+	Tpm int64 `json:"tpm"` // input output tokens in the preceding minute
 }
 
 // TrendDataPoint carries one formatted time bucket's usage and user charge

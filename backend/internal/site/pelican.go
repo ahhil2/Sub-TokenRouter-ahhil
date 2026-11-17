@@ -9,6 +9,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// pelican.go defines drawing tasks and validates administrator configuration.
+// Each task carries a generation budget in seconds, while the repository owns
+// leases and persistence. Public result reads apply pagination and date checks
+// before querying stored artwork.
+
+// Pelican generation limits bound output and execution while keeping task
+// defaults consistent between administrator saves and database migrations.
 const (
 	PelicanPrompt = `请制作一个“鹈鹕骑车”的 SVG 动画，使用单文件 HTML 展示。自由发挥，重点是创意、画面完成度和骑行动作的自然程度。
 
@@ -45,24 +52,35 @@ const (
 5. 作品将在 sandbox="allow-scripts" 的 iframe 中展示。使用普通 button 和 addEventListener 绑定交互，脚本放在页面元素之后。不要使用 onclick 等内联事件属性、表单、嵌套 iframe、外部模块、浏览器存储或父页面接口。
 6. 页面附一个作品名称，以及简短的“创作条件”：场景、服装、车子、风格、天气和故事。
 7. 直接输出 HTML，不附加实现说明、Markdown 代码围栏、下载链接或工具调用。`
-	PelicanMaxResponseBytes = 1 << 20
-	PelicanOutputTokens     = 16384
-	PelicanTimeout          = 300 * time.Second
+	PelicanMaxResponseBytes      = 1 << 20
+	PelicanOutputTokens          = 16384
+	PelicanDefaultTimeoutSeconds = 300
+	PelicanMinTimeoutSeconds     = 1
+	PelicanMaxTimeoutSeconds     = 3600
+	// PelicanLeaseGraceSeconds reserves time after generation cancellation for
+	// the runner to save its result before maintenance can reclaim the task.
+	PelicanLeaseGraceSeconds = 30
 )
 
+// Pelican errors identify invalid configuration, missing records, and conflicting
+// changes for the administrator handlers and repository implementations.
 var (
-	ErrPelicanInvalid  = apperror.BadRequest("PELICAN_INVALID", "Check the group, model, interval and publication consent.")
+	ErrPelicanInvalid  = apperror.BadRequest("PELICAN_INVALID", "Check the group, model, interval, generation timeout (1-3600 seconds) and publication consent.")
 	ErrPelicanNotFound = apperror.NotFound("PELICAN_NOT_FOUND", "Pelican task or result not found.")
 	ErrPelicanBusy     = apperror.Conflict("PELICAN_BUSY", "The task is already queued or running, or this group/model already exists.")
 )
 
+// PelicanTask carries administrator settings and the scheduler's current task state.
 type PelicanTask struct {
-	ID              int64      `json:"id"`
-	GroupID         int64      `json:"group_id"`
-	GroupName       string     `json:"group_name"`
-	Model           string     `json:"model"`
-	Enabled         bool       `json:"enabled"`
-	IntervalMinutes int        `json:"interval_minutes"`
+	ID              int64  `json:"id"`
+	GroupID         int64  `json:"group_id"`
+	GroupName       string `json:"group_name"`
+	Model           string `json:"model"`
+	Enabled         bool   `json:"enabled"`
+	IntervalMinutes int    `json:"interval_minutes"`
+	// TimeoutSeconds bounds generation in whole seconds. Zero selects the
+	// default on creation and retains the stored limit on update; reads are positive.
+	TimeoutSeconds  int        `json:"timeout_seconds"`
 	PublicConsent   bool       `json:"public_consent"`
 	ManualRequested bool       `json:"manual_requested"`
 	NextRunAt       time.Time  `json:"next_run_at"`
@@ -159,10 +177,20 @@ func (service *PelicanService) Catalog(ctx context.Context) ([]PelicanCatalogIte
 	return service.repo.Catalog(ctx)
 }
 
+// SaveTask validates a task and persists its editable administrator settings.
+// New tasks start paused, zero intervals select six hours, and zero timeouts
+// select the default on creation or keep the saved timeout on update. Supplied
+// timeouts must be between one second and one hour.
 func (service *PelicanService) SaveTask(ctx context.Context, task PelicanTask) (PelicanTask, error) {
 	task.Model = strings.TrimSpace(task.Model)
 	if task.IntervalMinutes == 0 {
 		task.IntervalMinutes = 360
+	}
+	if task.TimeoutSeconds == 0 && task.ID == 0 {
+		task.TimeoutSeconds = PelicanDefaultTimeoutSeconds
+	}
+	if task.TimeoutSeconds != 0 && (task.TimeoutSeconds < PelicanMinTimeoutSeconds || task.TimeoutSeconds > PelicanMaxTimeoutSeconds) {
+		return PelicanTask{}, ErrPelicanInvalid
 	}
 	if task.ID < 0 || task.GroupID <= 0 || task.Model == "" || len(task.Model) > 255 || strings.ContainsAny(task.Model, "*?\r\n") || task.IntervalMinutes < 5 || task.IntervalMinutes > 10080 || (task.Enabled && !task.PublicConsent) {
 		return PelicanTask{}, ErrPelicanInvalid

@@ -13,10 +13,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Key dashboard totals combine retained usage, local today, nonnull duration
-// averages, and recent raw rates. A Kathmandu fixture compares raw and analytics
-// results with future records, then deletes older rows to check that stale
-// rollup history does not enlarge the retained total.
+// usage_log_repo_dashboard_integration_test.go verifies dashboard totals and
+// recent rates against persisted usage records. Administrator scenarios distinguish
+// the preceding minute from older and future rows, while a Kathmandu key fixture
+// compares raw and analytics totals across local dates and retained-history changes.
+
+// TestAdminDashboardOneMinuteRates records recent, older, and future usage with
+// cache tokens. Both administrator query paths must return global sixty-second
+// request and text-token counts, independently of the totals' selected date range.
+func (s *UsageLogRepoSuite) TestAdminDashboardOneMinuteRates() {
+	user := mustCreateUser(s.T(), s.client, &identity.User{Email: "admin-minute@test.local"})
+	key := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: user.ID, Key: "admin-minute"})
+	p := mustCreateProvider(s.T(), s.client, &provider.Record{Name: "admin-minute"})
+	// Reset observations within this rollback-owned transaction so the global
+	// measurement is independent of committed records from other repository scenarios.
+	_, err := s.tx.ExecContext(s.ctx, "DELETE FROM usage_logs")
+	s.Require().NoError(err)
+	now := time.Now().UTC()
+	recent := s.createUsageLog(user, key, p, 100, 50, 0, now.Add(-30*time.Second))
+	s.createUsageLog(user, key, p, 200, 75, 0, now.Add(-15*time.Second))
+	s.createUsageLog(user, key, p, 1000, 2000, 0, now.Add(-2*time.Minute))
+	s.createUsageLog(user, key, p, 4000, 5000, 0, now.Add(2*time.Minute))
+	_, err = s.tx.ExecContext(s.ctx, "UPDATE usage_logs SET cache_creation_tokens=3000, cache_read_tokens=7000 WHERE id=$1", recent.ID)
+	s.Require().NoError(err)
+
+	aggregated, err := s.repo.GetDashboardStats(s.ctx)
+	s.Require().NoError(err)
+	s.Require().Equal(int64(2), aggregated.Rpm)
+	s.Require().Equal(int64(425), aggregated.Tpm)
+	raw, err := s.repo.GetDashboardStatsWithRange(s.ctx, now.Add(-24*time.Hour), now.Add(-time.Hour))
+	s.Require().NoError(err)
+	s.Require().Equal(int64(2), raw.Rpm)
+	s.Require().Equal(int64(425), raw.Tpm)
+}
 
 // TestAPIKeyDashboardAnalyticsParity records usage around Kathmandu dates with
 // null timings, zero costs, and future instants. It compares complete

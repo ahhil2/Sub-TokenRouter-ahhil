@@ -301,12 +301,24 @@
         <section v-else-if="activeTab === 'keys'" class="space-y-4">
           <div class="card overflow-hidden">
             <div
-              class="flex items-center justify-between gap-4 border-b border-gray-200 px-5 py-4 dark:border-dark-700"
+              class="flex flex-wrap items-center justify-between gap-4 border-b border-gray-200 px-5 py-4 dark:border-dark-700"
             >
               <h2 class="text-base font-semibold text-gray-900 dark:text-white">
                 {{ t('team.keys') }}
               </h2>
-              <span class="text-sm text-gray-500 dark:text-gray-400">{{ teamKeys.length }}</span>
+              <div class="flex items-center gap-3">
+                <span class="text-sm text-gray-500 dark:text-gray-400">{{ teamKeys.length }}</span>
+                <button
+                  type="button"
+                  class="btn btn-primary btn-sm"
+                  :disabled="!canCreateTeamKey"
+                  data-testid="create-team-key"
+                  @click="showCreateKeyDialog = true"
+                >
+                  <Icon name="plus" size="sm" />
+                  {{ t('team.createKey') }}
+                </button>
+              </div>
             </div>
             <div v-if="teamKeys.length === 0" class="py-12 text-center text-sm text-gray-500">
               {{ t('team.noKeys') }}
@@ -505,6 +517,14 @@
       </template>
     </div>
 
+    <TeamKeyCreateDialog
+      v-if="canCreateTeamKey"
+      :key="teamContext?.team.id"
+      :show="showCreateKeyDialog"
+      @close="showCreateKeyDialog = false"
+      @created="onTeamKeyCreated"
+    />
+
     <TeamInvitationDialog
       :show="Boolean(invitationToken)"
       :loading="invitationPreviewLoading"
@@ -574,7 +594,7 @@ import Skeleton from '@/components/common/Skeleton.vue'
 import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
 import { vContentReveal } from '@/directives/contentReveal'
 
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -582,6 +602,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import TeamInvitationDialog from '@/components/team/TeamInvitationDialog.vue'
+import TeamKeyCreateDialog from '@/components/team/TeamKeyCreateDialog.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import BalanceAmount from '@/components/common/BalanceAmount.vue'
 import BalanceIcon from '@/components/common/BalanceIcon.vue'
@@ -603,7 +624,8 @@ import { formatDateTime } from '@/utils/format'
 // spending limits. Initial invitation preview loading runs independently from current-team
 // loading so a user can inspect an incoming invitation even before membership context is
 // available. Role and team status determine which management lists are requested and
-// displayed.
+// displayed. Active owners can create their own team credentials directly from the
+// key list; the creation dialog retains the secret while the masked list reloads.
 //
 // Confirmed operations can require step-up authentication, and cancellation is handled
 // separately from server errors. Member-limit saving persists quota values before optional
@@ -642,6 +664,9 @@ const teamContext = ref<TeamContext | null>(null)
 const members = ref<TeamMembership[]>([])
 const invitations = ref<TeamInvitation[]>([])
 const teamKeys = ref<TeamAPIKey[]>([])
+// showCreateKeyDialog retains the creation modal's visibility while the parent
+// refreshes its masked key list after a successful credential write.
+const showCreateKeyDialog = ref(false)
 // Tab and form drafts retain page-local editing state; defaultLimitForm sends daily, weekly,
 // and monthly limits when the owner saves team defaults.
 const activeTab = ref<TeamTab>('overview')
@@ -662,6 +687,41 @@ const transferToken = computed(() =>
   typeof route.query.transfer === 'string' ? route.query.transfer : '',
 )
 const isOwner = computed(() => teamContext.value?.membership.role === 'owner')
+// canCreateTeamKey limits this management entry to an active team's owner.
+const canCreateTeamKey = computed(
+  () => isOwner.value && teamContext.value?.team.status === 'active',
+)
+
+// Changing the team identity or creation eligibility dismisses the old draft so
+// restoring access later cannot reopen a form from another membership context.
+watch([() => teamContext.value?.team.id, canCreateTeamKey], () => {
+  showCreateKeyDialog.value = false
+})
+
+// onTeamKeyCreated refreshes the masked management list after creation succeeds.
+// The dialog owns the returned secret and remains open if this separate read fails.
+// A failed refresh reports that creation already succeeded, so the user can refresh
+// the list without creating another credential.
+//
+// The read captures the current team before awaiting its response. A team change or
+// loss of the owner role discards that response and its errors, preventing another team's
+// management panel from receiving these observations.
+const onTeamKeyCreated = async () => {
+  // Retain the team identity before querying so a changed team or owner role can
+  // reject these management records when the response arrives.
+  const teamId = teamContext.value?.team.id
+  if (!teamId || !isOwner.value) return
+  try {
+    const keys = await teamAPI.keys()
+    if (teamContext.value?.team.id === teamId && isOwner.value) teamKeys.value = keys
+  } catch {
+    // Creation has already persisted; retain the visible list and returned secret,
+    // and direct the owner to retry retrieval instead of repeating the write.
+    if (teamContext.value?.team.id === teamId && isOwner.value) {
+      appStore.showError(t('team.keysRefreshFailed'))
+    }
+  }
+}
 
 // loadInvitationPreview retrieves the invitation described by the current URL independently
 // of membership loading. It clears prior preview feedback first, skips empty tokens, and

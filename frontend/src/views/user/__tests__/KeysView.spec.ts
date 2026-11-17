@@ -381,10 +381,10 @@ const TfCliImportDialogStub = {
   `,
 }
 
-// mountView renders KeysView with inspectable shared-control substitutes and optionally
-// settles initial promises. Passing false retains pending setup for loading-state
-// assertions; callers unmount when resource disposal matters to their scenario.
-const mountView = async (settle = true) => {
+// mountView renders KeysView with controlled layout and API dependencies. Passing false
+// retains pending setup for loading assertions; realSelect mounts production dropdowns for
+// interaction and selected-label checks. Callers unmount when resource disposal matters.
+const mountView = async (settle = true, realSelect = false) => {
   const wrapper = mount(KeysView, {
     global: {
       stubs: {
@@ -395,7 +395,7 @@ const mountView = async (settle = true) => {
         BaseDialog: BaseDialogStub,
         ConfirmDialog: true,
         EmptyState: true,
-        Select: SelectStub,
+        Select: realSelect ? false : SelectStub,
         Toggle: ToggleStub,
         SearchInput: SearchInputStub,
         Icon: IconStub,
@@ -414,6 +414,21 @@ const mountView = async (settle = true) => {
     await nextTick()
   }
   return wrapper
+}
+
+// selectCompositeGroup chooses a visible option in a real mapping dropdown. The caller
+// mounts production Select controls and supplies the current row index and displayed group
+// name so selection follows the same events as a browser click.
+const selectCompositeGroup = async (wrapper: VueWrapper, index: number, label: string) => {
+  const select = wrapper
+    .get('[data-test="composite-group-editor"]')
+    .findAllComponents({ name: 'Select' })[index]!
+  await select.get('button[aria-haspopup="true"]').trigger('click')
+  const option = select
+    .findAll('[role="option"]')
+    .find((item) => item.get('.select-option-label').text() === label)
+  expect(option).toBeDefined()
+  await option!.trigger('click')
 }
 
 // visibleColumnKeys reads the current ordered column identities exposed by the table stub.
@@ -1341,7 +1356,7 @@ describe('user KeysView column settings', () => {
       { id: 42, name: 'Claude', display_brand: 'Anthropic', rate_multiplier: 1 },
       { id: 43, name: 'Claude secondary', display_brand: 'Anthropic', rate_multiplier: 1 },
     ])
-    const wrapper = await mountView()
+    const wrapper = await mountView(true, true)
 
     await getButtonByText(wrapper, 'Create API Key').trigger('click')
     await wrapper.get('[data-tour="key-form-name"]').setValue('composite-key')
@@ -1349,14 +1364,14 @@ describe('user KeysView column settings', () => {
     await nextTick()
 
     let editor = wrapper.get('[data-test="composite-group-editor"]')
-    await editor.findAllComponents({ name: 'Select' })[0]!.vm.$emit('update:modelValue', 42)
-    await editor.findAll('input')[0]!.setValue('GPT')
+    await selectCompositeGroup(wrapper, 0, 'Claude')
+    await editor.findAll('input[maxlength="32"]')[0]!.setValue('GPT')
     await getButtonByText(wrapper, 'Add group mapping').trigger('click')
     await nextTick()
 
     editor = wrapper.get('[data-test="composite-group-editor"]')
-    await editor.findAllComponents({ name: 'Select' })[1]!.vm.$emit('update:modelValue', 43)
-    await editor.findAll('input')[1]!.setValue('Claude')
+    await selectCompositeGroup(wrapper, 1, 'Claude secondary')
+    await editor.findAll('input[maxlength="32"]')[1]!.setValue('Claude')
     await wrapper.get('form#key-form').trigger('submit')
     await flushPromises()
 
@@ -1371,16 +1386,17 @@ describe('user KeysView column settings', () => {
         ],
       }),
     )
+    wrapper.unmount()
   })
 
-  // A listed key has multiple composite mappings with prefix and group metadata. The test
-  // protects compact summary content and opening the complete mapping editor from that row.
-  it('filters composite key mappings by provider and clears mappings on provider change', async () => {
+  // A composite draft already has one selected group when the user changes provider to add
+  // another. Both visible selections and prefixes must survive and reach the create request.
+  it('retains the first composite group when selecting a second group from another provider', async () => {
     getAvailableGroups.mockResolvedValue([
       { id: 42, name: 'Claude', display_brand: 'Anthropic', rate_multiplier: 1 },
       { id: 43, name: 'DeepSeek', display_brand: 'DeepSeek', rate_multiplier: 1 },
     ])
-    const wrapper = await mountView()
+    const wrapper = await mountView(true, true)
     await getButtonByText(wrapper, 'Create API Key').trigger('click')
     await wrapper.get('[data-tour="key-form-name"]').setValue('composite-filter-key')
     await wrapper.get('[data-test="composite-key-toggle"]').trigger('click')
@@ -1391,18 +1407,121 @@ describe('user KeysView column settings', () => {
     expect(
       initialGroupSelect.props('options').map((option: { value: number }) => option.value),
     ).toEqual([42])
-    await initialGroupSelect.vm.$emit('update:modelValue', 42)
+    await selectCompositeGroup(wrapper, 0, 'Claude')
+    await wrapper
+      .get('[data-test="composite-group-editor"] input[maxlength="32"]')
+      .setValue('Claude')
+    await getButtonByText(wrapper, 'Add group mapping').trigger('click')
     await wrapper.get('input[data-testid="key-provider-domestic"]').setValue('domestic')
     await nextTick()
-    const domesticGroupSelect = wrapper
-      .get('[data-test="composite-group-editor"]')
-      .findComponent({ name: 'Select' })
+    const editor = wrapper.get('[data-test="composite-group-editor"]')
+    const [firstGroupSelect, domesticGroupSelect] = editor.findAllComponents({ name: 'Select' })
+    expect(firstGroupSelect!.props('modelValue')).toBe(42)
+    expect(firstGroupSelect!.get('button[aria-haspopup="true"]').text()).toContain('Claude')
     expect(
-      domesticGroupSelect.props('options').map((option: { value: number }) => option.value),
+      domesticGroupSelect!.props('options').map((option: { value: number }) => option.value),
     ).toEqual([43])
-    expect(domesticGroupSelect.props('modelValue')).toBeNull()
+    await selectCompositeGroup(wrapper, 1, 'DeepSeek')
+    await editor.findAll('input[maxlength="32"]')[1]!.setValue('DeepSeek')
+    expect(firstGroupSelect!.props('modelValue')).toBe(42)
+    expect(editor.findAll<HTMLInputElement>('input[maxlength="32"]')[0]!.element.value).toBe(
+      'Claude',
+    )
+
+    await wrapper.get('[data-test="composite-key-toggle"]').trigger('click')
+    const ordinaryGroupSelect = wrapper.getComponent('[data-tour="key-form-group"]')
+    expect(ordinaryGroupSelect.props('modelValue')).toBe(42)
+    expect(ordinaryGroupSelect.getComponent({ name: 'GroupBadge' }).props('name')).toBe('Claude')
+    await wrapper.get('[data-test="composite-key-toggle"]').trigger('click')
+    const restoredMappings = wrapper.get('[data-test="composite-group-editor"]')
+    expect(
+      restoredMappings
+        .findAllComponents({ name: 'Select' })
+        .map((select) => select.props('modelValue')),
+    ).toEqual([42, 43])
+    expect(
+      restoredMappings
+        .findAll<HTMLInputElement>('input[maxlength="32"]')
+        .map((input) => input.element.value),
+    ).toEqual(['Claude', 'DeepSeek'])
+    await wrapper.get('form#key-form').trigger('submit')
+    await flushPromises()
+    expect(createKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        is_composite: true,
+        composite_groups: [
+          { group_id: 42, prefix: 'Claude' },
+          { group_id: 43, prefix: 'DeepSeek' },
+        ],
+      }),
+    )
+    wrapper.unmount()
   })
 
+  // Subscription changes reload group eligibility while a composite draft spans providers.
+  // Covered mappings must survive the refresh, and a narrower plan must remove its excluded
+  // mapping even though provider filtering now retains selections across categories.
+  it('retains composite groups across eligible subscription refreshes and removes excluded groups', async () => {
+    const availableGroups = [
+      { id: 42, name: 'Claude', display_brand: 'Anthropic', rate_multiplier: 1 },
+      { id: 43, name: 'DeepSeek', display_brand: 'DeepSeek', rate_multiplier: 1 },
+    ]
+    getAvailableGroups.mockImplementation((_scope, subscriptionID?: number) =>
+      Promise.resolve(availableGroups.filter((group) => subscriptionID !== 73 || group.id === 42)),
+    )
+    getBillingOptions.mockResolvedValue([
+      { id: 71, plan_name: 'First', groups_restricted: true, applicable_groups: [42, 43] },
+      { id: 72, plan_name: 'Second', groups_restricted: true, applicable_groups: [42, 43] },
+      { id: 73, plan_name: 'Claude only', groups_restricted: true, applicable_groups: [42] },
+    ])
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    await flushPromises()
+    const billingMode = wrapper.getComponent('[data-test="api-key-billing-mode"]')
+    await billingMode.vm.$emit('update:modelValue', 'subscription')
+    await billingMode.vm.$emit('change', 'subscription')
+    await nextTick()
+    const subscription = wrapper.getComponent('[data-test="api-key-preferred-subscription"]')
+    await subscription.vm.$emit('update:modelValue', 71)
+    await subscription.vm.$emit('change', 71)
+    await flushPromises()
+    await wrapper.get('[data-test="composite-key-toggle"]').trigger('click')
+    let editor = wrapper.get('[data-test="composite-group-editor"]')
+    await editor.findAllComponents({ name: 'Select' })[0]!.vm.$emit('update:modelValue', 42)
+    await editor.findAll('input')[0]!.setValue('Claude')
+    await getButtonByText(wrapper, 'Add group mapping').trigger('click')
+    await wrapper.get('input[data-testid="key-provider-domestic"]').setValue('domestic')
+    editor = wrapper.get('[data-test="composite-group-editor"]')
+    await editor.findAllComponents({ name: 'Select' })[1]!.vm.$emit('update:modelValue', 43)
+    await editor.findAll('input')[1]!.setValue('DeepSeek')
+
+    await subscription.vm.$emit('update:modelValue', 72)
+    await subscription.vm.$emit('change', 72)
+    await flushPromises()
+    editor = wrapper.get('[data-test="composite-group-editor"]')
+    expect(
+      editor.findAllComponents({ name: 'Select' }).map((select) => select.props('modelValue')),
+    ).toEqual([42, 43])
+
+    await subscription.vm.$emit('update:modelValue', 73)
+    await subscription.vm.$emit('change', 73)
+    await flushPromises()
+    editor = wrapper.get('[data-test="composite-group-editor"]')
+    expect(
+      editor.findAllComponents({ name: 'Select' }).map((select) => select.props('modelValue')),
+    ).toEqual([42])
+    expect(editor.get('input').element.value).toBe('Claude')
+    expect(
+      editor
+        .findComponent({ name: 'Select' })
+        .props('options')
+        .map((option: { value: number }) => option.value),
+    ).toEqual([42])
+    wrapper.unmount()
+  })
+
+  // A listed key has multiple composite mappings with prefix and group metadata. The test
+  // protects compact summary content and opening the complete mapping editor from that row.
   it('shows composite mappings in the group column and opens full editing', async () => {
     listKeys.mockResolvedValueOnce({
       items: [

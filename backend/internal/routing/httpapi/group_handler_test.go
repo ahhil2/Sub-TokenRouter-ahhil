@@ -254,6 +254,26 @@ func TestGroupRequestsDecodeOpenAIFast(t *testing.T) {
 	require.Nil(t, omitted.ForceOpenAIFast)
 }
 
+// TestGroupRequestsDecodeOriginalPrice checks new-group defaults and partial
+// update inputs. False restores discounts, while omitted and null fields retain
+// the saved policy when the request reaches group administration.
+func TestGroupRequestsDecodeOriginalPrice(t *testing.T) {
+	var create CreateGroupRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"name":"discounted"}`), &create))
+	require.False(t, create.IdentityDiscountExempt)
+	require.NoError(t, json.Unmarshal([]byte(`{"identity_discount_exempt":true}`), &create))
+	require.True(t, create.IdentityDiscountExempt)
+	for _, payload := range []string{`{}`, `{"identity_discount_exempt":null}`} {
+		var update UpdateGroupRequest
+		require.NoError(t, json.Unmarshal([]byte(payload), &update))
+		require.Nil(t, update.IdentityDiscountExempt)
+	}
+	var update UpdateGroupRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"identity_discount_exempt":false}`), &update))
+	require.NotNil(t, update.IdentityDiscountExempt)
+	require.False(t, *update.IdentityDiscountExempt)
+}
+
 // TestGroupManagementRejectsRetiredFields binds creation and update requests
 // containing retired platform or default-group fields. It checks strict
 // rejection and accepts unified protocol fields with an explicit empty

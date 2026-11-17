@@ -85,6 +85,11 @@ func RateMultiplier(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRateMultiplier, v))
 }
 
+// IdentityDiscountExempt applies equality check predicate on the "identity_discount_exempt" field. It's identical to IdentityDiscountExemptEQ.
+func IdentityDiscountExempt(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldIdentityDiscountExempt, v))
+}
+
 // IsExclusive applies equality check predicate on the "is_exclusive" field. It's identical to IsExclusiveEQ.
 func IsExclusive(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldIsExclusive, v))
@@ -533,6 +538,16 @@ func RateMultiplierLT(v float64) predicate.Group {
 // RateMultiplierLTE applies the LTE predicate on the "rate_multiplier" field.
 func RateMultiplierLTE(v float64) predicate.Group {
 	return predicate.Group(sql.FieldLTE(FieldRateMultiplier, v))
+}
+
+// IdentityDiscountExemptEQ applies the EQ predicate on the "identity_discount_exempt" field.
+func IdentityDiscountExemptEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldIdentityDiscountExempt, v))
+}
+
+// IdentityDiscountExemptNEQ applies the NEQ predicate on the "identity_discount_exempt" field.
+func IdentityDiscountExemptNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldIdentityDiscountExempt, v))
 }
 
 // IsExclusiveEQ applies the EQ predicate on the "is_exclusive" field.

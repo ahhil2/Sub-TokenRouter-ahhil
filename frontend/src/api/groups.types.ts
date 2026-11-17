@@ -76,6 +76,9 @@ export interface Group {
   description: string | null // Human-readable record description.
   display_brand?: string // Displayed provider brand.
   rate_multiplier: number // Applied billing multiplier.
+  // Original pricing skips identity membership discounts on this group's default rate.
+  // Older responses omit the flag and retain the normal discount policy.
+  identity_discount_exempt?: boolean
   capacity?: MarketplaceGroupCapacity // Aggregated group load.
   // This default controls requests per user within the group, subject to user-group
   // overrides. The effective group gate runs before the independent user RPM gate;
@@ -200,6 +203,9 @@ export interface CreateGroupRequest {
   display_brand?: string // Displayed provider brand.
   sort_order?: number // Display sorting position.
   rate_multiplier?: number // Applied billing multiplier.
+  // Enable original pricing to skip identity membership discounts on the group default.
+  // Omission creates the group with identity discounts enabled.
+  identity_discount_exempt?: boolean
   is_exclusive?: boolean // Exclusive group access.
   session_isolation_enabled?: boolean // Group session isolation.
 
@@ -251,6 +257,9 @@ export interface UpdateGroupRequest {
   display_brand?: string // Displayed provider brand.
   sort_order?: number // Display sorting position.
   rate_multiplier?: number // Applied billing multiplier.
+  // Omission retains the saved discount policy; false restores identity membership
+  // discounts, while true enables original pricing for the group's default rate.
+  identity_discount_exempt?: boolean
   is_exclusive?: boolean // Exclusive group access.
   session_isolation_enabled?: boolean // Group session isolation.
   status?: 'active' | 'inactive' // Current lifecycle state.
@@ -300,6 +309,7 @@ export type AdminGroupSummary = Pick<
   | 'description'
   | 'display_brand'
   | 'rate_multiplier'
+  | 'identity_discount_exempt'
   | 'is_exclusive'
   | 'status'
   | 'session_isolation_enabled'

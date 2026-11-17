@@ -990,6 +990,30 @@ func TestAdminService_CreateGroup_WithSessionIsolation(t *testing.T) {
 	require.True(t, group.SessionIsolationEnabled)
 }
 
+// TestAdminService_OriginalPriceLifecycle creates a group with original pricing,
+// edits an unrelated field, then restores discounts. Omitted updates must retain
+// the saved policy, while an explicit false must reach persistence.
+func TestAdminService_OriginalPriceLifecycle(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := newGroupAdminForTest(repo, nil, nil)
+	group, err := svc.CreateGroup(t.Context(), &routing.CreateGroupInput{
+		Name: "original-price", RateMultiplier: 2, IdentityDiscountExempt: true,
+	})
+	require.NoError(t, err)
+	require.True(t, group.IdentityDiscountExempt)
+	require.True(t, repo.created.IdentityDiscountExempt)
+	group.ID = 1
+	repo.getByID = group
+	group, err = svc.UpdateGroup(t.Context(), group.ID, &routing.UpdateGroupInput{Name: "renamed"})
+	require.NoError(t, err)
+	require.True(t, group.IdentityDiscountExempt)
+	disabled := false
+	group, err = svc.UpdateGroup(t.Context(), group.ID, &routing.UpdateGroupInput{IdentityDiscountExempt: &disabled})
+	require.NoError(t, err)
+	require.False(t, group.IdentityDiscountExempt)
+	require.False(t, repo.updated.IdentityDiscountExempt)
+}
+
 // TestAdminService_CreateGroup_DisablesBatchImageWhenImageGenerationDisabled
 // requests the legacy batch flag while image generation is false. Captured
 // and returned values keep image and batch generation disabled.

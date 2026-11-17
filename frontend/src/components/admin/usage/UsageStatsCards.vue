@@ -1,6 +1,9 @@
 <template>
   <!-- Cards stack icons and text on narrow screens, then align them horizontally on desktop. -->
-  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+  <div
+    class="grid grid-cols-2 gap-4"
+    :class="$slots.performance ? 'lg:grid-cols-5' : 'lg:grid-cols-4'"
+  >
     <div class="card p-4">
       <div class="flex flex-col items-start gap-2 lg:flex-row lg:items-center lg:gap-3">
         <div class="shrink-0 rounded-control bg-blue-100 p-2 dark:bg-blue-900/30 text-blue-600">
@@ -65,6 +68,7 @@
         </div>
       </div>
     </div>
+    <slot name="performance" />
     <div class="card p-4">
       <div class="flex flex-col items-start gap-2 lg:flex-row lg:items-center lg:gap-3">
         <div class="shrink-0 rounded-control bg-green-100 p-2 dark:bg-green-900/30 text-green-600">
@@ -130,7 +134,8 @@ import { formatTokens } from '@/utils/format'
 // UsageStatsCards.vue renders usage totals and cache details for administrator and user
 // pages. Provider cost, standard cost visibility, and strike-through styling are caller
 // choices, while actual charges use the configured balance formatter and provider charges
-// use USD.
+// use USD. An optional performance slot inserts the administrator rate card between
+// token totals and cost totals, with a fifth desktop column when that slot is supplied.
 
 // props holds the summary record and caller-selected visibility rules used by the
 // statistics cards.

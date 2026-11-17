@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AdminGroup } from '@/api/groups.types'
 import GroupsView from '@/views/admin/GroupsView.vue'
 
-// GroupsView.duplicate.spec.ts checks group duplication progress, API errors, and list refresh
-// behavior. Mounted components or pure helper calls exercise the real owning implementation,
+// GroupsView.duplicate.spec.ts checks group duplication, original-price editing, and list refresh
+// behavior. Mounted components exercise the real form toggles and API request assembly,
 // while controlled API and display dependencies expose the observable updates asserted by each
 // scenario.
 
@@ -16,6 +16,7 @@ import GroupsView from '@/views/admin/GroupsView.vue'
 const {
   listGroups,
   duplicateGroup,
+  createGroup,
   updateGroup,
   getAll,
   getModelsListCandidates,
@@ -27,6 +28,7 @@ const {
 } = vi.hoisted(() => ({
   listGroups: vi.fn(),
   duplicateGroup: vi.fn(),
+  createGroup: vi.fn(),
   updateGroup: vi.fn(),
   getAll: vi.fn(),
   getModelsListCandidates: vi.fn(),
@@ -50,7 +52,7 @@ vi.mock('@/api/admin', () => ({
       getCapacitySummary,
       getLiveCapability,
       getAll,
-      create: vi.fn(),
+      create: createGroup,
       update: updateGroup,
       delete: vi.fn(),
       updateSortOrder: vi.fn(),
@@ -90,6 +92,7 @@ const sourceGroup: AdminGroup = {
   platform: 'openai',
   scheduler_type: 'advanced',
   rate_multiplier: 1,
+  identity_discount_exempt: true,
   rpm_limit: 0,
   is_exclusive: false,
   status: 'active',
@@ -193,6 +196,7 @@ describe('GroupsView duplicate action', () => {
     for (const fn of [
       listGroups,
       duplicateGroup,
+      createGroup,
       updateGroup,
       getAll,
       getModelsListCandidates,
@@ -205,6 +209,7 @@ describe('GroupsView duplicate action', () => {
       fn.mockReset()
     }
     getAll.mockResolvedValue([])
+    createGroup.mockResolvedValue({ ...sourceGroup, id: 44 })
 
     listGroups.mockResolvedValue({
       items: [sourceGroup],
@@ -227,6 +232,52 @@ describe('GroupsView duplicate action', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  // New groups begin with identity discounts enabled. Enabling original pricing is submitted
+  // with creation, and reopening the dialog restores the default for the next group.
+  it('creates an original-price group and resets the next draft to discounted pricing', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const createButton = wrapper.get('[data-tour="groups-create-btn"]')
+    await createButton.trigger('click')
+    await flushPromises()
+    const toggle = wrapper.get('#create-group-original-price')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    await toggle.trigger('click')
+    await wrapper.get('#create-group-name').setValue('Original price')
+    await wrapper.get('#create-group-form').trigger('submit')
+    await flushPromises()
+    expect(createGroup).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Original price', identity_discount_exempt: true }),
+    )
+    expect(wrapper.find('#create-group-form').exists()).toBe(false)
+    await createButton.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('#create-group-original-price').attributes('aria-checked')).toBe('false')
+    wrapper.unmount()
+  })
+
+  // An existing original-price group loads its saved setting in the editor.
+  // Disabling the visible toggle submits false so administrators can restore discounts.
+  it('loads original pricing and saves an explicit discount restoration', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const editButton = wrapper.findAll('button').find((button) => button.text() === 'common.edit')
+    expect(editButton).toBeTruthy()
+    await editButton!.trigger('click')
+    await flushPromises()
+    const toggle = wrapper.get('#edit-group-original-price')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenCalledWith(
+      sourceGroup.id,
+      expect.objectContaining({ identity_discount_exempt: false }),
+    )
+    wrapper.unmount()
   })
 
   // A group duplication request resolves successfully for the chosen row. The page reports the

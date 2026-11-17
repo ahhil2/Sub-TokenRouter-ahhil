@@ -197,6 +197,7 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 		},
 		DisplayBrand:                    "OpenAI",
 		RateMultiplier:                  1.75,
+		IdentityDiscountExempt:          true,
 		IsExclusive:                     true,
 		Status:                          billing.StatusActive,
 		Hydrated:                        true,
@@ -256,6 +257,7 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	require.NotSame(t, source.AdvancedSchedulerOverrides.LBTopK, duplicate.AdvancedSchedulerOverrides.LBTopK)
 	require.Equal(t, source.DisplayBrand, duplicate.DisplayBrand)
 	require.Equal(t, source.SessionIsolationEnabled, duplicate.SessionIsolationEnabled)
+	require.Equal(t, source.IdentityDiscountExempt, duplicate.IdentityDiscountExempt)
 	require.Equal(t, source.RateMultiplier, duplicate.RateMultiplier)
 	require.Equal(t, source.RoutingPolicy, duplicate.RoutingPolicy)
 	require.Equal(t, source.ForceOpenAIFast, duplicate.ForceOpenAIFast)

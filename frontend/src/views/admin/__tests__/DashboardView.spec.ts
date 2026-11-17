@@ -160,10 +160,16 @@ describe('admin DashboardView', () => {
     expect(wrapper.find('[data-testid="dashboard-skeleton"]').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('admin.dashboard.apiKeys')
 
-    resolveSnapshot({ stats: createDashboardStats(), trend: [], models: [] })
+    resolveSnapshot({
+      stats: { ...createDashboardStats(), rpm: 23, tpm: 4500 },
+      trend: [],
+      models: [],
+    })
     await flushPromises()
     expect(wrapper.find('[data-testid="dashboard-skeleton"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('admin.dashboard.apiKeys')
+    expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('23')
+    expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('4.50K')
     wrapper.unmount()
   })
 

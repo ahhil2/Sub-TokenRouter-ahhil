@@ -22,7 +22,8 @@ import { getMyIdentities, identityName, type IdentityCode } from '@/api/identity
 /**
  * UserIdentityBenefits.vue loads the signed-in account identities and their balance rate
  * discount. A discount below one is shown as the percentage of group default rates the
- * user pays; a failed request displays an error instead of announcing loaded benefits.
+ * user pays on eligible groups. The message explains the original-price exception;
+ * a failed request displays an error instead of announcing loaded benefits.
  */
 
 const { t } = useI18n()

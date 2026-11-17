@@ -32,6 +32,9 @@ type Group struct {
 	Description            string                               `json:"description"`                       // group display description
 	DisplayBrand           string                               `json:"display_brand"`                     // configured display brand
 	RateMultiplier         float64                              `json:"rate_multiplier"`                   // group user price factor
+	// IdentityDiscountExempt marks groups whose default balance rate skips
+	// bonus_5 and bonus_10 discounts; explicit personal and AHHilAI rates still apply.
+	IdentityDiscountExempt bool `json:"identity_discount_exempt"`
 	// Capacity is attached by capacity-aware group responses; absent
 	// observations leave it nil and omit the JSON member.
 	Capacity    *GroupCapacity `json:"capacity,omitempty"` // optional current group capacity
@@ -160,23 +163,26 @@ type AdminGroup[A any] struct {
 // read the detail endpoint before updating routing or model configuration, which is
 // omitted from this response.
 type AdminGroupSummary struct {
-	ClaudeCodeOnly                  bool                  `json:"claude_code_only"`                     // Claude Code client restriction
-	FallbackGroupIDOnInvalidRequest *int64                `json:"fallback_group_id_on_invalid_request"` // optional invalid-request fallback identifier
-	ID                              int64                 `json:"id"`                                   // group numeric identifier
-	Name                            string                `json:"name"`                                 // stored group name
-	DisplayName                     string                `json:"display_name"`                         // localized display name
-	Description                     string                `json:"description"`                          // localized group description
-	DisplayBrand                    string                `json:"display_brand"`                        // presented provider brand
-	RateMultiplier                  float64               `json:"rate_multiplier"`                      // group billing multiplier
-	IsExclusive                     bool                  `json:"is_exclusive"`                         // exclusive access requirement
-	Status                          string                `json:"status"`                               // group lifecycle status
-	SessionIsolationEnabled         bool                  `json:"session_isolation_enabled"`            // cross-group session isolation
-	AllowedProtocols                []protocol.ProtocolID `json:"allowed_protocols"`                    // effective client admission protocols
-	SchedulerType                   string                `json:"scheduler_type"`                       // provider scheduling algorithm
-	ProviderCount                   int64                 `json:"provider_count"`                       // total associated providers
-	ActiveProviderCount             int64                 `json:"active_provider_count"`                // currently active providers
-	RateLimitedProviderCount        int64                 `json:"rate_limited_provider_count"`          // currently rate-limited providers
-	SortOrder                       int                   `json:"sort_order"`                           // manual list order
-	CreatedAt                       time.Time             `json:"created_at"`                           // record creation instant
-	UpdatedAt                       time.Time             `json:"updated_at"`                           // last update instant
+	ClaudeCodeOnly                  bool    `json:"claude_code_only"`                     // Claude Code client restriction
+	FallbackGroupIDOnInvalidRequest *int64  `json:"fallback_group_id_on_invalid_request"` // optional invalid-request fallback identifier
+	ID                              int64   `json:"id"`                                   // group numeric identifier
+	Name                            string  `json:"name"`                                 // stored group name
+	DisplayName                     string  `json:"display_name"`                         // localized display name
+	Description                     string  `json:"description"`                          // localized group description
+	DisplayBrand                    string  `json:"display_brand"`                        // presented provider brand
+	RateMultiplier                  float64 `json:"rate_multiplier"`                      // group billing multiplier
+	// IdentityDiscountExempt exposes the original-price policy in administrative
+	// summaries so list and detail responses describe the same discount eligibility.
+	IdentityDiscountExempt   bool                  `json:"identity_discount_exempt"`
+	IsExclusive              bool                  `json:"is_exclusive"`                // exclusive access requirement
+	Status                   string                `json:"status"`                      // group lifecycle status
+	SessionIsolationEnabled  bool                  `json:"session_isolation_enabled"`   // cross-group session isolation
+	AllowedProtocols         []protocol.ProtocolID `json:"allowed_protocols"`           // effective client admission protocols
+	SchedulerType            string                `json:"scheduler_type"`              // provider scheduling algorithm
+	ProviderCount            int64                 `json:"provider_count"`              // total associated providers
+	ActiveProviderCount      int64                 `json:"active_provider_count"`       // currently active providers
+	RateLimitedProviderCount int64                 `json:"rate_limited_provider_count"` // currently rate-limited providers
+	SortOrder                int                   `json:"sort_order"`                  // manual list order
+	CreatedAt                time.Time             `json:"created_at"`                  // record creation instant
+	UpdatedAt                time.Time             `json:"updated_at"`                  // last update instant
 }

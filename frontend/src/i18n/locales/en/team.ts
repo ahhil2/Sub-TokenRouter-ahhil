@@ -58,6 +58,12 @@ export default {
     time: 'Time',
     keyOwner: 'Member',
     createKey: 'Create team key',
+    createKeyDescription:
+      "This key belongs to you and uses the team owner's balance, subscriptions, and group access with automatic billing.",
+    keyNameRequired: 'Enter a key name',
+    keyGroupsLoadFailed: 'Unable to load available team groups',
+    keysRefreshFailed:
+      'The key was created, but the team key list could not refresh. Refresh the page to see it.',
     maskedKey: 'Key',
     group: 'Group',
     disable: 'Disable',

@@ -20879,6 +20879,7 @@ type GroupMutation struct {
 	description                             *string
 	rate_multiplier                         *float64
 	addrate_multiplier                      *float64
+	identity_discount_exempt                *bool
 	is_exclusive                            *bool
 	status                                  *string
 	duplicate_operation_id                  *string
@@ -21354,6 +21355,42 @@ func (m *GroupMutation) AddedRateMultiplier() (r float64, exists bool) {
 func (m *GroupMutation) ResetRateMultiplier() {
 	m.rate_multiplier = nil
 	m.addrate_multiplier = nil
+}
+
+// SetIdentityDiscountExempt sets the "identity_discount_exempt" field.
+func (m *GroupMutation) SetIdentityDiscountExempt(b bool) {
+	m.identity_discount_exempt = &b
+}
+
+// IdentityDiscountExempt returns the value of the "identity_discount_exempt" field in the mutation.
+func (m *GroupMutation) IdentityDiscountExempt() (r bool, exists bool) {
+	v := m.identity_discount_exempt
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIdentityDiscountExempt returns the old "identity_discount_exempt" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldIdentityDiscountExempt(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIdentityDiscountExempt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIdentityDiscountExempt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIdentityDiscountExempt: %w", err)
+	}
+	return oldValue.IdentityDiscountExempt, nil
+}
+
+// ResetIdentityDiscountExempt resets all changes to the "identity_discount_exempt" field.
+func (m *GroupMutation) ResetIdentityDiscountExempt() {
+	m.identity_discount_exempt = nil
 }
 
 // SetIsExclusive sets the "is_exclusive" field.
@@ -23216,7 +23253,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 42)
+	fields := make([]string, 0, 43)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -23237,6 +23274,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.rate_multiplier != nil {
 		fields = append(fields, group.FieldRateMultiplier)
+	}
+	if m.identity_discount_exempt != nil {
+		fields = append(fields, group.FieldIdentityDiscountExempt)
 	}
 	if m.is_exclusive != nil {
 		fields = append(fields, group.FieldIsExclusive)
@@ -23365,6 +23405,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.Description()
 	case group.FieldRateMultiplier:
 		return m.RateMultiplier()
+	case group.FieldIdentityDiscountExempt:
+		return m.IdentityDiscountExempt()
 	case group.FieldIsExclusive:
 		return m.IsExclusive()
 	case group.FieldStatus:
@@ -23458,6 +23500,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldDescription(ctx)
 	case group.FieldRateMultiplier:
 		return m.OldRateMultiplier(ctx)
+	case group.FieldIdentityDiscountExempt:
+		return m.OldIdentityDiscountExempt(ctx)
 	case group.FieldIsExclusive:
 		return m.OldIsExclusive(ctx)
 	case group.FieldStatus:
@@ -23585,6 +23629,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRateMultiplier(v)
+		return nil
+	case group.FieldIdentityDiscountExempt:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIdentityDiscountExempt(v)
 		return nil
 	case group.FieldIsExclusive:
 		v, ok := value.(bool)
@@ -24032,6 +24083,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldRateMultiplier:
 		m.ResetRateMultiplier()
+		return nil
+	case group.FieldIdentityDiscountExempt:
+		m.ResetIdentityDiscountExempt()
 		return nil
 	case group.FieldIsExclusive:
 		m.ResetIsExclusive()

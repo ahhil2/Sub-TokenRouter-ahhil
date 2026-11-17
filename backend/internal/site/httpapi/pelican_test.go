@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,10 +14,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// pelicanHTTPRepository records HTTP service calls and supplies public result fixtures.
 type pelicanHTTPRepository struct {
 	site.PelicanRepository
 	public bool
 	calls  int
+	saved  site.PelicanTask // Last task passed to storage.
+}
+
+// pelicanHTTPExecutor accepts model validation while leaving actual generation unused.
+type pelicanHTTPExecutor struct {
+	site.PelicanExecutor // Generation is unused by HTTP configuration tests.
+}
+
+// Validate accepts the model so HTTP tests can isolate input handling.
+func (pelicanHTTPExecutor) Validate(context.Context, int64, string) error { return nil }
+
+// SaveTask records settings that passed parsing and domain validation checks.
+func (repository *pelicanHTTPRepository) SaveTask(_ context.Context, task site.PelicanTask) (site.PelicanTask, error) {
+	repository.calls++
+	repository.saved = task
+	return task, nil
 }
 
 func (repository *pelicanHTTPRepository) Results(_ context.Context, filter site.PelicanFilter) (site.PelicanPage, error) {
@@ -75,4 +93,50 @@ func TestPelicanPublicAndAdminHTTP(test *testing.T) {
 		}
 	}
 	require.Equal(test, 2, repository.calls)
+}
+
+// TestPelicanTaskTimeoutHTTP submits task budgets through administrator routes.
+// Integer limits round-trip through JSON, invalid inputs never reach storage,
+// and omitted update limits reach the repository as a preservation request.
+func TestPelicanTaskTimeoutHTTP(t *testing.T) {
+	for _, scenario := range []struct {
+		name, method, path, field string
+		status, seconds           int
+	}{
+		{"creation default", "POST", "", "", 200, 300},
+		{"custom budget", "POST", "", `,"timeout_seconds":600`, 200, 600},
+		{"minimum budget", "POST", "", `,"timeout_seconds":1`, 200, 1},
+		{"maximum budget", "PUT", "/7", `,"timeout_seconds":3600`, 200, 3600},
+		{"omitted update", "PUT", "/7", "", 200, 0},
+		{"null update", "PUT", "/7", `,"timeout_seconds":null`, 200, 0},
+		{"zero update", "PUT", "/7", `,"timeout_seconds":0`, 200, 0},
+		{"negative budget", "POST", "", `,"timeout_seconds":-1`, 400, 0},
+		{"excessive budget", "PUT", "/7", `,"timeout_seconds":3601`, 400, 0},
+		{"fractional budget", "POST", "", `,"timeout_seconds":1.5`, 400, 0},
+		{"text budget", "POST", "", `,"timeout_seconds":"600"`, 400, 0},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			repository := &pelicanHTTPRepository{}
+			handler := NewPelicanHandler(site.NewPelicanService(repository, pelicanHTTPExecutor{}))
+			router := gin.New()
+			RegisterPelicanAdminRoutes(router.Group("/api/v1/admin"), handler)
+			body := `{"group_id":1,"model":"alias","interval_minutes":360` + scenario.field + `}`
+			request := httptest.NewRequest(scenario.method, "/api/v1/admin/pelican-tests"+scenario.path, strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			require.Equal(t, scenario.status, response.Code, response.Body.String())
+			if scenario.status != http.StatusOK {
+				require.Zero(t, repository.calls)
+				return
+			}
+			require.Equal(t, 1, repository.calls)
+			require.Equal(t, scenario.seconds, repository.saved.TimeoutSeconds)
+			var envelope struct {
+				Data site.PelicanTask `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
+			require.Equal(t, scenario.seconds, envelope.Data.TimeoutSeconds)
+		})
+	}
 }

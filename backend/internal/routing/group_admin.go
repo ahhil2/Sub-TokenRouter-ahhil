@@ -244,6 +244,7 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 		DisplayBrand:                    strings.TrimSpace(input.DisplayBrand),
 		SortOrder:                       sortOrder,
 		RateMultiplier:                  input.RateMultiplier,
+		IdentityDiscountExempt:          input.IdentityDiscountExempt,
 		IsExclusive:                     input.IsExclusive,
 		SessionIsolationEnabled:         input.SessionIsolationEnabled,
 		Status:                          StatusActive,
@@ -528,6 +529,9 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 	}
 	if input.IsExclusive != nil {
 		group.IsExclusive = *input.IsExclusive
+	}
+	if input.IdentityDiscountExempt != nil {
+		group.IdentityDiscountExempt = *input.IdentityDiscountExempt
 	}
 	if input.SessionIsolationEnabled != nil {
 		group.SessionIsolationEnabled = *input.SessionIsolationEnabled

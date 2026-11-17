@@ -52,8 +52,8 @@ export interface DashboardStats {
   uptime: number // System uptime in seconds.
 
   // System throughput observations.
-  rpm: number // Mean requests per minute over five minutes.
-  tpm: number // Mean tokens per minute over five minutes.
+  rpm: number // Requests in the preceding minute.
+  tpm: number // Input and output tokens in the preceding minute.
 }
 
 // UserBreakdownItem summarizes one user's requests, token consumption, and billing

@@ -43,8 +43,11 @@ type GroupConfig struct {
 	AdvancedSchedulerOverrides GroupAdvancedSchedulerOverrides
 	DisplayBrand               string  // administrator-selected display brand
 	RateMultiplier             float64 // group user-price multiplier
-	IsExclusive                bool    // restricted group access flag
-	Status                     string  // persisted group availability status
+	// IdentityDiscountExempt skips discount memberships when billing resolves
+	// this group's default balance rate; explicit personal and AHHilAI rates still apply.
+	IdentityDiscountExempt bool
+	IsExclusive            bool   // restricted group access flag
+	Status                 string // persisted group availability status
 	// Hydrated marks a value loaded with routing fields from trusted storage.
 	// IsGroupContextValid requires this marker before accepting a group context.
 	Hydrated bool

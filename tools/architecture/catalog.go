@@ -158,7 +158,7 @@ internal/identity/httpapi/authctx internal/infra/httpclient/... internal/infra/p
 internal/infra/telemetry/... internal/notification/contract internal/pkg/ internal/protocol
 internal/protocol/openai internal/routing internal/routing/capability internal/routing/testkit
 internal/server/httpx internal/server/middleware internal/settings`, Tests: `internal/batchimage internal/batchimage/postgres internal/config internal/gateway/media
-internal/testutil/rediscontainer internal/testutil/sqlite internal/upstream/grok
+internal/testutil/rediscontainer internal/testutil/sqlite internal/testutil/postgrescontainer internal/upstream/grok
 internal/upstream/openai`},
 		"internal/config": {Production: `internal/config/... internal/identity/authconfig internal/scheduler/policy
 internal/server/clientip/policy internal/server/httpconfig`, Tests: ""},
@@ -283,7 +283,7 @@ internal/server/httpx internal/settings internal/settings/preaggregation interna
 internal/usage/...`, Tests: `internal/testutil/rediscontainer internal/ops/postgres internal/audit internal/audit/postgres internal/gateway/httpapi internal/infra/timingwheel/...
 internal/routing/capability internal/testutil/assertion migrations`},
 		"internal/web": {Production: "internal/pkg/locale internal/server/middleware internal/web/...", Tests: ""},
-		"migrations":   {Production: "migrations/...", Tests: "internal/infra/postgres internal/pkg/locale"},
+		"migrations":   {Production: "migrations/...", Tests: "internal/infra/postgres internal/pkg/locale internal/testutil/postgrescontainer"},
 	}
 
 	leafDependencies = map[string]dependencySet{
@@ -411,8 +411,12 @@ internal/upstream/zhipu/...`, Tests: ""},
 		"internal/usage/httpapi/admin/usage_handler_test.go": "database/sql",
 	}
 
-	// 窄权限属于指定文件，不能由相邻文件或目标子包继承。
+	// filePermissions restricts each listed import to its named consumers, keeping
+	// neighboring source files and unlisted target subpackages outside that permission.
 	filePermissions = []filePermission{
+		// Site repository tests use dedicated migrated PostgreSQL containers for
+		// persisted generation budgets, lease recovery, and announcement edits.
+		{Scope: "internal/site/postgres", Imports: "internal/testutil/postgrescontainer", Files: "announcement_repo_integration_test.go pelican_integration_test.go"},
 		{Scope: "internal/site", Imports: modulePath + "/migrations", Files: "postgres/messages_integration_test.go postgres/pelican_integration_test.go"},
 		{Scope: "internal/gateway", Imports: "internal/modelcatalog/testkit", Files: "httpapi/grok_media_execution_test.go httpapi/helpers_test.go provider/creative_catalog_test.go provider/googleforward/gemini_attempts_external_test.go provider/googleforward/gemini_openai_external_test.go provider/googleforward/helpers_external_test.go provider/grok_codec_test.go provider/model_attributes_test.go provider/model_qualification_test.go provider/selection/candidate_policy_test.go testkit/runtime_settings.go ws/httpapi/openai_ws_http_bridge_test.go"},
 		// Timing observers and response-body decoding tests inspect protocol events through these permitted files.
@@ -432,7 +436,9 @@ internal/upstream/zhipu/...`, Tests: ""},
 		{Scope: "internal/usage/postgres", Imports: "internal/testutil/rediscontainer", Files: "main_integration_test.go"},
 		{Scope: "internal/usage/rediscache", Imports: "internal/testutil/rediscontainer", Files: "dashboard_integration_test.go"},
 		{Scope: "internal/testutil/rediscontainer", Imports: "github.com/testcontainers/testcontainers-go github.com/testcontainers/testcontainers-go/wait", Files: "run.go"},
-		{Scope: "migrations", Imports: "internal/infra/postgres github.com/lib/pq", Files: "platform_independent_groups_integration_test.go platform_independent_pricing_integration_test.go provider_names_integration_test.go product_brand_integration_test.go antigravity_retirement_integration_test.go user_localization_integration_test.go responses_ws_integration_test.go request_lookup_integration_test.go migrations_external_integration_test.go model_independent_pricing_external_integration_test.go provider_balance_alert_integration_test.go usage_performance_integration_test.go custom_video_resolution_integration_test.go"},
+		{Scope: "migrations", Imports: "internal/infra/postgres", Files: "platform_independent_groups_integration_test.go platform_independent_pricing_integration_test.go provider_names_integration_test.go product_brand_integration_test.go antigravity_retirement_integration_test.go user_localization_integration_test.go responses_ws_integration_test.go request_lookup_integration_test.go migrations_external_integration_test.go model_independent_pricing_external_integration_test.go provider_balance_alert_integration_test.go usage_performance_integration_test.go custom_video_resolution_integration_test.go group_identity_discount_exempt_integration_test.go pelican_timeout_integration_test.go"},
+		{Scope: "migrations", Imports: "github.com/lib/pq", Files: "platform_independent_groups_integration_test.go platform_independent_pricing_integration_test.go provider_names_integration_test.go product_brand_integration_test.go antigravity_retirement_integration_test.go user_localization_integration_test.go responses_ws_integration_test.go request_lookup_integration_test.go migrations_external_integration_test.go model_independent_pricing_external_integration_test.go provider_balance_alert_integration_test.go usage_performance_integration_test.go custom_video_resolution_integration_test.go"},
+		{Scope: "migrations", Imports: "internal/testutil/postgrescontainer", Files: "group_identity_discount_exempt_integration_test.go pelican_timeout_integration_test.go"},
 		{Scope: "migrations", Imports: "github.com/testcontainers/testcontainers-go/modules/postgres", Files: "platform_independent_groups_integration_test.go platform_independent_pricing_integration_test.go provider_names_integration_test.go product_brand_integration_test.go antigravity_retirement_integration_test.go user_localization_integration_test.go responses_ws_integration_test.go request_lookup_integration_test.go provider_balance_alert_integration_test.go usage_performance_integration_test.go custom_video_resolution_integration_test.go"},
 		{Scope: "internal/usage/postgres", Imports: "internal/ops/postgres", Files: "platform_snapshot_scenario_integration_test.go"},
 		{Scope: "internal/provider", Imports: "internal/provider/provider", Files: "admin_edit_external_test.go helpers_external_test.go shadow_external_test.go"},
@@ -447,6 +453,7 @@ internal/upstream/zhipu/...`, Tests: ""},
 		{Scope: "internal/billing", Imports: "internal/modelcatalog/provider", Files: "calculator_external_test.go helpers_external_test.go price_resolver_test.go"},
 		{Scope: "internal/billing", Imports: "internal/gateway/provider/modelidentity", Files: "calculator_external_test.go helpers_external_test.go"},
 		{Scope: "internal/billing/postgres", Imports: "internal/batchimage/postgres", Files: "settlement_test.go"},
+		{Scope: "internal/billing/postgres", Imports: "internal/testutil/postgrescontainer", Files: "identity_rates_integration_test.go"},
 		{Scope: "internal/creative", Imports: "internal/creative/provider", Files: "helpers_external_test.go public_external_test.go"},
 		{Scope: "internal/creative", Imports: "internal/gateway/provider/modelidentity", Files: "helpers_external_test.go public_external_test.go"},
 		{Scope: "internal/creative", Imports: "internal/billing/provider", Files: "public_external_test.go"},

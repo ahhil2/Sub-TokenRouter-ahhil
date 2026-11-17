@@ -39,6 +39,10 @@ export default {
   paused: 'Paused',
   enabled: 'Enable scheduled tests',
   interval: 'Interval (minutes, 5 to 10080)',
+  timeout: 'Generation time limit (seconds, 1 to 3600)',
+  timeoutHint:
+    'Default: 300 seconds. Generation stops and the run fails when this limit is reached.',
+  timeoutSummary: 'Generation limit: {seconds} seconds',
   schedule: 'Schedule',
   lastRun: 'Last run',
   nextRun: 'Next run',
@@ -51,7 +55,7 @@ export default {
   consent:
     'I authorize public display of this group name, model name, future artwork, and success or failure records.',
   consentRequired: 'Confirm and save publication consent first.',
-  cost: 'One generation per run, without automatic retries. Defaults: every 6 hours, 300-second timeout. Regular user balances are not charged.',
+  cost: 'One generation per run, without automatic retries. The default interval is 6 hours. Each task has its own time limit. Regular user balances are not charged.',
   deleteConfirm: 'Deletion cannot be undone. Deleting a test also deletes all its artwork.',
   provider: 'Execution provider ID',
   raw: 'Raw response',

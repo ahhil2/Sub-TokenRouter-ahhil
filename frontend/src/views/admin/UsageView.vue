@@ -1,7 +1,11 @@
 <template>
   <AppLayout>
     <div class="space-y-4">
-      <UsageStatsCards :stats="usageStats" />
+      <UsageStatsCards :stats="usageStats">
+        <template #performance>
+          <PerformanceMetricsCard :metrics="performanceStats" />
+        </template>
+      </UsageStatsCards>
       <!-- Charts Section -->
       <div class="space-y-4">
         <div class="card p-4">
@@ -291,6 +295,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'
+import PerformanceMetricsCard from '@/components/admin/usage/PerformanceMetricsCard.vue'
 import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'
 import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'
@@ -317,6 +322,7 @@ import type {
 } from '@/api/usage.types'
 import type { AdminUser } from '@/api/admin/users.types'
 import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
+import type { DashboardStats } from '@/api/admin/dashboard.types'
 
 // UsageView.vue loads administrator usage records, summaries, distributions, and error
 // views under shared filters. Request-ID list and summary queries omit date predicates,
@@ -328,7 +334,9 @@ import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin
 // model-source caches have separate invalidation rules. Column preferences are stored
 // independently for usage and errors, and hidden-column migration appends newly hidden
 // defaults while retaining saved choices. Ranking mounts on first selection and continues
-// following shared filters afterward.
+// following shared filters afterward. Performance rates come from the dashboard's
+// global one-minute snapshot fields and share its display component; chart filters
+// continue to describe the separate usage totals and distributions.
 
 // Translation and application notifications provide labels and request feedback for usage
 // records, filters, and export actions.
@@ -350,6 +358,9 @@ const route = useRoute()
 // distribution responses used by charts.
 const usageStats = ref<AdminUsageStatsResponse | null>(null)
 const usageLogs = ref<AdminUsageLog[]>([])
+// performanceStats retains the latest global rates across reloads; null shows an
+// unavailable observation until a dashboard snapshot supplies both measurements.
+const performanceStats = ref<Pick<DashboardStats, 'rpm' | 'tpm'> | null>(null)
 // Loading flags distinguish the records table, chart requests, and export operation so each
 // section can render its own progress.
 const loading = ref(false)
@@ -409,6 +420,9 @@ let chartReqSeq = 0
 let statsReqSeq = 0
 let statsAbortController: AbortController | null = null
 let modelStatsReqSeq = 0
+// initialSnapshotTimer defers the first chart and performance read until the
+// table starts loading, and unmount cancels it before it can dispatch new work.
+let initialSnapshotTimer: ReturnType<typeof setTimeout> | undefined
 // Export progress holds dialog visibility, percentage, processed rows, expected total, and
 // an optional formatted remaining-time estimate.
 const exportProgress = reactive({
@@ -858,20 +872,20 @@ const loadModelStats = async (source: ModelDistributionSource, force = false) =>
   }
 }
 
-// loadChartData retrieves trend and group distribution together unless request-ID filtering
-// hides charts. Each request captures a new sequence so an older successful response cannot
-// replace a later selection.
+// loadChartData retrieves global performance rates with the visible usage charts.
+// Request-ID filtering requests the rates while excluding trend and group sections.
+// The server keeps these one-minute rates independent of all chart filters.
 //
-// The sequence also protects loading cleanup. Failures log an error and retain the
-// displayed chart arrays, including failures from superseded requests. Model statistics are
-// excluded from the snapshot because their source selector has a separate loader and cache
-// lifecycle.
+// A sequence identifies the current snapshot so older responses cannot replace
+// newer rates or charts, including after unmount. Current failures retain the last
+// successful observations. Model statistics use their separate loader and source
+// cache, while the existing snapshot request supplies rates alongside its charts.
 const loadChartData = async () => {
-  if (filters.value.request_id) return
+  const includeCharts = !filters.value.request_id
   // Capture chart ownership before awaiting the snapshot so only the latest
   // request publishes successful arrays and releases loading.
   const seq = ++chartReqSeq
-  chartsLoading.value = true
+  chartsLoading.value = includeCharts
   try {
     const requestType = filters.value.request_type
     const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
@@ -889,18 +903,22 @@ const loadChartData = async () => {
       stream: legacyStream === null ? undefined : legacyStream,
       billing_type: filters.value.billing_type,
       native_compaction_v2: filters.value.native_compaction_v2,
-      include_stats: false,
-      include_trend: true,
+      include_stats: true,
+      include_trend: includeCharts,
       include_model_stats: false,
-      include_group_stats: true,
+      include_group_stats: includeCharts,
       include_users_trend: false,
     })
     if (seq !== chartReqSeq) return
+    if (snapshot.stats) {
+      performanceStats.value = { rpm: snapshot.stats.rpm, tpm: snapshot.stats.tpm }
+    }
     trendData.value = snapshot.trend || []
     groupStats.value = snapshot.groups || []
   } catch (error) {
-    // Keep the preceding trend and group observations after a snapshot failure so those
-    // charts retain their last available data.
+    // Keep the preceding rates and charts on a current request failure; an
+    // obsolete or unmounted snapshot has already lost permission to report errors.
+    if (seq !== chartReqSeq) return
     console.error('Failed to load chart data:', error)
   } finally {
     if (seq === chartReqSeq) chartsLoading.value = false
@@ -1476,9 +1494,9 @@ onMounted(() => {
   loadLogs()
   loadStats()
   loadModelStats(modelDistributionSource.value, true)
-  // Defer the initial trend and group snapshot briefly after starting table and summary
-  // retrieval; the scheduled callback is not canceled on unmount.
-  window.setTimeout(() => {
+  // Start the initial snapshot after table and summary retrieval begins; retain
+  // the timer so leaving the page before dispatch can cancel that pending work.
+  initialSnapshotTimer = setTimeout(() => {
     void loadChartData()
   }, 120)
   loadSavedColumns()
@@ -1494,6 +1512,10 @@ watch(endpointDistributionSource, (source) => {
 // Release page-owned request controllers and the outside-click listener when leaving this
 // view so pending cancelable work cannot retain those resources.
 onUnmounted(() => {
+  // Clear deferred dispatch and invalidate active snapshot ownership together
+  // so neither scheduled nor late requests can publish performance data afterward.
+  clearTimeout(initialSnapshotTimer)
+  chartReqSeq += 1
   statsReqSeq += 1
   endpointReqSeq += 1
   statsAbortController?.abort()

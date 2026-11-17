@@ -254,41 +254,7 @@
             </div>
           </div>
 
-          <div class="card p-4">
-            <div class="flex flex-col gap-2 lg:flex-row lg:items-center">
-              <div
-                class="shrink-0 self-start rounded-control bg-violet-100 p-2 dark:bg-violet-900/30"
-              >
-                <Icon
-                  name="bolt"
-                  size="md"
-                  class="text-violet-600 dark:text-violet-400"
-                  :stroke-width="2"
-                />
-              </div>
-              <div class="min-w-0 flex-1">
-                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.performance') }}
-                </p>
-                <div class="mt-0.5 flex items-baseline gap-2">
-                  <p
-                    class="whitespace-nowrap text-lg font-bold tabular-nums text-gray-900 dark:text-white lg:text-xl"
-                  >
-                    {{ formatTokens(stats.rpm) }}
-                  </p>
-                  <span class="text-xs text-gray-500 dark:text-gray-400">RPM</span>
-                </div>
-                <div class="mt-0.5 flex items-baseline gap-2">
-                  <p
-                    class="whitespace-nowrap text-sm font-semibold tabular-nums text-violet-600 dark:text-violet-400"
-                  >
-                    {{ formatTokens(stats.tpm) }}
-                  </p>
-                  <span class="text-xs text-gray-500 dark:text-gray-400">TPM</span>
-                </div>
-              </div>
-            </div>
-          </div>
+          <PerformanceMetricsCard :metrics="stats" />
 
           <div class="card p-4">
             <div class="flex flex-col gap-2 lg:flex-row lg:items-center">
@@ -412,6 +378,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import ChartSkeleton from '@/components/common/ChartSkeleton.vue'
 import DashboardSkeleton from '@/components/common/DashboardSkeleton.vue'
 import Icon from '@/components/icons/Icon.vue'
+import PerformanceMetricsCard from '@/components/admin/usage/PerformanceMetricsCard.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Select from '@/components/common/Select.vue'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'
@@ -446,7 +413,8 @@ import {
 // datasets. This keeps accounts with equal display names distinct and fills absent
 // dates with zero tokens. Chart reloads retain summary statistics, while initial
 // loading requests statistics together with trend data. Ranking failures clear ranking
-// rows and totals and expose the ranking error state.
+// rows and totals and expose the ranking error state. Global rates use the shared
+// performance card and describe the preceding minute independently of chart dates.
 
 // The translation function supplies dashboard labels and messages throughout the
 // mounted administrator view and its charts.

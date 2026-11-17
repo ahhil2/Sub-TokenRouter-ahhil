@@ -11,7 +11,8 @@ export default {
   members: '管理成员',
   rates: '设置倍率',
   count: '{count} 位成员',
-  discount: '余额消费时按普通分组默认倍率的 {percent}% 计费，个人专属倍率和 AHHilAI 倍率优先。',
+  discount:
+    '未开启“原价”的分组，余额消费按默认倍率的 {percent}% 计费。个人专属倍率和 AHHilAI 倍率优先。',
   pricing: '统一配置各普通分组的消费倍率，个人专属倍率优先。',
   search: '搜索用户名、邮箱或用户 ID',
   searchButton: '搜索',

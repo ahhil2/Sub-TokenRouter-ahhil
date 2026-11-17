@@ -12,7 +12,7 @@ export default {
   rates: 'Set rates',
   count: '{count} members',
   discount:
-    'Balance usage is billed at {percent}% of the routing group default rate. Personal and AHHilAI rates take precedence.',
+    'Balance usage is billed at {percent}% of the group default rate when original pricing is off. Personal and AHHilAI rates take precedence.',
   pricing: 'Set rates for routing groups. Personal rates take precedence.',
   search: 'Search username, email or user ID',
   searchButton: 'Search',

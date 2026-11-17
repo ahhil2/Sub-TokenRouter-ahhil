@@ -121,6 +121,20 @@ func (_c *GroupCreate) SetNillableRateMultiplier(v *float64) *GroupCreate {
 	return _c
 }
 
+// SetIdentityDiscountExempt sets the "identity_discount_exempt" field.
+func (_c *GroupCreate) SetIdentityDiscountExempt(v bool) *GroupCreate {
+	_c.mutation.SetIdentityDiscountExempt(v)
+	return _c
+}
+
+// SetNillableIdentityDiscountExempt sets the "identity_discount_exempt" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableIdentityDiscountExempt(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetIdentityDiscountExempt(*v)
+	}
+	return _c
+}
+
 // SetIsExclusive sets the "is_exclusive" field.
 func (_c *GroupCreate) SetIsExclusive(v bool) *GroupCreate {
 	_c.mutation.SetIsExclusive(v)
@@ -708,6 +722,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultRateMultiplier
 		_c.mutation.SetRateMultiplier(v)
 	}
+	if _, ok := _c.mutation.IdentityDiscountExempt(); !ok {
+		v := group.DefaultIdentityDiscountExempt
+		_c.mutation.SetIdentityDiscountExempt(v)
+	}
 	if _, ok := _c.mutation.IsExclusive(); !ok {
 		v := group.DefaultIsExclusive
 		_c.mutation.SetIsExclusive(v)
@@ -845,6 +863,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.RateMultiplier(); !ok {
 		return &ValidationError{Name: "rate_multiplier", err: errors.New(`ent: missing required field "Group.rate_multiplier"`)}
+	}
+	if _, ok := _c.mutation.IdentityDiscountExempt(); !ok {
+		return &ValidationError{Name: "identity_discount_exempt", err: errors.New(`ent: missing required field "Group.identity_discount_exempt"`)}
 	}
 	if _, ok := _c.mutation.IsExclusive(); !ok {
 		return &ValidationError{Name: "is_exclusive", err: errors.New(`ent: missing required field "Group.is_exclusive"`)}
@@ -1022,6 +1043,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RateMultiplier(); ok {
 		_spec.SetField(group.FieldRateMultiplier, field.TypeFloat64, value)
 		_node.RateMultiplier = value
+	}
+	if value, ok := _c.mutation.IdentityDiscountExempt(); ok {
+		_spec.SetField(group.FieldIdentityDiscountExempt, field.TypeBool, value)
+		_node.IdentityDiscountExempt = value
 	}
 	if value, ok := _c.mutation.IsExclusive(); ok {
 		_spec.SetField(group.FieldIsExclusive, field.TypeBool, value)
@@ -1416,6 +1441,18 @@ func (u *GroupUpsert) UpdateRateMultiplier() *GroupUpsert {
 // AddRateMultiplier adds v to the "rate_multiplier" field.
 func (u *GroupUpsert) AddRateMultiplier(v float64) *GroupUpsert {
 	u.Add(group.FieldRateMultiplier, v)
+	return u
+}
+
+// SetIdentityDiscountExempt sets the "identity_discount_exempt" field.
+func (u *GroupUpsert) SetIdentityDiscountExempt(v bool) *GroupUpsert {
+	u.Set(group.FieldIdentityDiscountExempt, v)
+	return u
+}
+
+// UpdateIdentityDiscountExempt sets the "identity_discount_exempt" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateIdentityDiscountExempt() *GroupUpsert {
+	u.SetExcluded(group.FieldIdentityDiscountExempt)
 	return u
 }
 
@@ -2044,6 +2081,20 @@ func (u *GroupUpsertOne) AddRateMultiplier(v float64) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateRateMultiplier() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetIdentityDiscountExempt sets the "identity_discount_exempt" field.
+func (u *GroupUpsertOne) SetIdentityDiscountExempt(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetIdentityDiscountExempt(v)
+	})
+}
+
+// UpdateIdentityDiscountExempt sets the "identity_discount_exempt" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateIdentityDiscountExempt() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateIdentityDiscountExempt()
 	})
 }
 
@@ -2916,6 +2967,20 @@ func (u *GroupUpsertBulk) AddRateMultiplier(v float64) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateRateMultiplier() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRateMultiplier()
+	})
+}
+
+// SetIdentityDiscountExempt sets the "identity_discount_exempt" field.
+func (u *GroupUpsertBulk) SetIdentityDiscountExempt(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetIdentityDiscountExempt(v)
+	})
+}
+
+// UpdateIdentityDiscountExempt sets the "identity_discount_exempt" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateIdentityDiscountExempt() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateIdentityDiscountExempt()
 	})
 }
 

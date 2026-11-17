@@ -11,8 +11,9 @@ import (
 // identity_rates.go defines identity-based balance pricing: AHHilAI group overrides and
 // the bonus_5 and bonus_10 discounts. Balance charges resolve a user's multiplier from a
 // personal override first, then an AHHilAI group override, and otherwise from the group
-// default. Members of bonus_5 and bonus_10 pay 95% and 90% of that group default; the
-// discount never applies on top of a personal or AHHilAI override, and subscription
+// default. Unless the group enables original pricing, members of bonus_5 and bonus_10
+// pay 95% and 90% of that group default. The discount never applies on top of a
+// personal or AHHilAI override, and subscription
 // charges keep their own plan and group rates.
 //
 // The discount table is the single source for these factors. The PostgreSQL effective

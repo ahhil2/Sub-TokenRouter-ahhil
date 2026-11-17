@@ -36,6 +36,7 @@ export default {
     output: '输出',
     cacheToday: '今日缓存',
     performance: '性能指标',
+    performanceHint: '全站最近 1 分钟：RPM 为请求数，TPM 为输入与输出 Token 数，不含缓存 Token。',
     avgResponse: '平均响应',
     averageTime: '平均时间',
     active: '活跃',
@@ -632,6 +633,9 @@ export default {
     settings: {
       allowedModels: '允许的模型',
       billingAndStatus: '计费与状态',
+      originalPrice: '原价',
+      originalPriceHint:
+        '开启后，九折和九五折身份用户按本分组默认倍率计费。个人专属倍率和 AHHilAI 单独定价仍然适用。',
       marketplace: '模型广场展示',
       showMaxDiscount: '显示「最高优惠」标签',
       showMaxDiscountHint: '在模型广场的分组标题处显示最高优惠，有有效折扣时展示。',

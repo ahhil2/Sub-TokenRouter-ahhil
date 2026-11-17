@@ -257,6 +257,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *routi
 		SetAdvancedSchedulerOverrides(groupIn.AdvancedSchedulerOverrides).
 		SetDisplayBrand(groupIn.DisplayBrand).
 		SetRateMultiplier(groupIn.RateMultiplier).
+		SetIdentityDiscountExempt(groupIn.IdentityDiscountExempt).
 		SetSortOrder(groupIn.SortOrder).
 		SetIsExclusive(groupIn.IsExclusive).
 		SetStatus(groupIn.Status).
@@ -459,6 +460,7 @@ func (r *GroupStore) Update(ctx context.Context, groupIn *routing.Group) error {
 		SetAdvancedSchedulerOverrides(groupIn.AdvancedSchedulerOverrides).
 		SetDisplayBrand(groupIn.DisplayBrand).
 		SetRateMultiplier(groupIn.RateMultiplier).
+		SetIdentityDiscountExempt(groupIn.IdentityDiscountExempt).
 		SetSortOrder(groupIn.SortOrder).
 		SetIsExclusive(groupIn.IsExclusive).
 		SetStatus(groupIn.Status).

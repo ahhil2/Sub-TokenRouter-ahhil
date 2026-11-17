@@ -1208,6 +1208,8 @@ const createForm = reactive({
   responses_image_policy: 'inherit' as 'inherit' | 'enabled' | 'disabled' | 'block',
   allowed_protocols: [] as ProtocolID[],
   rate_multiplier: 1.0,
+  // New groups retain membership discounts until an administrator selects original pricing here.
+  identity_discount_exempt: false,
   is_exclusive: false,
   // Session isolation setting.
   session_isolation_enabled: false,
@@ -1647,6 +1649,8 @@ const editForm = reactive({
   responses_image_policy: 'inherit' as 'inherit' | 'enabled' | 'disabled' | 'block',
   allowed_protocols: [] as ProtocolID[],
   rate_multiplier: 1.0,
+  // Saved groups replace this default when the edit dialog loads their detail.
+  identity_discount_exempt: false,
   is_exclusive: false,
   // Session isolation setting.
   session_isolation_enabled: false,
@@ -1987,6 +1991,7 @@ const closeCreateModal = () => {
   initializeGroupProtocolDefaults(createForm)
   createForm.responses_image_policy = 'inherit'
   createForm.rate_multiplier = 1.0
+  createForm.identity_discount_exempt = false
   createForm.is_exclusive = false
   createForm.session_isolation_enabled = false
   createForm.allow_image_generation = false
@@ -2149,6 +2154,7 @@ const handleEdit = async (summary: AdminGroupSummary) => {
     group.advanced_scheduler_overrides,
   )
   editForm.rate_multiplier = group.rate_multiplier
+  editForm.identity_discount_exempt = group.identity_discount_exempt ?? false
   editForm.is_exclusive = group.is_exclusive
   editForm.session_isolation_enabled = group.session_isolation_enabled ?? false
   editForm.status = group.status

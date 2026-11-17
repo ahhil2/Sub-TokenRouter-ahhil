@@ -99,6 +99,13 @@
           setting="is_exclusive"
           data-tour="group-form-exclusive"
         />
+        <SettingToggleRow
+          :id="`${idPrefix}-original-price`"
+          v-model="form.identity_discount_exempt"
+          :label="t('admin.groups.settings.originalPrice')"
+          :hint="t('admin.groups.settings.originalPriceHint')"
+          setting="identity_discount_exempt"
+        />
       </SettingsSection>
       <SettingsSection :title="t('admin.groups.settings.marketplace')">
         <SettingToggleRow

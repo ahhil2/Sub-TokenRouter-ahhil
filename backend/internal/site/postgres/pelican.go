@@ -12,6 +12,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// pelican.go stores drawing tasks, execution leases, and generated results in
+// PostgreSQL. Task updates require an idle task so that an active execution
+// retains the settings captured when its lease was claimed. Omitted timeout
+// updates retain the saved value in the same statement that saves other fields.
+//
+// Claiming serializes the shared capacity check and task selection, then creates
+// the result together with a lease lasting the configured timeout plus a saving
+// allowance. Completion requires the matching active token. Maintenance recovers
+// expired leases and marks their running results interrupted, preventing delayed
+// workers from overwriting recovered executions.
+
 const pelicanResultColumns = `result.id, result.task_id, result.group_id, result.group_name, result.model,
 	result.status, result.published, result.latency_ms, result.started_at, result.finished_at`
 
@@ -39,9 +50,10 @@ func (repository *pelicanRepository) Catalog(ctx context.Context) ([]site.Pelica
 	return items, rows.Err()
 }
 
+// Tasks lists saved settings and recent execution state for administrator editing.
 func (repository *pelicanRepository) Tasks(ctx context.Context) ([]site.PelicanTask, error) {
 	rows, err := repository.db.QueryContext(ctx, `SELECT row_to_json(item) FROM (
-		SELECT task.id, task.group_id, groups.name AS group_name, task.model, task.enabled, task.interval_minutes,
+		SELECT task.id, task.group_id, groups.name AS group_name, task.model, task.enabled, task.interval_minutes, task.timeout_seconds,
 		task.public_consent, task.manual_requested, task.next_run_at, task.lease_until,
 		COALESCE(last_result.status, '') AS last_status, last_result.started_at AS last_run_at
 		FROM pelican_tasks task JOIN groups ON groups.id = task.group_id
@@ -66,19 +78,27 @@ func (repository *pelicanRepository) Tasks(ctx context.Context) ([]site.PelicanT
 	return items, rows.Err()
 }
 
+// SaveTask persists validated task settings and returns the saved timeout and
+// next execution time. Creation requires a positive timeout supplied by the
+// service, and updates use zero to retain the existing value.
+//
+// The update checks idle state in the same statement as the configuration
+// change, so queued or claimed tasks cannot change their execution budget.
+// Interval and enablement changes also update the schedule atomically with the
+// settings used by subsequent claims.
 func (repository *pelicanRepository) SaveTask(ctx context.Context, task site.PelicanTask) (site.PelicanTask, error) {
 	var err error
 	if task.ID == 0 {
-		err = repository.db.QueryRowContext(ctx, `INSERT INTO pelican_tasks(group_id, model, interval_minutes, public_consent)
-			SELECT id, $2, $3, $4 FROM groups WHERE id = $1 AND deleted_at IS NULL AND status = 'active' RETURNING id, next_run_at`,
-			task.GroupID, task.Model, task.IntervalMinutes, task.PublicConsent).Scan(&task.ID, &task.NextRunAt)
+		err = repository.db.QueryRowContext(ctx, `INSERT INTO pelican_tasks(group_id, model, interval_minutes, public_consent, timeout_seconds)
+			SELECT id, $2, $3, $4, $5 FROM groups WHERE id = $1 AND deleted_at IS NULL AND status = 'active' RETURNING id, next_run_at`,
+			task.GroupID, task.Model, task.IntervalMinutes, task.PublicConsent, task.TimeoutSeconds).Scan(&task.ID, &task.NextRunAt)
 	} else {
 		err = repository.db.QueryRowContext(ctx, `UPDATE pelican_tasks SET group_id=$2, model=$3, enabled=$4,
-			interval_minutes=$5, public_consent=$6, updated_at=NOW(),
+			interval_minutes=$5, public_consent=$6, timeout_seconds=CASE WHEN $7::integer=0 THEN timeout_seconds ELSE $7 END, updated_at=NOW(),
 			next_run_at=CASE WHEN $4 AND NOT enabled THEN NOW() WHEN interval_minutes<>$5 THEN NOW()+make_interval(mins=>$5) ELSE next_run_at END
 			WHERE id=$1 AND lease_until IS NULL AND NOT manual_requested
 			AND EXISTS (SELECT 1 FROM groups WHERE id=$2 AND deleted_at IS NULL AND status='active')
-			RETURNING next_run_at`, task.ID, task.GroupID, task.Model, task.Enabled, task.IntervalMinutes, task.PublicConsent).Scan(&task.NextRunAt)
+			RETURNING next_run_at, timeout_seconds`, task.ID, task.GroupID, task.Model, task.Enabled, task.IntervalMinutes, task.PublicConsent, task.TimeoutSeconds).Scan(&task.NextRunAt, &task.TimeoutSeconds)
 		if errors.Is(err, sql.ErrNoRows) {
 			return task, site.ErrPelicanBusy
 		}
@@ -171,12 +191,24 @@ func (repository *pelicanRepository) DeleteResult(ctx context.Context, id int64)
 	return pelicanAffected(result, err)
 }
 
+// Claim reserves one eligible task and creates its running result atomically.
+// It returns nil when two leases are active or no authorized task is due.
+// The advisory lock serializes the capacity check across application instances,
+// while the selected task row stays locked until its lease and result commit.
+//
+// The lease includes the task's generation timeout and a saving allowance, so
+// maintenance cannot reclaim it merely because generation exceeds the default
+// budget. The returned task carries the same timeout used for that lease.
 func (repository *pelicanRepository) Claim(ctx context.Context) (*site.PelicanClaim, error) {
 	transaction, err := repository.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
+	// Any failure rolls back both the lease and running result; a successful
+	// commit leaves this deferred rollback with no transaction left to change.
 	defer func() { _ = transaction.Rollback() }()
+	// Serialize the active-count check through commit so separate instances
+	// cannot each admit tasks against the same two remaining execution slots.
 	if _, err := transaction.ExecContext(ctx, `SELECT pg_advisory_xact_lock(710298)`); err != nil {
 		return nil, err
 	}
@@ -184,24 +216,27 @@ func (repository *pelicanRepository) Claim(ctx context.Context) (*site.PelicanCl
 	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM pelican_tasks WHERE lease_until>NOW()`).Scan(&active); err != nil {
 		return nil, err
 	}
+	// All instances share the same two execution slots.
 	if active >= 2 {
 		return nil, nil
 	}
 	claim := &site.PelicanClaim{Token: uuid.NewString()}
-	err = transaction.QueryRowContext(ctx, `SELECT task.id, task.group_id, groups.name, task.model, task.interval_minutes, task.public_consent
+	err = transaction.QueryRowContext(ctx, `SELECT task.id, task.group_id, groups.name, task.model, task.interval_minutes, task.public_consent, task.timeout_seconds
 		FROM pelican_tasks task JOIN groups ON groups.id=task.group_id
 		WHERE task.lease_until IS NULL AND task.public_consent AND groups.deleted_at IS NULL AND groups.status='active'
 		AND (task.manual_requested OR (task.enabled AND task.next_run_at<=NOW()))
 		ORDER BY task.manual_requested DESC, task.next_run_at, task.id FOR UPDATE OF task SKIP LOCKED LIMIT 1`).Scan(
-		&claim.Task.ID, &claim.Task.GroupID, &claim.Task.GroupName, &claim.Task.Model, &claim.Task.IntervalMinutes, &claim.Task.PublicConsent)
+		&claim.Task.ID, &claim.Task.GroupID, &claim.Task.GroupName, &claim.Task.Model, &claim.Task.IntervalMinutes, &claim.Task.PublicConsent, &claim.Task.TimeoutSeconds)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	_, err = transaction.ExecContext(ctx, `UPDATE pelican_tasks SET lease_token=$2, lease_until=NOW()+INTERVAL '330 seconds', manual_requested=FALSE,
-		next_run_at=NOW()+make_interval(mins=>interval_minutes) WHERE id=$1`, claim.Task.ID, claim.Token)
+	// The grace period covers result saving after the generation context ends;
+	// deriving the lease from the locked row keeps both limits consistent.
+	_, err = transaction.ExecContext(ctx, `UPDATE pelican_tasks SET lease_token=$2, lease_until=NOW()+make_interval(secs=>timeout_seconds+$3), manual_requested=FALSE,
+		next_run_at=NOW()+make_interval(mins=>interval_minutes) WHERE id=$1`, claim.Task.ID, claim.Token, site.PelicanLeaseGraceSeconds)
 	if err != nil {
 		return nil, err
 	}

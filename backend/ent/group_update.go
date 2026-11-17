@@ -139,6 +139,20 @@ func (_u *GroupUpdate) AddRateMultiplier(v float64) *GroupUpdate {
 	return _u
 }
 
+// SetIdentityDiscountExempt sets the "identity_discount_exempt" field.
+func (_u *GroupUpdate) SetIdentityDiscountExempt(v bool) *GroupUpdate {
+	_u.mutation.SetIdentityDiscountExempt(v)
+	return _u
+}
+
+// SetNillableIdentityDiscountExempt sets the "identity_discount_exempt" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableIdentityDiscountExempt(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetIdentityDiscountExempt(*v)
+	}
+	return _u
+}
+
 // SetIsExclusive sets the "is_exclusive" field.
 func (_u *GroupUpdate) SetIsExclusive(v bool) *GroupUpdate {
 	_u.mutation.SetIsExclusive(v)
@@ -1001,6 +1015,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(group.FieldRateMultiplier, field.TypeFloat64, value)
 	}
+	if value, ok := _u.mutation.IdentityDiscountExempt(); ok {
+		_spec.SetField(group.FieldIdentityDiscountExempt, field.TypeBool, value)
+	}
 	if value, ok := _u.mutation.IsExclusive(); ok {
 		_spec.SetField(group.FieldIsExclusive, field.TypeBool, value)
 	}
@@ -1580,6 +1597,20 @@ func (_u *GroupUpdateOne) SetNillableRateMultiplier(v *float64) *GroupUpdateOne 
 // AddRateMultiplier adds value to the "rate_multiplier" field.
 func (_u *GroupUpdateOne) AddRateMultiplier(v float64) *GroupUpdateOne {
 	_u.mutation.AddRateMultiplier(v)
+	return _u
+}
+
+// SetIdentityDiscountExempt sets the "identity_discount_exempt" field.
+func (_u *GroupUpdateOne) SetIdentityDiscountExempt(v bool) *GroupUpdateOne {
+	_u.mutation.SetIdentityDiscountExempt(v)
+	return _u
+}
+
+// SetNillableIdentityDiscountExempt sets the "identity_discount_exempt" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableIdentityDiscountExempt(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetIdentityDiscountExempt(*v)
+	}
 	return _u
 }
 
@@ -2474,6 +2505,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.AddedRateMultiplier(); ok {
 		_spec.AddField(group.FieldRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.IdentityDiscountExempt(); ok {
+		_spec.SetField(group.FieldIdentityDiscountExempt, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.IsExclusive(); ok {
 		_spec.SetField(group.FieldIsExclusive, field.TypeBool, value)

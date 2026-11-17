@@ -9,6 +9,17 @@ import (
 	"unicode/utf8"
 )
 
+// pelican_runner.go executes claimed drawing tasks and saves their terminal
+// results. Each worker uses the timeout captured in its claim, so administrator
+// changes apply when the next execution is claimed. The repository grants extra
+// lease time for result persistence after the generation context expires.
+//
+// Shutdown cancels active generation and waits for workers to record interrupted
+// results. Saving uses a separate bounded context because the execution context
+// may already have expired. Lease tokens let the repository reject late results
+// after maintenance has recovered an abandoned task, preventing an expired
+// worker from replacing the recovered result.
+
 type PelicanRunner struct {
 	service *PelicanService
 	mu      sync.Mutex
@@ -94,9 +105,18 @@ func (runner *PelicanRunner) work(ctx context.Context) {
 	}
 }
 
+// execute generates one result within the claimed task's configured time limit.
+// Claims come from persisted tasks with positive, validated timeout seconds.
+// The same deadline covers validation, provider selection, and generated output.
+//
+// Expiration marks the result failed, while parent cancellation marks it
+// interrupted because the application is stopping. Result persistence gets a
+// separate ten-second window after either cancellation, and the repository
+// accepts it only while the claim still owns an active lease.
 func (runner *PelicanRunner) execute(parent context.Context, claim PelicanClaim) {
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(parent, PelicanTimeout)
+	// Task budgets are stored in whole seconds for administrator inputs.
+	ctx, cancel := context.WithTimeout(parent, time.Duration(claim.Task.TimeoutSeconds)*time.Second)
 	defer cancel()
 	result := PelicanResult{Status: "success"}
 	err := runner.service.executor.Validate(ctx, claim.Task.GroupID, claim.Task.Model)
@@ -108,6 +128,8 @@ func (runner *PelicanRunner) execute(parent context.Context, claim PelicanClaim)
 		}
 		result.ExecutionModel = generated.Model
 		result.RawResponse = generated.Text
+		// Reject oversized or malformed text before saving because PostgreSQL
+		// result columns require bounded content and valid text without null bytes.
 		if len(result.RawResponse) > PelicanMaxResponseBytes || !utf8.ValidString(result.RawResponse) || strings.ContainsRune(result.RawResponse, 0) {
 			result.RawResponse = ""
 			err = ErrPelicanInvalid
@@ -116,6 +138,8 @@ func (runner *PelicanRunner) execute(parent context.Context, claim PelicanClaim)
 			result.HTML, err = ExtractPelicanHTML(result.RawResponse)
 		}
 	}
+	// Deadline expiry takes precedence over returned output or adapter errors;
+	// a provider that returns after cancellation cannot turn the run into success.
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
@@ -123,12 +147,16 @@ func (runner *PelicanRunner) execute(parent context.Context, claim PelicanClaim)
 		result.Status = "failed"
 		result.ErrorMessage = err.Error()
 	}
+	// Application shutdown interrupts the run regardless of its provider outcome,
+	// distinguishing stopped workers from requests that exhausted their generation budget.
 	if parent.Err() != nil {
 		result.Status = "interrupted"
 	}
 	result.LatencyMs = time.Since(started).Milliseconds()
 	finished := time.Now()
 	result.FinishedAt = &finished
+	// A timeout or shutdown cancels generation first; saving needs its own
+	// bounded context so the recorded status can still release this task's lease.
 	saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer saveCancel()
 	if err := runner.service.repo.Finish(saveCtx, claim, result); err != nil {

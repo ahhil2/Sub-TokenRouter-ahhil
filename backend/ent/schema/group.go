@@ -68,6 +68,9 @@ func (Group) Fields() []ent.Field {
 		field.Float("rate_multiplier").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(1.0),
+		// identity_discount_exempt skips bonus_5 and bonus_10 discounts for this
+		// group's balance charges. Personal and AHHilAI overrides retain precedence.
+		field.Bool("identity_discount_exempt").Default(false),
 		// is_exclusive distinguishes explicitly granted groups from public groups.
 		// Access resolution combines this value with user grants and public-group
 		// exclusions before admitting a key to the selected group.

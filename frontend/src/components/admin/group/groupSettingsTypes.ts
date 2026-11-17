@@ -25,6 +25,9 @@ export interface GroupSettingsDraft {
   description: string // administrator description text
   display_brand: string // group display brand
   rate_multiplier: number // group billing multiplier
+  // identity_discount_exempt disables membership discounts on the default balance rate.
+  // Both creation and editing submit the boolean with the group's pricing settings.
+  identity_discount_exempt: boolean
   status?: 'active' | 'inactive' // configured activation status
   is_exclusive: boolean // exclusive group flag
   scheduler_type: GroupSchedulerType // selected scheduler algorithm

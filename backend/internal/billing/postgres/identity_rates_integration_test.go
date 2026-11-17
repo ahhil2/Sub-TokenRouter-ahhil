@@ -16,7 +16,90 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
+	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
+
+// identity_rates_integration_test.go verifies identity pricing against PostgreSQL.
+// The migrated fixtures exercise stored overrides, default discount eligibility,
+// and both single-group billing and all-group display queries so administrative
+// pricing changes produce consistent customer rates across those consumers.
+
+// TestIdentityRateOriginalPrice toggles original pricing for both discount
+// memberships in a migrated database. Billing and price-display reads must agree,
+// other groups must retain discounts, and explicit overrides must keep precedence.
+func TestIdentityRateOriginalPrice(t *testing.T) {
+	database := postgrescontainer.New(t)
+	ctx := t.Context()
+	store := NewUserGroupRateRepository(database)
+	resolver := billing.NewGroupRateResolver(store, nil, time.Minute, nil, "test", nil)
+	var groupID, otherGroupID int64
+	require.NoError(t, database.QueryRowContext(ctx, `INSERT INTO groups(name,rate_multiplier) VALUES('original-price',2) RETURNING id`).Scan(&groupID))
+	require.NoError(t, database.QueryRowContext(ctx, `INSERT INTO groups(name,rate_multiplier) VALUES('discounted-price',2) RETURNING id`).Scan(&otherGroupID))
+	var exempt bool
+	require.NoError(t, database.QueryRowContext(ctx, `SELECT identity_discount_exempt FROM groups WHERE id=$1`, groupID).Scan(&exempt))
+	require.False(t, exempt)
+	for code, discounted := range map[string]float64{"bonus_5": 1.9, "bonus_10": 1.8} {
+		t.Run(code, func(t *testing.T) {
+			var userID int64
+			require.NoError(t, database.QueryRowContext(ctx, `INSERT INTO users(email,password_hash,username) VALUES($1,'hash','original-price') RETURNING id`, code+"@original-price.test").Scan(&userID))
+			_, err := database.ExecContext(ctx, `INSERT INTO user_identity_memberships(user_id,category,identity_code) VALUES($1,'recharge',$2)`, userID, code)
+			require.NoError(t, err)
+			actual, err := resolver.ResolveChecked(ctx, userID, groupID, 2)
+			require.NoError(t, err)
+			require.Equal(t, discounted, actual)
+
+			_, err = database.ExecContext(ctx, `UPDATE groups SET identity_discount_exempt=true WHERE id=$1`, groupID)
+			require.NoError(t, err)
+			actual, err = resolver.ResolveChecked(ctx, userID, groupID, 2)
+			require.NoError(t, err)
+			require.Equal(t, 2.0, actual)
+			all, err := store.EffectiveGroupRates(ctx, userID)
+			require.NoError(t, err)
+			require.NotContains(t, all, groupID)
+			require.Equal(t, discounted, all[otherGroupID])
+
+			_, err = database.ExecContext(ctx, `INSERT INTO user_identity_memberships(user_id,category,identity_code) VALUES($1,'pricing','ahhilai')`, userID)
+			require.NoError(t, err)
+			_, err = database.ExecContext(ctx, `INSERT INTO identity_group_rates(identity_code,group_id,rate_multiplier) VALUES('ahhilai',$1,0.4)`, groupID)
+			require.NoError(t, err)
+			actual, err = resolver.ResolveChecked(ctx, userID, groupID, 2)
+			require.NoError(t, err)
+			require.Equal(t, 0.4, actual)
+			// A personal rate above both other candidates still wins by priority;
+			// changing it to zero must then retain the explicit free-rate selection.
+			_, err = database.ExecContext(ctx, `INSERT INTO user_group_rate_multipliers(user_id,group_id,rate_multiplier) VALUES($1,$2,3)`, userID, groupID)
+			require.NoError(t, err)
+			actual, err = resolver.ResolveChecked(ctx, userID, groupID, 2)
+			require.NoError(t, err)
+			require.Equal(t, 3.0, actual)
+			all, err = store.EffectiveGroupRates(ctx, userID)
+			require.NoError(t, err)
+			require.Equal(t, 3.0, all[groupID])
+			_, err = database.ExecContext(ctx, `UPDATE user_group_rate_multipliers SET rate_multiplier=0 WHERE user_id=$1 AND group_id=$2`, userID, groupID)
+			require.NoError(t, err)
+			actual, err = resolver.ResolveChecked(ctx, userID, groupID, 2)
+			require.NoError(t, err)
+			require.Zero(t, actual)
+			all, err = store.EffectiveGroupRates(ctx, userID)
+			require.NoError(t, err)
+			require.Contains(t, all, groupID)
+			require.Zero(t, all[groupID])
+
+			_, err = database.ExecContext(ctx, `DELETE FROM user_group_rate_multipliers WHERE user_id=$1`, userID)
+			require.NoError(t, err)
+			_, err = database.ExecContext(ctx, `DELETE FROM identity_group_rates WHERE group_id=$1`, groupID)
+			require.NoError(t, err)
+			_, err = database.ExecContext(ctx, `UPDATE groups SET identity_discount_exempt=false WHERE id=$1`, groupID)
+			require.NoError(t, err)
+			actual, err = resolver.ResolveChecked(ctx, userID, groupID, 2)
+			require.NoError(t, err)
+			require.Equal(t, discounted, actual)
+			all, err = store.EffectiveGroupRates(ctx, userID)
+			require.NoError(t, err)
+			require.Equal(t, discounted, all[groupID])
+		})
+	}
+}
 
 func TestIdentityRatePrioritySQL(t *testing.T) {
 	dsn := os.Getenv("TOKENROUTER_IDENTITY_TEST_DSN")

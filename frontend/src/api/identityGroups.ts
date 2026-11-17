@@ -4,8 +4,9 @@ import { apiClient } from './client'
  * identityGroups.ts exposes identity membership, group-rate administration, and
  * recharge snapshot shapes to account and payment screens. A nullable rate means
  * inheritance, while a numeric zero remains an explicit free rate for the group.
- * bonus_5 and bonus_10 discount group default balance rates to 95% and 90%; recharge
- * snapshots still describe gifts recorded on orders placed before gifts ended.
+ * bonus_5 and bonus_10 discount eligible group default balance rates to 95% and 90%.
+ * Groups with original pricing skip these discounts; recharge snapshots describe gifts
+ * recorded on orders placed before gifts ended.
  */
 
 export type IdentityCode = 'bonus_5' | 'bonus_10' | 'ahhilai'

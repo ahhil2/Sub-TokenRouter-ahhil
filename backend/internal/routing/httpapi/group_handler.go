@@ -57,7 +57,10 @@ type CreateGroupRequest struct {
 	// RateMultiplier is passed to GroupAdmin, which requires a positive value
 	// before storing the group or its provider bindings.
 	RateMultiplier float64 `json:"rate_multiplier"` // user price scaling factor
-	IsExclusive    bool    `json:"is_exclusive"`    // exclusive group membership flag
+	// IdentityDiscountExempt skips bonus_5 and bonus_10 discounts on the group's
+	// default balance rate. An omitted field keeps discounts enabled on creation.
+	IdentityDiscountExempt bool `json:"identity_discount_exempt"`
+	IsExclusive            bool `json:"is_exclusive"` // exclusive group membership flag
 	// SessionIsolationEnabled selects rejection of designated sessions already
 	// assigned to another group; GroupAdmin stores the selected group isolation
 	// policy.
@@ -176,7 +179,10 @@ type UpdateGroupRequest struct {
 	// RateMultiplier is passed to GroupAdmin, which requires a positive value
 	// before storing the group or its provider bindings.
 	RateMultiplier *float64 `json:"rate_multiplier"` // user price scaling factor
-	IsExclusive    *bool    `json:"is_exclusive"`    // exclusive group membership flag
+	// IdentityDiscountExempt keeps the saved policy when omitted or null. False
+	// explicitly restores identity discounts, and true enables original group pricing.
+	IdentityDiscountExempt *bool `json:"identity_discount_exempt"`
+	IsExclusive            *bool `json:"is_exclusive"` // exclusive group membership flag
 	// SessionIsolationEnabled retains the target group's policy when nil. A
 	// supplied true rejects designated sessions whose recorded first owner is
 	// another group, and false permits that cross-group use.
@@ -537,6 +543,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		DisplayBrand:                    req.DisplayBrand,
 		SortOrder:                       req.SortOrder,
 		RateMultiplier:                  req.RateMultiplier,
+		IdentityDiscountExempt:          req.IdentityDiscountExempt,
 		IsExclusive:                     req.IsExclusive,
 		SessionIsolationEnabled:         req.SessionIsolationEnabled,
 		RoutingPolicy:                   req.RoutingPolicy,
@@ -674,6 +681,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		DisplayBrand:                    req.DisplayBrand,
 		SortOrder:                       req.SortOrder,
 		RateMultiplier:                  req.RateMultiplier,
+		IdentityDiscountExempt:          req.IdentityDiscountExempt,
 		IsExclusive:                     req.IsExclusive,
 		SessionIsolationEnabled:         req.SessionIsolationEnabled,
 		Status:                          req.Status,

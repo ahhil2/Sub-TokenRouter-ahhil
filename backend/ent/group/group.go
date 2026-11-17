@@ -32,6 +32,8 @@ const (
 	FieldDescription = "description"
 	// FieldRateMultiplier holds the string denoting the rate_multiplier field in the database.
 	FieldRateMultiplier = "rate_multiplier"
+	// FieldIdentityDiscountExempt holds the string denoting the identity_discount_exempt field in the database.
+	FieldIdentityDiscountExempt = "identity_discount_exempt"
 	// FieldIsExclusive holds the string denoting the is_exclusive field in the database.
 	FieldIsExclusive = "is_exclusive"
 	// FieldStatus holds the string denoting the status field in the database.
@@ -191,6 +193,7 @@ var Columns = []string{
 	FieldName,
 	FieldDescription,
 	FieldRateMultiplier,
+	FieldIdentityDiscountExempt,
 	FieldIsExclusive,
 	FieldStatus,
 	FieldDuplicateOperationID,
@@ -268,6 +271,8 @@ var (
 	NameValidator func(string) error
 	// DefaultRateMultiplier holds the default value on creation for the "rate_multiplier" field.
 	DefaultRateMultiplier float64
+	// DefaultIdentityDiscountExempt holds the default value on creation for the "identity_discount_exempt" field.
+	DefaultIdentityDiscountExempt bool
 	// DefaultIsExclusive holds the default value on creation for the "is_exclusive" field.
 	DefaultIsExclusive bool
 	// DefaultStatus holds the default value on creation for the "status" field.
@@ -378,6 +383,11 @@ func ByDescription(opts ...sql.OrderTermOption) OrderOption {
 // ByRateMultiplier orders the results by the rate_multiplier field.
 func ByRateMultiplier(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRateMultiplier, opts...).ToFunc()
+}
+
+// ByIdentityDiscountExempt orders the results by the identity_discount_exempt field.
+func ByIdentityDiscountExempt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldIdentityDiscountExempt, opts...).ToFunc()
 }
 
 // ByIsExclusive orders the results by the is_exclusive field.

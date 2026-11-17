@@ -26,6 +26,8 @@ export default {
     output: 'Output',
     cacheToday: 'Cache (Today)',
     performance: 'Performance',
+    performanceHint:
+      'Global rates over the last 60 seconds. RPM counts requests; TPM counts input and output tokens, excluding cached tokens.',
     avgResponse: 'Avg Response',
     averageTime: 'Average Time',
     active: 'active',
@@ -648,6 +650,9 @@ export default {
     settings: {
       allowedModels: 'Allowed models',
       billingAndStatus: 'Billing & status',
+      originalPrice: 'Original price',
+      originalPriceHint:
+        'Use the default multiplier for this group for members with 10% or 5% identity discounts. Personal multipliers and AHHilAI pricing still apply.',
       marketplace: 'Model marketplace display',
       showMaxDiscount: 'Show maximum discount tag',
       showMaxDiscountHint:

@@ -758,7 +758,7 @@
               <Select
                 :key="`${showEditModal ? 'edit' : createProvider}-${binding.local_id}`"
                 v-model="binding.group_id"
-                :options="formGroupOptions"
+                :options="compositeGroupOptions(binding.group_id)"
                 :placeholder="t('keys.selectGroup')"
                 :searchable="true"
                 :disabled="formGroupsLoading"
@@ -1599,6 +1599,8 @@ import {
 // group choices, billing options, usage observations, and per-key dialogs while
 // keeping table column preferences in browser storage. Restriction conversion
 // belongs to keyForm.ts, where creation and update expiry values remain distinct.
+// Composite mappings retain their selected groups across provider filters;
+// billing lookups separately enforce current group eligibility.
 //
 // List queries and usage reads complete independently, so the page maintains
 // request and selection state around refreshes. Credential rotation replaces the
@@ -2201,20 +2203,31 @@ const formGroupOptions = computed(() => {
   )
 })
 
-const clearCreateGroupSelection = () => {
-  formData.value.group_id = null
-  formData.value.composite_groups = formData.value.composite_groups.map((binding) => ({
-    ...binding,
-    group_id: null,
-  }))
+// compositeGroupOptions returns current provider choices plus this row's selected eligible
+// group. Keeping that option visible lets Select retain its label while another row is
+// configured under a different provider filter. The selected group is looked up in
+// formGroups, so changing providers cannot restore a group excluded by the active
+// subscription or access permissions. Rows without a selection use the current filtered
+// choices.
+const compositeGroupOptions = (groupId: number | null) => {
+  const options = formGroupOptions.value
+  if (groupId === null || options.some((option) => option.value === groupId)) return options
+  const selectedGroup = formGroups.value.find((group) => group.id === groupId)
+  return selectedGroup ? [...buildGroupOptions([selectedGroup]), ...options] : options
 }
 
+// selectCreateProvider changes the candidate filter and clears the ordinary group choice
+// when the provider changes. Composite mappings retain their independent selections and
+// prefixes while the user configures another row.
 const selectCreateProvider = (provider: KeyGroupProvider) => {
   if (createProvider.value === provider) return
   createProvider.value = provider
-  clearCreateGroupSelection()
+  formData.value.group_id = null
 }
 
+// Catalog refreshes validate the ordinary choice against its provider filter, while
+// composite mappings remain eligible across providers. Retained rows are updated in place
+// so their input state stays attached to the same mapping identity.
 watch([showCreateModal, createProviderOptions], ([isOpen, providers], [wasOpen]) => {
   if (!isOpen) return
 
@@ -2232,11 +2245,12 @@ watch([showCreateModal, createProviderOptions], ([isOpen, providers], [wasOpen])
   if (formData.value.group_id !== null && !allowedGroupIDs.has(formData.value.group_id)) {
     formData.value.group_id = null
   }
-  formData.value.composite_groups = formData.value.composite_groups.map((binding) => ({
-    ...binding,
-    group_id:
-      binding.group_id !== null && allowedGroupIDs.has(binding.group_id) ? binding.group_id : null,
-  }))
+  const eligibleCompositeGroupIDs = new Set(formGroups.value.map((group) => group.id))
+  for (const binding of formData.value.composite_groups) {
+    if (binding.group_id !== null && !eligibleCompositeGroupIDs.has(binding.group_id)) {
+      binding.group_id = null
+    }
+  }
 })
 
 // allGroupOptions formats the server-provided groups, which intersect access permissions and plan groups for a selected subscription.
@@ -2246,8 +2260,9 @@ const allGroupOptions = computed(() => buildGroupOptions(groups.value))
 // representations. Enabling creates an initial mapping from the current group when needed,
 // keeping its prefix empty for the user. Disabling an originally composite key clears the
 // single group so it must be selected; other drafts can recover their first mapping's group
-// when none is already selected. Existing mapping objects remain available for later mode
-// switches.
+// when none is already selected. During creation, the provider filter follows the restored
+// ordinary group so its selected label remains visible. Existing mapping objects remain
+// available for later mode switches.
 const onCompositeModeChange = (enabled: boolean) => {
   if (enabled) {
     if (formData.value.composite_groups.length === 0) {
@@ -2261,6 +2276,14 @@ const onCompositeModeChange = (enabled: boolean) => {
     formData.value.group_id = null
   } else if (formData.value.group_id === null) {
     formData.value.group_id = formData.value.composite_groups[0]?.group_id ?? null
+  }
+  if (showCreateModal.value && formData.value.group_id !== null) {
+    const selectedGroup = formGroups.value.find((group) => group.id === formData.value.group_id)
+    if (selectedGroup) {
+      createProvider.value = getKeyGroupProvider(selectedGroup)
+    } else {
+      formData.value.group_id = null
+    }
   }
 }
 

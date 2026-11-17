@@ -26,8 +26,9 @@ import (
 // key dashboards can use multidimensional analytics with raw recovery. Duration
 // denominators differ: administrator totals include every request, and user/key
 // dashboards count observed durations. Calendar supplies local midnight, but raw
-// administrator today spans use twenty-four elapsed hours and recent rates use
-// separate system-clock windows.
+// administrator today spans use twenty-four elapsed hours. Administrator rates
+// use the preceding sixty seconds ending at query time; user and key rates use
+// separate five-minute windows.
 
 // UserStats contains raw actor request, token, and actual-charge totals.
 type UserStats struct {
@@ -47,13 +48,13 @@ type DashboardStats = usage.DashboardStats
 // metrics.
 type UserDashboardStats = usage.UserDashboardStats
 
-// getPerformanceStats returns integer five-minute RPM and text TPM for the
-// selected actor/owned-team scope. Nonpositive user IDs select global records;
-// cache tokens are excluded, and the lower-only time filter includes
-// future-dated usage.
+// getPerformanceStats returns RPM and text TPM over the preceding sixty seconds.
+// Administrator dashboards pass a nonpositive user ID to select global records.
+// The half-open window ends at query time, excludes future-dated usage, and
+// counts input and output tokens without cache creation or cache read tokens.
 func (r *Store) getPerformanceStats(ctx context.Context, userID int64, includeOwnedTeam bool) (rpm, tpm int64, err error) {
-	fiveMinutesAgo := time.Now().Add(-5 * time.Minute)
-	args := []any{fiveMinutesAgo}
+	windowEnd := time.Now()
+	args := []any{windowEnd.Add(-time.Minute), windowEnd}
 	source, scopeCondition, args, err := r.buildUsageLogScopeSource(ctx, args, userID, includeOwnedTeam, "")
 	if err != nil {
 		return 0, 0, err
@@ -63,7 +64,7 @@ func (r *Store) getPerformanceStats(ctx context.Context, userID int64, includeOw
 			COUNT(*) as request_count,
 			COALESCE(SUM(input_tokens + output_tokens), 0) as token_count
 		FROM ` + source + `
-		WHERE created_at >= $1`
+		WHERE created_at >= $1 AND created_at < $2`
 	if scopeCondition != "" {
 		query += " AND " + scopeCondition
 	}
@@ -73,9 +74,8 @@ func (r *Store) getPerformanceStats(ctx context.Context, userID int64, includeOw
 	if err := scanSingleRow(ctx, r.sql, query, args, &requestCount, &tokenCount); err != nil {
 		return 0, 0, err
 	}
-	// Convert five-minute counts to integer per-minute averages, truncating
-	// fractions.
-	return requestCount / 5, tokenCount / 5, nil
+	// A sixty-second window already expresses counts per minute.
+	return requestCount, tokenCount, nil
 }
 
 // GetUserStats returns raw actor totals for the supplied half-open range.

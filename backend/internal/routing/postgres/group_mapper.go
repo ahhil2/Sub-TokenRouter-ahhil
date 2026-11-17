@@ -35,6 +35,7 @@ func GroupFromEnt(g *dbent.Group) *routing.Group {
 		AdvancedSchedulerOverrides:      policy.CloneGroupAdvancedSchedulerOverrides(g.AdvancedSchedulerOverrides),
 		DisplayBrand:                    g.DisplayBrand,
 		RateMultiplier:                  g.RateMultiplier,
+		IdentityDiscountExempt:          g.IdentityDiscountExempt,
 		IsExclusive:                     g.IsExclusive,
 		Status:                          g.Status,
 		Hydrated:                        true,

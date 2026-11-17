@@ -9,38 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type pelicanTestRepository struct {
-	PelicanRepository
-	saved  PelicanTask
-	result PelicanResult
-}
-
-type pelicanTestExecutor struct {
-	calls      int
-	validation error
-	text       string
-	failure    error
-}
-
-func (repository *pelicanTestRepository) SaveTask(_ context.Context, task PelicanTask) (PelicanTask, error) {
-	repository.saved = task
-	return task, nil
-}
-
-func (repository *pelicanTestRepository) Finish(_ context.Context, _ PelicanClaim, result PelicanResult) error {
-	repository.result = result
-	return nil
-}
-
-func (executor *pelicanTestExecutor) Validate(context.Context, int64, string) error {
-	return executor.validation
-}
-
-func (executor *pelicanTestExecutor) Generate(context.Context, PelicanTask) (PelicanExecution, error) {
-	executor.calls++
-	return PelicanExecution{Text: executor.text, ProviderID: 12, Model: "mapped-model"}, executor.failure
-}
-
 func TestPelicanExtraction(t *testing.T) {
 	for _, test := range []struct{ name, raw, want string }{
 		{"document", "<!doctype html><html><body><svg></svg></body></html>", "<html><body><svg></svg></body></html>"},
@@ -74,6 +42,9 @@ func TestPelicanPrompt(t *testing.T) {
 	}
 }
 
+// TestPelicanTaskValidation rejects invalid settings and normalizes omitted defaults.
+// Generation limits accept both endpoints, while update omission stays distinguishable
+// so the repository can retain an administrator's saved budget.
 func TestPelicanTaskValidation(t *testing.T) {
 	repository := &pelicanTestRepository{}
 	executor := &pelicanTestExecutor{}
@@ -82,10 +53,12 @@ func TestPelicanTaskValidation(t *testing.T) {
 	value, err := service.SaveTask(context.Background(), base)
 	require.NoError(t, err)
 	require.Equal(t, 360, value.IntervalMinutes)
+	require.Equal(t, 300, value.TimeoutSeconds)
 	require.False(t, value.Enabled)
 	for _, change := range []func(*PelicanTask){
 		func(task *PelicanTask) { task.IntervalMinutes = 4 }, func(task *PelicanTask) { task.IntervalMinutes = 10081 },
 		func(task *PelicanTask) { task.Enabled = true }, func(task *PelicanTask) { task.Enabled = true; task.PublicConsent = true },
+		func(task *PelicanTask) { task.TimeoutSeconds = -1 }, func(task *PelicanTask) { task.TimeoutSeconds = 3601 },
 		func(task *PelicanTask) { task.Model = "*" }, func(task *PelicanTask) { task.GroupID = 0 },
 	} {
 		task := base
@@ -93,28 +66,19 @@ func TestPelicanTaskValidation(t *testing.T) {
 		_, err := service.SaveTask(context.Background(), task)
 		require.Error(t, err)
 	}
+	for _, seconds := range []int{1, 600, 3600} {
+		task := base
+		task.TimeoutSeconds = seconds
+		saved, err := service.SaveTask(t.Context(), task)
+		require.NoError(t, err)
+		require.Equal(t, seconds, saved.TimeoutSeconds)
+		require.Equal(t, seconds, repository.saved.TimeoutSeconds)
+	}
+	base.ID = 1
+	_, err = service.SaveTask(t.Context(), base)
+	require.NoError(t, err)
+	require.Zero(t, repository.saved.TimeoutSeconds)
 	executor.validation = errors.New("model outside group")
 	_, err = service.SaveTask(context.Background(), base)
 	require.ErrorContains(t, err, "outside group")
-}
-
-func TestPelicanRunnerOneAttemptAndFailure(t *testing.T) {
-	for _, test := range []struct {
-		name, text, status string
-		failure            error
-	}{
-		{"success", "<html><svg></svg></html>", "success", nil},
-		{"format failure", "not html", "failed", nil},
-		{"upstream failure", "", "failed", errors.New("429")},
-	} {
-		t.Run(test.name, func(testing *testing.T) {
-			repository := &pelicanTestRepository{}
-			executor := &pelicanTestExecutor{text: test.text, failure: test.failure}
-			runner := NewPelicanRunner(NewPelicanService(repository, executor))
-			runner.execute(context.Background(), PelicanClaim{ResultID: 1, Task: PelicanTask{GroupID: 1, Model: "alias"}})
-			require.Equal(testing, 1, executor.calls)
-			require.Equal(testing, test.status, repository.result.Status)
-			require.Equal(testing, "mapped-model", repository.result.ExecutionModel)
-		})
-	}
 }

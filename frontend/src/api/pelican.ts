@@ -7,6 +7,7 @@ import { apiClient } from './client'
  * and generated content consistently.
  */
 
+/** PelicanTask describes saved scheduling settings and the current execution state. */
 export interface PelicanTask {
   id: number
   group_id: number
@@ -14,6 +15,7 @@ export interface PelicanTask {
   model: string
   enabled: boolean
   interval_minutes: number
+  timeout_seconds: number // generation budget, seconds
   public_consent: boolean
   manual_requested: boolean
   next_run_at: string
@@ -58,9 +60,10 @@ export interface PelicanCatalogItem {
   group_name: string
   model: string
 }
+/** PelicanTaskInput selects editable administrator fields, including a positive generation budget. */
 export type PelicanTaskInput = Pick<
   PelicanTask,
-  'group_id' | 'model' | 'enabled' | 'interval_minutes' | 'public_consent'
+  'group_id' | 'model' | 'enabled' | 'interval_minutes' | 'timeout_seconds' | 'public_consent'
 >
 
 export const pelicanApi = {
