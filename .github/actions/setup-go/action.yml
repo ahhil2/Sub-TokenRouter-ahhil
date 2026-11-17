@@ -1,5 +1,9 @@
+# action.yml prepares Go jobs and restores their module, build, and lint caches.
+# GitHub-hosted Linux runners release preinstalled Android and .NET SDK space
+# before installing Go or extracting caches. Callers use this setup for jobs
+# that do not need those SDKs; other runner environments skip the cleanup.
 name: Set up Go
-description: 安装 go.mod 声明的 Go 版本，按缓存组恢复模块、编译和 lint 缓存。
+description: 在 GitHub 托管 Linux 上清理闲置 SDK，安装 go.mod 声明的 Go 版本并按组恢复缓存。
 inputs:
   group:
     description: 缓存组。编译内容相同的 job 共用一组。
@@ -11,12 +15,22 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Free disk space for Go jobs
+      if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        # Restoring caches and saving new archives both need temporary disk space.
+        # The preinstalled Android and .NET SDKs are unused by all four Go CI jobs.
+        df -h / "$RUNNER_TEMP"
+        sudo rm -rf -- /usr/local/lib/android/sdk /usr/share/dotnet
+        df -h / "$RUNNER_TEMP"
     - uses: actions/setup-go@v6
       with:
         go-version-file: backend/go.mod
         check-latest: false
         cache: false
-    # 缓存键带提交 SHA，只由 main 的 push 保存；其他运行按前缀恢复最近一份。
+    # Cache keys include the commit SHA; main pushes save them and other runs
+    # restore the most recent entry matching the same dependency or group prefix.
     - id: cache
       uses: actions/cache/restore@v5
       with:

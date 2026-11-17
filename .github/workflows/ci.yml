@@ -29,14 +29,6 @@ jobs:
           # Pull requests check their source commit; full history resolves the format base.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      - name: Free disk space for Go analysis
-        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
-        run: |
-          # Go lint restores analysis caches and creates temporary build files.
-          # Its Go and Python checks do not use the hosted Android or .NET SDKs.
-          df -h / "$RUNNER_TEMP"
-          sudo rm -rf -- /usr/local/lib/android/sdk /usr/share/dotnet
-          df -h / "$RUNNER_TEMP"
       - id: go
         uses: ./.github/actions/setup-go
         with:
