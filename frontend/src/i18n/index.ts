@@ -9,7 +9,9 @@ export type { LocaleCode } from './catalog'
 // across the document, browser storage, route title, and authenticated account.
 // Message catalogs load on demand using directories declared by the shared
 // manifest. Initial selection follows saved browser preferences before browser
-// languages and the injected site default.
+// languages and the injected site default. Authentication has a compact entry;
+// ordinary pages share a base entry, and administrator routes request the
+// provider, configuration, or monitoring domains used by their components.
 //
 // Language switches can finish catalog loading and dynamic imports in a
 // different order from their requests. A generation counter decides which
@@ -22,24 +24,43 @@ export type { LocaleCode } from './catalog'
 // instance.
 type LocaleMessages = Record<string, any>
 
+// CatalogScope selects shared page text, a complete catalog, or an administrator domain.
+type CatalogScope = 'auth' | 'base' | 'full' | 'providers' | 'settings' | 'ops'
+
 // LOCALE_KEY and DEFAULT_LOCALE identify the browser preference and shared
 // manifest default used during language initialization.
 const LOCALE_KEY = 'tokenrouter_locale'
 const DEFAULT_LOCALE = defaultLocale
 
-// catalogModules and localeLoaders associate canonical language codes with lazy
-// catalog imports using the manifest directory names.
-const catalogModules = import.meta.glob<{ default: LocaleMessages }>('./locales/*/index.ts')
-const localeLoaders = Object.fromEntries(
-  availableLocales.map((item) => [item.code, catalogModules[`./locales/${item.catalog}/index.ts`]]),
-)
-const authCatalogModules = import.meta.glob<{ default: LocaleMessages }>('./locales/*/auth.ts')
-const authLocaleLoaders = Object.fromEntries(
-  availableLocales.map((item) => [
-    item.code,
-    authCatalogModules[`./locales/${item.catalog}/auth.ts`],
-  ]),
-)
+// catalogModules and scopeFiles locate lazy dictionaries using manifest directories.
+// Domain files export administrator namespaces; the loader adds their root below.
+const catalogModules = import.meta.glob<{ default: LocaleMessages }>([
+  './locales/*/{auth,base,index}.ts',
+  './locales/*/admin/{providers,settings,ops}.ts',
+])
+const scopeFiles: Record<CatalogScope, string> = {
+  auth: 'auth',
+  base: 'base',
+  full: 'index',
+  providers: 'admin/providers',
+  settings: 'admin/settings',
+  ops: 'admin/ops',
+}
+
+// routeDomains includes pages whose shared dialogs use another administrator domain.
+// Route dependency tests check these selections against reachable translation calls.
+const routeDomains: Record<string, CatalogScope[]> = {
+  '/admin/providers': ['providers', 'settings'],
+  '/admin/groups': ['providers'],
+  '/admin/model-attributes': ['providers'],
+  '/admin/proxies': ['providers'],
+  '/admin/risk-control': ['providers'],
+  '/admin/settings': ['settings', 'providers'],
+  '/admin/ops': ['ops'],
+  '/admin/audit-logs': ['ops'],
+  '/admin/usage': ['ops'],
+  '/admin/requests': ['ops'],
+}
 
 // getLocaleStorage returns browser localStorage when access is available, or
 // null otherwise. Missing window objects and storage access exceptions permit
@@ -105,22 +126,32 @@ export const i18n = createI18n({
   warnHtmlMessage: false,
 })
 
-// loadedLocales records catalogs already installed on i18n so later completed
-// language loads can reuse their messages.
-const loadedLocales = new Set<LocaleCode>()
-const loadedAuthLocales = new Set<LocaleCode>()
+// loadedScopes records installed dictionaries; pendingMessages shares in-flight imports.
+// requestedScopes retains every requested domain so language switches also prepare
+// text used by retained dialogs and an overlapping route before publishing its locale.
+const loadedScopes = new Map<LocaleCode, Set<CatalogScope>>()
 const pendingMessages = new Map<string, Promise<void>>()
+const requestedScopes = new Set<CatalogScope>(['auth'])
 
 /**
- * loadMessages installs one locale catalog and shares its pending import by scope.
- * Completed full catalogs also satisfy authentication requests. Failed imports release
- * pending state so later navigation can retry. Concurrent authentication and complete
- * catalogs merge their keys, preventing a smaller late import from replacing already
- * available console translations. The completed sets are updated only after installation,
- * so readiness describes the messages actually registered with vue-i18n.
+ * loadMessages installs one dictionary and shares its pending import by locale and scope.
+ * Full catalogs satisfy every scope, and ordinary-page catalogs also include auth text.
+ * Each request records demand before awaiting resources so language changes can prepare
+ * domains requested by an overlapping navigation. Failed imports release pending state
+ * and remain retryable through the next caller.
+ *
+ * Dictionaries merge into vue-i18n because base, domain, and complete imports can finish
+ * in any order. Shared fields come from the same modules in each entry, so a late base
+ * load retains a domain's additional fields and supplies identical shared labels.
  */
-async function loadMessages(locale: LocaleCode, scope: 'auth' | 'full'): Promise<void> {
-  if (loadedLocales.has(locale) || (scope === 'auth' && loadedAuthLocales.has(locale))) {
+async function loadMessages(locale: LocaleCode, scope: CatalogScope): Promise<void> {
+  requestedScopes.add(scope)
+  const installed = loadedScopes.get(locale)
+  if (
+    installed?.has('full') ||
+    installed?.has(scope) ||
+    (scope === 'auth' && installed?.has('base'))
+  ) {
     return
   }
 
@@ -128,15 +159,20 @@ async function loadMessages(locale: LocaleCode, scope: 'auth' | 'full'): Promise
   const pending = pendingMessages.get(key)
   if (pending) return pending
 
-  const loader = (scope === 'auth' ? authLocaleLoaders : localeLoaders)[locale]
-  if (!loader) throw new Error(`Missing language catalog: ${locale}`)
+  const directory = availableLocales.find((item) => item.code === locale)?.catalog
+  const loader = catalogModules[`./locales/${directory}/${scopeFiles[scope]}.ts`]
+  if (!loader) throw new Error(`Missing language catalog: ${locale}/${scope}`)
   const request = loader()
     .then((module) => {
-      // Merge the smaller catalog into any concurrently completed full catalog so a
-      // late authentication load cannot remove console labels already available to navigation.
-      i18n.global.mergeLocaleMessage(locale, module.default)
-      loadedAuthLocales.add(locale)
-      if (scope === 'full') loadedLocales.add(locale)
+      // Merge independently completed domains so a late shared catalog cannot replace
+      // text already installed by another page or an explicit complete-catalog request.
+      const messages = ['providers', 'settings', 'ops'].includes(scope)
+        ? { admin: module.default }
+        : module.default
+      i18n.global.mergeLocaleMessage(locale, messages)
+      const completed = loadedScopes.get(locale) ?? new Set<CatalogScope>()
+      completed.add(scope)
+      loadedScopes.set(locale, completed)
     })
     .finally(() => {
       pendingMessages.delete(key)
@@ -151,8 +187,8 @@ async function loadMessages(locale: LocaleCode, scope: 'auth' | 'full'): Promise
 export function loadLocaleMessages(locale: LocaleCode): Promise<void> {
   return loadMessages(locale, 'full')
 }
-// AUTH_PATHS selects the smaller catalog before authentication page mounting; other
-// console routes require the complete catalog through the same shared loader.
+// AUTH_PATHS selects authentication text; other routes use shared page messages
+// plus the administrator domains selected by their reachable components.
 const AUTH_PATHS = new Set([
   '/login',
   '/register',
@@ -163,20 +199,55 @@ const AUTH_PATHS = new Set([
 
 /**
  * loadRouteLocaleMessages prepares active and default-language messages before mounting.
- * Authentication and legal routes use their smaller catalog. If the language changes
- * while imports are pending, repeat preparation for the newly selected locale before
- * allowing navigation to render translated content.
+ * Authentication and legal routes use their smaller catalog. Other pages receive base
+ * messages and any required administrator domains before mounting. If language changes
+ * while imports are pending, preparation repeats for the newly selected locale.
+ *
+ * Route records are prepared before their component runs, including labels in dialogs
+ * that the page can open later. Every domain is requested for both the selected and
+ * default language, keeping missing-message resolution usable during navigation.
  */
 export async function loadRouteLocaleMessages(path: string): Promise<void> {
-  const scope =
-    AUTH_PATHS.has(path) || path.startsWith('/auth/') || path.startsWith('/legal/')
-      ? 'auth'
-      : 'full'
+  // Vue Router accepts case differences and trailing slashes by default. Match that
+  // admission policy so a direct URL receives the same domains as sidebar navigation.
+  const normalizedPath = path.toLowerCase().replace(/\/+$/, '') || '/'
+  const scopes: CatalogScope[] =
+    AUTH_PATHS.has(normalizedPath) ||
+    normalizedPath.startsWith('/auth/') ||
+    normalizedPath.startsWith('/legal/')
+      ? ['auth']
+      : ['base', ...(routeDomains[normalizedPath] ?? [])]
   let current: LocaleCode
   do {
     current = getLocale()
-    await Promise.all([loadMessages(DEFAULT_LOCALE, scope), loadMessages(current, scope)])
+    await Promise.all(
+      scopes.flatMap((scope) => [
+        loadMessages(DEFAULT_LOCALE, scope),
+        loadMessages(current, scope),
+      ]),
+    )
   } while (current !== getLocale())
+}
+
+// prepareRequestedMessages loads every requested scope for a language change and its
+// default language. Navigation may add a domain while imports are pending, so the
+// function repeats until the requested set stays unchanged across one awaited batch.
+// The caller checks switch ownership before publishing the prepared locale.
+//
+// Demand is shared across locales and retains earlier page requirements. Preparing
+// that set also covers mounted dialogs and a route whose original-language load is
+// still running; each underlying loader shares requests and merges completed fields.
+async function prepareRequestedMessages(locale: LocaleCode): Promise<void> {
+  let scopeCount: number
+  do {
+    scopeCount = requestedScopes.size
+    await Promise.all(
+      [...requestedScopes].flatMap((scope) => [
+        loadMessages(DEFAULT_LOCALE, scope),
+        loadMessages(locale, scope),
+      ]),
+    )
+  } while (scopeCount !== requestedScopes.size)
 }
 
 // initI18n loads the current and default catalogs before applying document
@@ -228,8 +299,7 @@ export async function setLocale(value: string, persistAccount = true): Promise<v
   // Advance ownership before loading catalogs so a slower earlier request cannot
   // publish after a newer requested language takes ownership.
   const generation = ++switchGeneration
-  const scope = loadedLocales.size > 0 ? 'full' : 'auth'
-  await Promise.all([loadMessages(DEFAULT_LOCALE, scope), loadMessages(locale, scope)])
+  await prepareRequestedMessages(locale)
   if (generation !== switchGeneration) return
   i18n.global.locale.value = locale
   // Persist the browser preference before page metadata and refresh events so

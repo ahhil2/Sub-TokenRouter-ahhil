@@ -1,3 +1,5 @@
+import { paymentFieldMessages } from './shared'
+
 // settings.ts supplies Simplified Chinese messages for site and gateway
 // configuration, error handling, and TLS fingerprint settings. Form labels,
 // effective-value hints, validation failures, and save results describe the
@@ -900,6 +902,7 @@ export default {
       moveDown: '下移',
     },
     payment: {
+      ...paymentFieldMessages,
       title: '支付设置',
       description: '配置支付系统选项',
       configGuide: '支付配置指南',
@@ -968,8 +971,6 @@ export default {
       providerStripe: 'Stripe',
       providerAirwallex: 'Airwallex',
       providerEPUSDT: 'EPUSDT / GMPay（EPay 协议）',
-      field_epusdtApiBaseHint:
-        '填写 EPUSDT HTTPS 基础地址，例如 https://pay.example.com。使用 EPay submit.php 跳转协议和 MD5 签名，密钥填写商户 API Key 的 secret。',
       typeDisabled: '类型已禁用',
       enableTypesFirst: '请先在上方启用至少一种服务商',
       easypayRedirect: '跳转',
@@ -992,39 +993,10 @@ export default {
       testConnection: '测试连接',
       testingConnection: '测试中...',
       connectionTestSuccess: '易支付连接测试成功',
-      field_apiBase: 'API 基础地址',
-      field_notifyUrl: '异步通知地址',
-      field_returnUrl: '同步跳转地址',
       callbackBaseUrl: '回调基础地址',
-      field_privateKey: '私钥',
-      field_publicKey: '公钥',
-      field_mpAppId: '公众号 App ID',
-      field_mchId: '商户号',
-      field_apiV3Key: 'API v3 密钥',
-      field_publicKeyId: '公钥 ID',
-      field_certSerial: '证书序列号',
-      field_h5AppName: 'H5 应用名称',
-      field_h5AppUrl: 'H5 应用地址',
       wxpayConfigHint:
         '微信支付通常只需要填写 App ID。公众号 App ID、H5 应用名称、H5 应用地址仅在公众号支付或 H5 场景有特殊要求时再填写。',
       wxpayAdvancedOptions: '微信支付高级可选项',
-      field_secretKey: '密钥',
-      field_clientId: 'Client ID',
-      field_apiKey: 'API Key',
-      field_publishableKey: '公开密钥',
-      field_webhookSecret: 'Webhook 密钥',
-      field_countryCode: '国家/地区代码',
-      field_currency: '支付币种',
-      field_accountId: 'Airwallex 账户 ID',
-      field_airwallexApiBaseHint:
-        '必须和 API Key 所属环境一致：沙箱/测试密钥使用 https://api-demo.airwallex.com/api/v1，生产密钥使用 https://api.airwallex.com/api/v1。环境混用会返回 credentials_invalid / Access Denied。',
-      field_paymentCurrencyHint:
-        '默认 CNY。Stripe 和 Airwallex 可按账户支持从下拉项选择 HKD、USD 等币种；微信、支付宝、易支付仍按 CNY。',
-      field_accountIdHint:
-        '不涉及多账户、组织级密钥或连接账户收款时可以不填；单账户 Scoped API Key 会默认使用所选账户。',
-      field_cid: '支付渠道 ID',
-      field_cidAlipay: '支付宝渠道 ID',
-      field_cidWxpay: '微信渠道 ID',
       easypayCustomMethods: '易支付自定义支付方式',
       easypayMerchantOrderNoCompatibility: '兼容下单交易号回显商户订单号',
       easypayMerchantOrderNoCompatibilityHint:

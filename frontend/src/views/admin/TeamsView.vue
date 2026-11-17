@@ -321,6 +321,7 @@
       @dissolve="askDissolve"
     />
     <TeamStatsModal
+      v-if="statisticsOpened"
       :show="Boolean(statisticsTeam)"
       :team="statisticsTeam"
       @close="statisticsTeam = null"
@@ -339,13 +340,12 @@
 
 <script setup lang="ts">
 import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { AdminTeam } from '@/api/admin/teams'
 import type { TeamMembership } from '@/api/team'
 import TeamActionMenu from '@/components/admin/team/TeamActionMenu.vue'
-import TeamStatsModal from '@/components/admin/team/TeamStatsModal.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -374,6 +374,12 @@ import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 // computed from the trigger and viewport, and the currently selected team supplies the
 // action target.
 
+// TeamStatsModal loads its chart dependencies when statistics first opens. The
+// retained instance continues to observe closure and invalidate pending requests.
+const TeamStatsModal = defineAsyncComponent(
+  () => import('@/components/admin/team/TeamStatsModal.vue'),
+)
+
 // Translation, notifications, and step-up authentication support team actions, while
 // list and dialog state belong to this page.
 const { t } = useI18n()
@@ -399,6 +405,9 @@ const detailsMembers = ref<TeamMembership[]>([])
 const detailsLoading = ref(false)
 const transferUserID = ref<number | null>(null)
 const statisticsTeam = ref<AdminTeam | null>(null)
+// statisticsOpened keeps the statistics component mounted after its first opening
+// so its visibility watcher handles subsequent closure and team changes.
+const statisticsOpened = ref(false)
 const dissolvingTeam = ref<AdminTeam | null>(null)
 const menuTeam = ref<AdminTeam | null>(null)
 const menuPosition = ref<{
@@ -632,8 +641,11 @@ const closeDetails = () => {
 }
 
 // openStatistics selects the team displayed by the statistics dialog component.
+// Its first call admits the asynchronous chart module; later calls reuse the
+// mounted dialog and its request invalidation watcher.
 const openStatistics = (team: AdminTeam) => {
   statisticsTeam.value = team
+  statisticsOpened.value = true
 }
 
 // forceTransfer submits the selected team and member through step-up authentication.

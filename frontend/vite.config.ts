@@ -5,8 +5,11 @@ import { resolve } from 'path'
 
 // vite.config.ts configures development proxying and the browser assets embedded
 // in release builds. Development documents receive public settings and branding
-// before application startup. Vendor groups keep payment SDK initialization in
-// the payment flow, while Vue and localization use their configured runtime builds.
+// before application startup. File-saver and XLSX use separate vendor groups;
+// canvas, GIF, and virtual-table dependencies follow their feature imports.
+// Remaining vendor modules are shared according to their importers. Vue and
+// localization use their configured runtime builds; payment SDKs initialize in
+// the payment flow.
 
 // escapeHtml encodes HTML-sensitive characters in injected branding text and attributes.
 function escapeHtml(value: string): string {
@@ -149,6 +152,7 @@ export default defineConfig(({ mode }) => {
             groups: [
               {
                 test: /node_modules/,
+                debugName: 'feature-vendors',
                 includeDependenciesRecursively: false,
                 // name assigns vendor modules to bundles according to their runtime role.
                 // Payment namespaces receive separate chunks so loading a shared
@@ -171,7 +175,11 @@ export default defineConfig(({ mode }) => {
                     }
 
                     // Chart rendering libraries share a group used by analytics pages.
-                    if (id.includes('/chart.js/') || id.includes('/vue-chartjs/')) {
+                    if (
+                      id.includes('/chart.js/') ||
+                      id.includes('/vue-chartjs/') ||
+                      id.includes('/@kurkle/color/')
+                    ) {
                       return 'vendor-chart'
                     }
 
@@ -192,11 +200,15 @@ export default defineConfig(({ mode }) => {
                     }
 
                     const features: Array<[string, string[]]> = [
-                      ['excel', ['/xlsx/', '/file-saver/']],
+                      ['excel', ['/xlsx/']],
+                      ['download', ['/file-saver/']],
                       ['canvas', ['/fabric/']],
+                      ['gif', ['/gifuct-js/', '/js-binary-schema-parser/']],
+                      ['virtual', ['/@tanstack/vue-virtual/', '/@tanstack/virtual-core/']],
                       ['animation', ['/lottie-web/']],
                       ['cropper', ['/cropperjs/', '/@cropper/']],
-                      ['markdown', ['/marked/', '/dompurify/']],
+                      ['markdown', ['/marked/']],
+                      ['sanitize', ['/dompurify/']],
                       ['qrcode', ['/qrcode/']],
                       ['onboarding', ['/driver.js/']],
                       ['drag', ['/vue-draggable-plus/', '/sortablejs/']],
@@ -204,8 +216,9 @@ export default defineConfig(({ mode }) => {
                     for (const [name, packages] of features) {
                       if (packages.some((part) => id.includes(part))) return `vendor-${name}`
                     }
-                    // Remaining vendor modules use the shared miscellaneous dependency group.
-                    return 'vendor-misc'
+                    // Let the bundler share remaining modules by their actual importers;
+                    // combining unrelated dependencies makes lazy features load with common clients.
+                    return null
                   }
 
                   return null

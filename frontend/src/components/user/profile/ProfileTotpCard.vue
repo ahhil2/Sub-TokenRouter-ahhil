@@ -78,16 +78,19 @@
 import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
 import { useLeavingPresence } from '@/composables/useLeavingPresence'
 import Icon from '@/components/icons/Icon.vue'
-import { ref, onMounted } from 'vue'
+import { defineAsyncComponent, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { totpAPI } from '@/api'
 import type { TotpStatus } from '@/api/totp.types'
-import TotpSetupModal from './TotpSetupModal.vue'
 import TotpDisableDialog from './TotpDisableDialog.vue'
 
 // ProfileTotpCard.vue shows the account TOTP status and opens its setup or disable flow.
 // Successful dialogs trigger a status refresh, and leaving-presence state keeps each dialog
 // mounted until its shell completes the exit transition and cleanup.
+
+// TotpSetupModal loads its QR encoder when setup presence first admits the dialog.
+// Each enrollment still receives a fresh instance after the previous exit completes.
+const TotpSetupModal = defineAsyncComponent(() => import('./TotpSetupModal.vue'))
 
 // Translations describe the current two-factor status and the setup or disable action
 // selected from the profile security section.

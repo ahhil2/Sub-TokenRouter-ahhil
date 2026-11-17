@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
-import { flushPromises, mount, DOMWrapper, enableAutoUnmount } from '@vue/test-utils'
+import {
+  flushPromises as flushVuePromises,
+  mount,
+  DOMWrapper,
+  enableAutoUnmount,
+} from '@vue/test-utils'
 
 import SettingsView from '../SettingsView.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -17,6 +22,15 @@ import LocalizedEditor from '@/components/common/LocalizedEditor.vue'
 // distinguish saved bulk fields from pending search drafts, and fake intervals
 // exercise polling cleanup while normal animation timers continue to run. Each
 // mounted page is unmounted after its scenario to release component resources.
+
+// flushPromises waits for requests, first-visit panel imports, and their Vue updates.
+// Tests call it after navigation or dialog actions so assertions observe controls
+// that have finished loading their asynchronous component modules.
+async function flushPromises() {
+  await flushVuePromises()
+  await vi.dynamicImportSettled()
+  await flushVuePromises()
+}
 
 // Hoisted API and notification spies expose persisted values and completion order
 // while each scenario supplies the server responses required by its controls.
@@ -804,7 +818,6 @@ function mountView() {
         ProviderIcon: true,
         ConfirmDialog: true,
         PaymentProviderList: true,
-        PaymentProviderDialog: true,
         GroupBadge: true,
         GroupOptionItem: true,
         ProxySelector: true,
@@ -1316,6 +1329,8 @@ describe('admin SettingsView payment visible method controls', () => {
     getProviders.mockClear()
     const payload = { provider_key: 'easypay', name: 'New provider', enabled: false, config: {} }
     createProvider.mockResolvedValue({ data: { id: 71, ...payload } })
+    wrapper.getComponent({ name: 'PaymentProviderList' }).vm.$emit('create')
+    await flushPromises()
     wrapper.getComponent({ name: 'PaymentProviderDialog' }).vm.$emit('save', payload)
     await flushPromises()
     expect(createProvider).toHaveBeenCalledWith(payload)
@@ -1328,6 +1343,51 @@ describe('admin SettingsView payment visible method controls', () => {
     expect(getProviders.mock.invocationCallOrder[0]).toBeLessThan(
       updateSettings.mock.invocationCallOrder[0]!,
     )
+  })
+
+  // A provider editor first opens after its asynchronous module resolves. Existing
+  // values initialize that first editor, and closing retains its instance for a fresh create draft.
+  it('loads the provider editor on demand and resets its retained instance when reopened', async () => {
+    const provider = {
+      id: 72,
+      provider_key: 'easypay',
+      name: 'Existing checkout',
+      config: { apiUrl: 'https://pay.example.test', pid: 'existing-pid' },
+      supported_types: ['alipay'],
+      enabled: true,
+      payment_mode: 'qrcode',
+      refund_enabled: false,
+      allow_user_refund: false,
+      limits: '',
+      sort_order: 0,
+    }
+    getProviders.mockResolvedValue({ data: [provider] })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'PaymentProviderDialog' }).exists()).toBe(false)
+    await openPaymentTab(wrapper)
+    expect(wrapper.findComponent({ name: 'PaymentProviderDialog' }).exists()).toBe(false)
+
+    const list = wrapper.getComponent({ name: 'PaymentProviderList' })
+    list.vm.$emit('edit', provider)
+    await flushPromises()
+    const editor = wrapper.getComponent({ name: 'PaymentProviderDialog' })
+    const nameInput = document.querySelector<HTMLInputElement>('#provider-form input')
+    expect(nameInput?.value).toBe('Existing checkout')
+    await new DOMWrapper(nameInput!).setValue('Unsaved provider draft')
+    editor.vm.$emit('close')
+    await flushPromises()
+    expect(wrapper.getComponent({ name: 'PaymentProviderDialog' }).vm.$).toBe(editor.vm.$)
+    expect(editor.props('show')).toBe(false)
+
+    list.vm.$emit('create')
+    await flushPromises()
+    expect(wrapper.getComponent({ name: 'PaymentProviderDialog' }).vm.$).toBe(editor.vm.$)
+    expect(editor.props('show')).toBe(true)
+    expect(editor.props('editing')).toBeNull()
+    expect(document.querySelector<HTMLInputElement>('#provider-form input')?.value).toBe('')
+    expect(createProvider).not.toHaveBeenCalled()
+    expect(updateProvider).not.toHaveBeenCalled()
   })
 
   // Deleting a payment provider requires confirmation from the page dialog.
@@ -2850,6 +2910,7 @@ describe('admin SettingsView payment visible method controls', () => {
     const wrapper = mountView()
     await flushPromises()
     await wrapper.get('#settings-tab-features').trigger('click')
+    await flushPromises()
     const dayInput = wrapper.get('input#registration-ip-interval-days')
     const hourInput = wrapper.get('input#registration-ip-interval-hours')
     expect((dayInput.element as HTMLInputElement).value).toBe('2')
@@ -2880,6 +2941,7 @@ describe('admin SettingsView payment visible method controls', () => {
     const wrapper = mountView()
     await flushPromises()
     await wrapper.get('#settings-tab-features').trigger('click')
+    await flushPromises()
     await wrapper.get('input#registration-ip-interval-days').setValue(days)
     await wrapper.get('input#registration-ip-interval-hours').setValue(hours)
     await wrapper.find('form').trigger('submit')

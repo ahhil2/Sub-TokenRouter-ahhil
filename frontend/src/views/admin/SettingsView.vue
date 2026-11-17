@@ -239,6 +239,7 @@
 
       <!-- Provider dialogs own nested forms, so they remain siblings of the settings form and cannot submit its drafts. -->
       <PaymentProviderDialog
+        v-if="providerDialogOpened"
         :ref="payment.providerDialogRef"
         :show="showProviderDialog"
         :saving="providerSaving"
@@ -300,17 +301,6 @@ import { useAgreementSettings } from './settings/useAgreementSettings'
 import { useFeaturesSettings } from './settings/useFeaturesSettings'
 import { useIdentitySettings } from './settings/useIdentitySettings'
 import { useWebSearchSettings } from './settings/useWebSearchSettings'
-import AdminApiKeySettings from './settings/AdminApiKeySettings.vue'
-import GatewayPolicySettings from './settings/GatewayPolicySettings.vue'
-import SecuritySettings from './settings/SecuritySettings.vue'
-import IdentitySettings from './settings/IdentitySettings.vue'
-import UserDefaultsSettings from './settings/UserDefaultsSettings.vue'
-import GatewayForwardingSettings from './settings/GatewayForwardingSettings.vue'
-import GeneralSettings from './settings/GeneralSettings.vue'
-import AgreementSettings from './settings/AgreementSettings.vue'
-import FeatureSettings from './settings/FeatureSettings.vue'
-import PaymentSettings from './settings/PaymentSettings.vue'
-import EmailSettings from './settings/EmailSettings.vue'
 import { createSettingsPayload } from './settings/settingsPayload'
 import { createSettingsHydration } from './settings/settingsHydration'
 import { useSettingsPersistence } from './settings/settingsPersistence'
@@ -322,21 +312,42 @@ import { useSettingsPersistence } from './settings/settingsPersistence'
  * snapshots. Controllers start during root setup, including feature polling for
  * an initial Features tab; editable panels mount after the bulk loader finishes.
  *
- * Tab containers mount on first visit and remain mounted while hidden, retaining
- * drafts and child save registrations. Auxiliary endpoints load for their own
- * visited sections and capture separate clean snapshots. The bulk target includes
- * changed search configuration and registers before
- * the eight dedicated targets and mounted child targets. Payment dialogs stay
+ * Tab modules load and mount on first visit, then remain mounted while hidden,
+ * retaining drafts and child save registrations. Auxiliary endpoints load for
+ * their visited sections and capture separate clean snapshots. The bulk target
+ * includes changed search configuration and registers before the eight dedicated
+ * targets and mounted child targets. Payment dialogs stay
  * outside the root form because their submissions belong to immediate provider
- * operations. The page delegates bulk persistence ordering to settingsPersistence.ts.
+ * operations. The provider editor first loads on opening and remains mounted for
+ * its closing transition and later resets. The page delegates bulk persistence
+ * ordering to settingsPersistence.ts.
  */
-// PaymentProviderDialog and BackupSettings defer their editor modules until the
-// corresponding dialog or tab first mounts, then Vue reuses the resolved components.
+// Panel modules load when their visited containers first mount; page controllers
+// retain the shared drafts and register the page's save operations during setup.
+const AdminApiKeySettings = defineAsyncComponent(() => import('./settings/AdminApiKeySettings.vue'))
+const GatewayPolicySettings = defineAsyncComponent(
+  () => import('./settings/GatewayPolicySettings.vue'),
+)
+const SecuritySettings = defineAsyncComponent(() => import('./settings/SecuritySettings.vue'))
+const IdentitySettings = defineAsyncComponent(() => import('./settings/IdentitySettings.vue'))
+const UserDefaultsSettings = defineAsyncComponent(
+  () => import('./settings/UserDefaultsSettings.vue'),
+)
+const GatewayForwardingSettings = defineAsyncComponent(
+  () => import('./settings/GatewayForwardingSettings.vue'),
+)
+const GeneralSettings = defineAsyncComponent(() => import('./settings/GeneralSettings.vue'))
+const AgreementSettings = defineAsyncComponent(() => import('./settings/AgreementSettings.vue'))
+const FeatureSettings = defineAsyncComponent(() => import('./settings/FeatureSettings.vue'))
+const PaymentSettings = defineAsyncComponent(() => import('./settings/PaymentSettings.vue'))
+const EmailSettings = defineAsyncComponent(() => import('./settings/EmailSettings.vue'))
+const BackupSettings = defineAsyncComponent(() => import('./settings/BackupSettings.vue'))
+
+// The provider editor stays outside the settings form, and its first opening
+// admits the asynchronous component before the controller initializes its draft.
 const PaymentProviderDialog = defineAsyncComponent(
   () => import('@/components/admin/payment/PaymentProviderDialog.vue'),
 )
-
-const BackupSettings = defineAsyncComponent(() => import('./settings/BackupSettings.vue'))
 
 // Page services supply translated feedback and the shared reactive settings draft
 // used by the domain controllers and their bulk persistence coordinator.
@@ -474,6 +485,24 @@ const {
   handleTestProviderDraft,
   handleDeleteProvider,
 } = payment
+
+// providerDialogOpened retains the editor after its first opening so BaseDialog
+// can finish closing and the controller can reset the same instance on reopening.
+const providerDialogOpened = ref(false)
+watch(showProviderDialog, (show) => {
+  if (show) providerDialogOpened.value = true
+})
+
+// The first open can precede the asynchronous editor instance. Populate its draft
+// when the ref arrives, using the latest requested provider if loading was delayed.
+watch(payment.providerDialogRef, (dialog) => {
+  if (!dialog || !showProviderDialog.value) return
+  if (editingProvider.value) {
+    dialog.loadProvider(editingProvider.value)
+  } else {
+    dialog.reset(enabledProviderKeyOptions.value[0]?.value || 'easypay')
+  }
+})
 
 /**
  * Save and discard activity disable the floating controls until their corresponding registry operation finishes.

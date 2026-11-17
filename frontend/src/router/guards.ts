@@ -85,7 +85,7 @@ export function installRouteGuards(router: Router): void {
 
   router.beforeEach(async (to, _from, next) => {
     // Load destination labels before resolving its title; authentication routes use
-    // their smaller catalog while console routes await the complete locale catalog.
+    // their smaller catalog while other routes await shared text and required domains.
     await loadRouteLocaleMessages(to.path)
     const authStore = useAuthStore()
     // Restore browser authentication before title and permission evaluation, then retain

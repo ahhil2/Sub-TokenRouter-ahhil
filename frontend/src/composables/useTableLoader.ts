@@ -5,15 +5,15 @@ import type { BasePaginationResponse, FetchOptions } from '@/api/common.types'
 import { getPersistedPageSize, setPersistedPageSize } from './usePersistedPageSize'
 
 // useTableLoader.ts loads paginated table data with reactive filters, debounced reloads,
-// and request cancellation. Each load aborts the previous controller, passes the current
-// page and raw parameter object to the caller's fetch function, and publishes the returned
-// rows and totals. Fetch implementations are responsible for honoring cancellation.
+// and request cancellation. Each accepted load aborts the previous controller and passes
+// the current page and raw parameter object to the caller's fetch function. Responses
+// publish rows and totals while their request signal remains active; transports should
+// honor that signal to release their network work promptly.
 //
-// Controller identity decides which completion may clear the loading flag, but successful
-// response writes have no identity guard. A fetch function that resolves after abort can
-// therefore overwrite newer data. Unmount aborts the current controller; this composable
-// does not explicitly cancel a pending debounced reload. Page changes retain filters and
-// reload from their chosen page.
+// Controller identity decides which completion may clear the loading flag. Unmount marks
+// the loader disposed before aborting the current request. A pending debounce callback
+// can still finish its delay, but the disposed loader declines its fetch. Page changes
+// retain filters and reload from their chosen page while the component remains mounted.
 
 // PaginationState holds the requested page and the server's result totals.
 interface PaginationState {
@@ -28,9 +28,9 @@ interface PaginationState {
 // TableLoaderOptions supplies paginated fetching, initial filters, and optional timing
 // defaults.
 interface TableLoaderOptions<T, P> {
-  // fetchFn receives pagination, a raw filter object, and the current AbortSignal. It must
-  // honor cancellation to prevent stale successful results from replacing newer rows in
-  // this loader.
+  // fetchFn receives pagination, a raw filter object, and the current AbortSignal. It should
+  // honor cancellation to stop superseded transport work; the loader checks the signal
+  // before publishing returned rows or reporting a failure.
   fetchFn: (
     page: number,
     pageSize: number,
@@ -49,13 +49,14 @@ interface TableLoaderOptions<T, P> {
 }
 
 // useTableLoader creates rows, filters, pagination, and loading actions for a component.
-// Invoke it during setup so unmount aborts the current request, and provide a fetch
-// function that honors its AbortSignal. Initial filters are shallow-copied and page size
-// defaults to runtime table preferences.
+// Invoke it during setup so unmount stops future fetching and aborts the current request.
+// Initial filters are shallow-copied and page size defaults to runtime table preferences.
 //
-// Each load replaces the controller before awaiting results. Identity guards loading
-// completion only; successful results are published directly. Debounced reload resets the
-// page when it executes, and this composable provides no explicit timer disposal.
+// Each accepted load replaces the controller before awaiting results. The request signal
+// guards result publication, while controller identity guards loading completion. Debounced
+// reload resets the page when it executes. Its timer may finish after unmount, but the
+// disposed loader resolves that invocation without allocating a new request controller or
+// calling the supplied fetch function.
 export function useTableLoader<T, P extends Record<string, any>>(
   options: TableLoaderOptions<T, P>,
 ) {
@@ -73,7 +74,10 @@ export function useTableLoader<T, P extends Record<string, any>>(
     pages: 0,
   })
 
+  // abortController owns cancellation for the current request; disposed prevents pending
+  // callbacks from starting another request after the component's unmount cleanup.
   let abortController: AbortController | null = null
+  let disposed = false
 
   // isAbortError recognizes DOM and Axios-style cancellation names and codes.
   const isAbortError = (error: any) => {
@@ -84,16 +88,20 @@ export function useTableLoader<T, P extends Record<string, any>>(
     )
   }
 
-  // load requests the current page and filters after aborting the prior controller. It
-  // passes the raw reactive parameter object, so fetch implementations decide when to
-  // snapshot or encode those values. Cancellation-shaped errors are absorbed; other
-  // failures are logged and rethrown.
+  // load requests the current page and filters after aborting the prior controller, or
+  // resolves immediately when the component has unmounted. It passes the raw reactive
+  // parameter object, so fetch implementations decide when to snapshot or encode those
+  // values. Cancellation-shaped errors are absorbed; current failures are logged and
+  // rethrown.
   //
-  // Rows and pagination totals are written after every successful response, including a
-  // response whose transport ignored abort. Controller identity prevents an older finally
-  // block from clearing a newer loading indicator, but does not suppress stale response
-  // data.
+  // Rows and pagination totals publish after success only while the request signal remains
+  // active, including when a transport ignores cancellation. Controller identity prevents
+  // an older finally block from clearing a newer request's loading indicator.
   const load = async () => {
+    // A queued debounce can execute after unmount; reject it before allocating a
+    // controller or starting fetch work for a component that has already left.
+    if (disposed) return
+
     // Abort prior transport work before replacing the controller so only the new request
     // owns completion of the loading indicator.
     if (abortController) {
@@ -158,9 +166,10 @@ export function useTableLoader<T, P extends Record<string, any>>(
     load()
   }
 
-  // Abort the last transport request when the component leaves; successful publication
-  // still depends on the fetch implementation respecting cancellation.
+  // Close request admission before aborting the active transport so a delayed search
+  // cannot create another controller after the component has released its current work.
   onUnmounted(() => {
+    disposed = true
     abortController?.abort()
   })
 

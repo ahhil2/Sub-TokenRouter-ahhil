@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import en from '../locales/en'
 import zh from '../locales/zh'
+import enBase from '../locales/en/base'
+import zhBase from '../locales/zh/base'
 import manifest from '../../../../backend/internal/pkg/locale/manifest.json'
 import ts from 'typescript'
 import { compileTemplate, parse } from 'vue/compiler-sfc'
@@ -16,14 +18,17 @@ import { compileTemplate, parse } from 'vue/compiler-sfc'
 interface SourceReferences {
   imports: string[] // Referenced module specifiers.
   keys: string[] // Literal translation arguments.
+  catalogPrefixes: string[] // Administrator key constants and dynamic key prefixes.
 }
 
 // sourceReferences extracts imports and literal translation calls from one source.
 // Vue scripts and compiled template expressions share the TypeScript visitor, so
 // quoted examples and comments remain data. Vue parse or compilation errors fail
 // the test immediately so malformed components remain visible as failures.
+// Administrator key strings and template prefixes also identify domains used by
+// stored labels or dynamically selected fields, which literal call checks omit.
 function sourceReferences(source: string, filename: string): SourceReferences {
-  const result: SourceReferences = { imports: [], keys: [] }
+  const result: SourceReferences = { imports: [], keys: [], catalogPrefixes: [] }
   const scripts: string[] = []
   if (filename.endsWith('.vue')) {
     const { descriptor, errors } = parse(source, { filename })
@@ -52,6 +57,18 @@ function sourceReferences(source: string, filename: string): SourceReferences {
   // Identifier and property calls cover script helpers and Vue's generated
   // context accesses; dynamic arguments remain outside this literal-key check.
   function visit(node: ts.Node): void {
+    const catalogText = ts.isStringLiteralLike(node)
+      ? node.text
+      : ts.isTemplateExpression(node)
+        ? node.head.text
+        : ''
+    if (
+      /^admin\.(providers|settings|ops|errorPassthrough|tlsFingerprintRouters|tlsFingerprintProfiles)(?:\.[\w]*)*$/.test(
+        catalogText,
+      )
+    ) {
+      result.catalogPrefixes.push(catalogText)
+    }
     if (
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
       node.moduleSpecifier &&
@@ -102,12 +119,54 @@ function filesUnder(path: string): string[] {
   })
 }
 
-// userSources finds user-facing entry pages and the local modules reachable
-// through their parsed module references. It skips catalog and router files,
-// resolves known source extensions, deduplicates paths, and returns sorted filenames for
-// deterministic diagnostics.
+// sourceCache shares parsed production dependencies across page coverage checks.
+// Tests parse each reachable file once while keeping fixture parsing independent.
+const sourceCache = new Map<string, SourceReferences>()
+
+// referencesForFile reads and parses one production file on its first visit.
+// Later callers share the cached references and treat their arrays as immutable;
+// file or parsing errors propagate to the coverage test.
+function referencesForFile(file: string): SourceReferences {
+  let references = sourceCache.get(file)
+  if (!references) {
+    references = sourceReferences(readFileSync(file, 'utf8'), file)
+    sourceCache.set(file, references)
+  }
+  return references
+}
+
+// sourcesFrom follows local module references from the supplied entry files.
+// Catalogs and router modules are excluded because they describe navigation and
+// loading rather than rendered page dependencies. Dynamic components remain included
+// so dialogs opened after navigation also have their translation resources checked.
+function sourcesFrom(entries: string[]): string[] {
+  const queue = [...entries]
+  const visited = new Set<string>()
+  while (queue.length) {
+    const file = queue.pop()!
+    if (visited.has(file) || file.includes('/i18n/locales/') || file.includes('/router/')) continue
+    visited.add(file)
+    for (const reference of referencesForFile(file).imports) {
+      if (!reference.startsWith('@/') && !reference.startsWith('.')) continue
+      const base = reference.startsWith('@/')
+        ? join(root, reference.slice(2))
+        : resolve(dirname(file), reference)
+      // Resolve local module filenames before traversal so a shared dialog's imports
+      // receive the same coverage as the page that opens it.
+      const target = [base, `${base}.ts`, `${base}.vue`, join(base, 'index.ts')].find(
+        (candidate) => /\.(vue|ts)$/.test(candidate) && existsSync(candidate),
+      )
+      if (target && target.startsWith(root)) queue.push(target)
+    }
+  }
+  return [...visited].sort()
+}
+
+// userSources finds user-facing pages, the root shell, and reachable local modules.
+// Shared translation editors are included because administrators can reuse their
+// generic fields outside a domain configuration page.
 function userSources(): string[] {
-  const queue = [
+  return sourcesFrom([
     ...['views/user', 'views/public', 'views/auth'].flatMap((path) => filesUnder(join(root, path))),
     ...[
       'views/HomeView.vue',
@@ -116,29 +175,40 @@ function userSources(): string[] {
       'views/NotFoundView.vue',
       'components/common/LocalizedEditor.vue',
       'components/common/LocalizedFieldsEditor.vue',
+      'App.vue',
     ].map((path) => join(root, path)),
-  ]
-  const visited = new Set<string>()
-  while (queue.length) {
-    const file = queue.pop()!
-    if (visited.has(file) || file.includes('/i18n/locales/') || file.includes('/router/')) continue
-    visited.add(file)
-    const source = readFileSync(file, 'utf8')
-    for (const reference of sourceReferences(source, file).imports) {
-      if (!reference.startsWith('@/') && !reference.startsWith('.')) continue
-      const base = reference.startsWith('@/')
-        ? join(root, reference.slice(2))
-        : resolve(dirname(file), reference)
-      // Try the supported source filenames in import resolution order so
-      // extensionless references reach their actual TypeScript or Vue module
-      // before traversal continues.
-      const target = [base, `${base}.ts`, `${base}.vue`, join(base, 'index.ts')].find(
-        (candidate) => /\.(vue|ts)$/.test(candidate) && existsSync(candidate),
-      )
-      if (target && target.startsWith(root)) queue.push(target)
+  ])
+}
+
+// adminEntries reads actual administrator route paths and their lazy component targets.
+// Redirect records have no component and are omitted. Parsing the production route
+// table makes a newly added destination participate in resource coverage automatically.
+function adminEntries(): Array<{ path: string; file: string }> {
+  const filename = join(root, 'router/routes/admin.ts')
+  const source = ts.createSourceFile(
+    filename,
+    readFileSync(filename, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+  )
+  const entries: Array<{ path: string; file: string }> = []
+  // visit finds component-bearing route objects and resolves their application imports.
+  function visit(node: ts.Node): void {
+    if (ts.isObjectLiteralExpression(node)) {
+      const properties = node.properties.filter(ts.isPropertyAssignment)
+      const path = properties.find((property) => property.name.getText(source) === 'path')
+      const component = properties.find((property) => property.name.getText(source) === 'component')
+      if (path && ts.isStringLiteral(path.initializer) && component) {
+        const target = sourceReferences(component.getText(source), filename).imports.find(
+          (reference) => reference.startsWith('@/'),
+        )
+        if (target) entries.push({ path: path.initializer.text, file: join(root, target.slice(2)) })
+      }
     }
+    ts.forEachChild(node, visit)
   }
-  return [...visited].sort()
+  visit(source)
+  return entries
 }
 
 // hasKey reports whether a dotted catalog path resolves to a string value.
@@ -242,22 +312,42 @@ describe('translation source parsing', () => {
 
 describe('user translation resources', () => {
   // User-facing pages and reachable local modules call translations with literal
-  // keys. Both runtime catalogs resolve every collected key to a string,
+  // keys. Both ordinary-page catalogs resolve every collected key to a string,
   // reporting missing paths with their source file.
   it('resolves literal keys referenced by user pages and their dependencies', () => {
     const missing = new Set<string>()
     for (const file of userSources()) {
-      const source = readFileSync(file, 'utf8')
-      for (const key of sourceReferences(source, file).keys) {
+      for (const key of referencesForFile(file).keys) {
         for (const [code, messages] of [
-          ['en', en],
-          ['zh-Hans', zh],
+          ['en', enBase],
+          ['zh-Hans', zhBase],
         ] as const) {
           if (!hasKey(messages, key)) missing.add(`${code}: ${key} (${file.slice(root.length)})`)
         }
       }
     }
     expect([...missing]).toEqual([])
+  })
+
+  // Shared badges, payment errors, and model controls use administrator-namespaced
+  // constants and dynamic keys. Their reachable prefixes resolve in the ordinary
+  // dictionary before any administrator page loads a larger domain.
+  it('retains shared administrator labels and dynamic payment error fields', () => {
+    const english = flatStrings(en)
+    const missing = new Set<string>()
+    for (const file of userSources()) {
+      for (const prefix of referencesForFile(file).catalogPrefixes) {
+        for (const key of Object.keys(english).filter((key) => key.startsWith(prefix))) {
+          if (!hasKey(enBase, key) || !hasKey(zhBase, key)) missing.add(`${key}: ${file}`)
+        }
+      }
+    }
+    expect([...missing]).toEqual([])
+    expect(enBase.admin.settings.payment).toMatchObject(
+      Object.fromEntries(
+        Object.entries(en.admin.settings.payment).filter(([key]) => key.startsWith('field_')),
+      ),
+    )
   })
 
   // English and Chinese catalogs describe the same interface with matching
@@ -283,5 +373,35 @@ describe('user translation resources', () => {
   it('has a loadable catalog for every production language', () => {
     for (const language of manifest.locales)
       expect(existsSync(join(root, 'i18n/locales', language.catalog, 'index.ts'))).toBe(true)
+  })
+})
+
+describe('administrator route translation resources', () => {
+  // A cold navigation prepares each real route and all statically reachable or lazy
+  // dialogs. Literal keys, stored key strings, and dynamic administrator prefixes
+  // must resolve before the page mounts in either supported language.
+  it.each(adminEntries())('$path loads its reachable administrator domains', async (entry) => {
+    vi.resetModules()
+    const { i18n, loadRouteLocaleMessages } = await import('../index')
+    i18n.global.locale.value = 'zh-Hans'
+    await loadRouteLocaleMessages(entry.path)
+    const prefixes = new Set(
+      sourcesFrom([entry.file, join(root, 'App.vue')]).flatMap(
+        (file) => referencesForFile(file).catalogPrefixes,
+      ),
+    )
+    const missing: string[] = []
+    for (const [locale, full] of [
+      ['en', en],
+      ['zh-Hans', zh],
+    ] as const) {
+      const messages = flatStrings(i18n.global.getLocaleMessage(locale))
+      for (const [key, value] of Object.entries(flatStrings(full))) {
+        if ([...prefixes].some((prefix) => key.startsWith(prefix)) && messages[key] !== value) {
+          missing.push(`${locale}: ${key}`)
+        }
+      }
+    }
+    expect(missing).toEqual([])
   })
 })

@@ -234,6 +234,70 @@ describe('provider cache and incremental refresh lifecycle', () => {
     getAllGroups.mockResolvedValue([])
   })
 
+  // Metadata can finish after a visitor leaves the provider route. Late completion
+  // must leave page listeners detached and automatic refresh stopped after unmount.
+  it('keeps page resources stopped when metadata completes after unmount', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    const windowListeners = vi.spyOn(window, 'addEventListener')
+    const documentListeners = vi.spyOn(document, 'addEventListener')
+    const proxies = deferred<[]>()
+    const groups = deferred<[]>()
+    getAllProxies.mockReturnValueOnce(proxies.promise)
+    getAllGroups.mockReturnValueOnce(groups.promise)
+    localStorage.setItem(
+      'provider-auto-refresh',
+      JSON.stringify({ enabled: true, interval_seconds: 5 }),
+    )
+    const wrapper = mountView()
+    await flushPromises()
+    expect(getAllProxies).toHaveBeenCalledTimes(1)
+    expect(getAllGroups).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+    windowListeners.mockClear()
+    documentListeners.mockClear()
+    getBatchTodayStats.mockClear()
+
+    proxies.resolve([])
+    groups.resolve([])
+    await flushPromises()
+    expect(
+      windowListeners.mock.calls.filter(([type]) => type === 'scroll' || type === 'resize'),
+    ).toEqual([])
+    expect(documentListeners.mock.calls.filter(([type]) => type === 'click')).toEqual([])
+    await vi.advanceTimersByTimeAsync(12000)
+    expect(listWithEtag).not.toHaveBeenCalled()
+    expect(getBatchTodayStats).not.toHaveBeenCalled()
+  })
+
+  // The page stays mounted while metadata loads slowly. Resolving both requests
+  // starts the saved refresh cadence, and leaving afterward stops further network refreshes.
+  it('resumes saved automatic refresh after delayed metadata while the page is mounted', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    const proxies = deferred<[]>()
+    const groups = deferred<[]>()
+    getAllProxies.mockReturnValueOnce(proxies.promise)
+    getAllGroups.mockReturnValueOnce(groups.promise)
+    localStorage.setItem(
+      'provider-auto-refresh',
+      JSON.stringify({ enabled: true, interval_seconds: 5 }),
+    )
+    const wrapper = mountView()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(12000)
+    expect(listWithEtag).not.toHaveBeenCalled()
+
+    proxies.resolve([])
+    groups.resolve([])
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(listWithEtag).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(12000)
+    expect(listWithEtag).toHaveBeenCalledTimes(1)
+  })
+
   // Two forced queries for the same provider can finish in reverse order.
   // The latest request owns both the rendered balance and the persisted session snapshot after both responses arrive.
   it('keeps the newer usage response when an earlier query completes last', async () => {

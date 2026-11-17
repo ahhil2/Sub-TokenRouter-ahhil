@@ -1,3 +1,5 @@
+import { providerStatusMessages } from './shared'
+
 // providers.ts supplies Simplified Chinese text for provider administration
 // controls. Shared entries describe provider credentials, model rules,
 // scheduling, quota limits, and connectivity tests so creation, editing, and
@@ -5,6 +7,7 @@
 
 export default {
   providers: {
+    ...providerStatusMessages,
     jev: {
       description: '使用 API Key 调用 TypeSafe 的 SystemOne 决策模型。',
     },
@@ -435,14 +438,7 @@ export default {
     },
     allPrivacyModes: '全部Privacy状态',
     privacyUnset: '未设置',
-    privacyTrainingOff: '已关闭训练数据共享',
-    privacyCfBlocked: '被 Cloudflare 拦截，训练可能仍开启',
-    privacyFailed: '关闭训练数据共享失败',
-    privacyAntigravitySet: '已关闭遥测和营销邮件',
-    privacyAntigravityFailed: '隐私设置失败',
     setPrivacy: '设置隐私',
-    subscriptionAbnormal: '异常',
-    subscriptionExpires: '到期',
     capacity: {
       windowCost: {
         blocked: '5h窗口费用超限，提供商暂停调度',

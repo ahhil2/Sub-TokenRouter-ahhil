@@ -859,7 +859,9 @@ import type { ClaudeModel } from '@/api/models.types'
 // Incremental replacements update references held by open dialogs, and refresh
 // admission pauses around menus, dialogs, and recent edits. Export runs through
 // step-up authorization, and bulk actions retain failed selections when the
-// server supplies enough detail for another attempt.
+// server supplies enough detail for another attempt. Auxiliary metadata may
+// finish after route exit, so its completion installs page resources only while
+// the page remains mounted.
 
 // Dialog component loaders start when their retained first-open container mounts.
 // Vue reuses each resolved module while hidden instances keep their editor state.
@@ -2709,14 +2711,21 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 }
 
+// pageDisposed prevents delayed metadata from installing global listeners or
+// restarting refresh after the page's unmount cleanup has already run.
+let pageDisposed = false
+
 // Start the list independently, then wait for proxy and group metadata before
-// installing page listeners and resuming interval refresh.
+// installing page listeners and resuming interval refresh on the mounted page.
 onMounted(async () => {
   load()
   const [proxiesResult, groupsResult] = await Promise.allSettled([
     adminAPI.proxies.getAll(),
     adminAPI.groups.getOptions(true),
   ])
+  // Route exit can finish cleanup while metadata is pending. Discard that
+  // completion before it can register resources owned by the departed page.
+  if (pageDisposed) return
   if (proxiesResult.status === 'fulfilled') {
     proxies.value = proxiesResult.value
   } else {
@@ -2739,9 +2748,11 @@ onMounted(async () => {
   }
 })
 
-// Remove listeners installed for this page so leaving the provider route cannot
-// reposition menus or process clicks on a later page.
+// Mark the page disposed before releasing its resources, so pending metadata
+// cannot install listeners or resume its refresh interval after route exit.
 onUnmounted(() => {
+  pageDisposed = true
+  pauseAutoRefresh()
   window.removeEventListener('scroll', handleScroll, true)
   window.removeEventListener('resize', handleViewportResize)
   document.removeEventListener('click', handleClickOutside)

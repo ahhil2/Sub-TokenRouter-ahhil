@@ -1,3 +1,5 @@
+import { providerStatusMessages } from './shared'
+
 // providers.ts supplies English text for provider administration controls.
 // Shared entries describe provider credentials, model rules, scheduling, quota
 // limits, and connectivity tests so creation, editing, and list views use
@@ -5,6 +7,7 @@
 
 export default {
   providers: {
+    ...providerStatusMessages,
     jev: {
       description: 'Call TypeSafe SystemOne decision models with an API key.',
     },
@@ -562,14 +565,7 @@ export default {
     },
     allPrivacyModes: 'All Privacy States',
     privacyUnset: 'Unset',
-    privacyTrainingOff: 'Training data sharing disabled',
-    privacyCfBlocked: 'Blocked by Cloudflare, training may still be on',
-    privacyFailed: 'Failed to disable training',
-    privacyAntigravitySet: 'Telemetry and marketing emails disabled',
-    privacyAntigravityFailed: 'Privacy setting failed',
     setPrivacy: 'Set Privacy',
-    subscriptionAbnormal: 'Abnormal',
-    subscriptionExpires: 'Expires',
     capacity: {
       windowCost: {
         blocked: '5h window cost exceeded, provider scheduling paused',

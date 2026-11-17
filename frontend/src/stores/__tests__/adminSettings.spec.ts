@@ -9,8 +9,9 @@ import { useAdminSettingsStore } from '../adminSettings'
  */
 
 const api = vi.hoisted(() => ({ settings: vi.fn(), payment: vi.fn() }))
-vi.mock('@/api', () => ({
-  adminAPI: { settings: { getSettings: api.settings }, payment: { getConfig: api.payment } },
+vi.mock('@/api/admin/settings', () => ({ getSettings: api.settings }))
+vi.mock('@/api/admin/payment', () => ({
+  adminPaymentAPI: { getConfig: api.payment },
 }))
 vi.mock('@/i18n', () => ({ getLocale: () => 'zh' }))
 

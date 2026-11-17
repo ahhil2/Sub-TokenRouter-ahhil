@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { onScopeDispose, ref } from 'vue'
-import { adminAPI } from '@/api'
+import { getSettings } from '@/api/admin/settings'
+import { adminPaymentAPI } from '@/api/admin/payment'
 import { getLocale } from '@/i18n'
 import type { CustomMenuItem } from '@/api/settings.types'
 
@@ -16,7 +17,8 @@ import type { CustomMenuItem } from '@/api/settings.types'
  * older completions cannot publish into either replacement. Local setters update
  * navigation immediately and attempt storage persistence. The store also owns an
  * operations-disabled listener, removed with pending publication ownership when
- * the Pinia scope is disposed.
+ * the Pinia scope is disposed. Direct settings and payment imports keep other
+ * administrator clients outside the shared navigation store's dependency graph.
  */
 /**
  * useAdminSettingsStore exposes navigation switches and custom menus through Pinia.
@@ -106,7 +108,7 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
     loading.value = true
     const request = {
       scope,
-      promise: Promise.all([adminAPI.settings.getSettings(force), adminAPI.payment.getConfig()])
+      promise: Promise.all([getSettings(force), adminPaymentAPI.getConfig()])
         .then(([settings, paymentConfigResp]) => {
           if (pending !== request || requestScope() !== scope) return
           opsMonitoringEnabled.value = settings.ops_monitoring_enabled ?? true
@@ -139,24 +141,24 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   }
 
   // setOpsMonitoringEnabledLocal publishes operations monitoring and attempts to persist
-  // the switch. It also marks settings loaded so ordinary fetch calls keep this locally
-  // learned value until a forced refresh.
+  // the switch. A subsequent settings response can replace this local navigation value
+  // when the combined fetch completes successfully.
   function setOpsMonitoringEnabledLocal(value: boolean) {
     opsMonitoringEnabled.value = value
     writeCachedBool('ops_monitoring_enabled_cached', value)
   }
 
   // setOpsRealtimeMonitoringEnabledLocal publishes realtime monitoring and attempts to
-  // persist the switch. It also marks settings loaded so ordinary fetch calls keep this
-  // locally learned value until a forced refresh.
+  // persist the switch. A subsequent settings response can replace this local navigation
+  // value when the combined fetch completes successfully.
   function setOpsRealtimeMonitoringEnabledLocal(value: boolean) {
     opsRealtimeMonitoringEnabled.value = value
     writeCachedBool('ops_realtime_monitoring_enabled_cached', value)
   }
 
   // setPaymentEnabledLocal publishes payment availability and attempts to persist the
-  // switch. It also marks settings loaded so ordinary fetch calls keep this locally
-  // learned value until a forced refresh.
+  // switch. A subsequent payment configuration response can replace this local navigation
+  // value when the combined fetch completes successfully.
   function setPaymentEnabledLocal(value: boolean) {
     paymentEnabled.value = value
     writeCachedBool('payment_enabled_cached', value)

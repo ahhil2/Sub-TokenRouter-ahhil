@@ -31,7 +31,8 @@ describe('Stripe lazy loading', () => {
   })
 
   // Production chunk selection distinguishes payment SDKs from ordinary vendor dependencies.
-  // Exercising the configured naming callback protects branch ordering and the shared vendor default.
+  // The naming callback keeps payment namespaces separate and leaves other libraries
+  // available for the bundler to share according to their actual importing features.
   it('assigns payment SDKs to dedicated vendor chunks', async () => {
     const config = await viteConfig({ mode: 'production', command: 'build' })
     const output = config.build?.rolldownOptions?.output
@@ -42,7 +43,7 @@ describe('Stripe lazy loading', () => {
       throw new Error('Expected vendor chunk naming callback')
     expect(group.name('/node_modules/@stripe/stripe-js/dist/pure.js')).toBe('vendor-stripe')
     expect(group.name('/node_modules/@airwallex/components-sdk/index.js')).toBe('vendor-airwallex')
-    expect(group.name('/node_modules/ordinary-library/index.js')).toBe('vendor-misc')
+    expect(group.name('/node_modules/ordinary-library/index.js')).toBeNull()
     expect(group.name('/src/views/user/StripePaymentView.vue')).toBeNull()
   })
 })
