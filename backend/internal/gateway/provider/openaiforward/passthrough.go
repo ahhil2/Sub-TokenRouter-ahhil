@@ -10,10 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
@@ -51,6 +52,12 @@ type PassthroughInput struct {
 	ReasoningEffort        *string   // previously recorded effective effort
 	Stream                 bool      // incoming streaming mode choice
 	StartedAt              time.Time // request arrival timestamp
+	// SanitizedToolSchemasPlatform, SanitizedReasoningReplay, and SanitizedInputItemIDs
+	// forward prelude completion state so CompatibilityBodyWithSkip avoids repeating
+	// multi-megabyte scans when input and tool schemas remain unchanged.
+	SanitizedToolSchemasPlatform string // platform whose tool schemas were sanitized
+	SanitizedReasoningReplay     bool   // reasoning.content replay already sanitized
+	SanitizedInputItemIDs        bool   // input item IDs already sanitized
 }
 
 // ImageBilling carries the image charge identity and its output/input size tiers.
@@ -79,6 +86,15 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 	profile := p.Profile()
 	body, canonicalImageIntentBody, reqModel := in.Body, in.CanonicalImageIntentBody, in.Model
 	attemptImageIntentInvalidated, reasoningEffort, reqStream, startTime := in.ImageIntentInvalidated, in.ReasoningEffort, in.Stream, in.StartedAt
+	skipSchemasPlatform := in.SanitizedToolSchemasPlatform
+	skipReasoningReplay := in.SanitizedReasoningReplay
+	skipInputItemIDs := in.SanitizedInputItemIDs
+	prepareRecorded := false
+	defer func() {
+		if !prepareRecorded && !startTime.IsZero() {
+			timing.ObserveProviderPrepare(ctx, time.Since(startTime))
+		}
+	}()
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
 	// Patch the model field in raw bytes so large bodies and unknown extension
@@ -108,7 +124,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		// Synthesize omitted Codex instructions before OAuth preparation; invalid
 		// supplied values have already been rejected, so explicit text keeps its
 		// caller-provided instruction content.
-		if p.CodexModel(policyInputModel) && !gjson.GetBytes(body, "instructions").Exists() {
+		if p.CodexModel(policyInputModel) && !wirejson.ParseView(body).Get("instructions").Exists() {
 			nextBody, setErr := sjson.SetBytes(body, "instructions", openai.DefaultCodexSynthInstructions(policyInputModel))
 			if setErr != nil {
 				return nil, fmt.Errorf("set passthrough codex instructions: %w", setErr)
@@ -125,8 +141,14 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		}
 		if normalized {
 			body = normalizedBody
+			// OAuth normalization can move prompt arrays (including additional_tools)
+			// into input or wrap scalar input into an array, so all input-dependent
+			// prelude checks must run again on the transformed payload.
+			skipSchemasPlatform = ""
+			skipReasoningReplay = false
+			skipInputItemIDs = false
 		}
-		reqStream = gjson.GetBytes(body, "stream").Bool()
+		reqStream = wirejson.ParseView(body).Get("stream").Bool()
 
 		// Namespace raw metadata before deriving the fingerprint; header construction
 		// later consumes the staged IDs for the same selected provider attempt.
@@ -168,7 +190,20 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 			responsesLite = p.LiteHeader()
 		}
 		responsesLite = responsesLite || p.LitePayloadFlag(body)
-		normalizedBody, normalized, normalizeErr := p.CompatibilityBody(body, responsesLite)
+		var (
+			normalizedBody []byte
+			normalized     bool
+			normalizeErr   error
+		)
+		if skipAware, ok := p.(interface {
+			CompatibilityBodyWithSkip(body []byte, lite bool, skipToolSchemasPlatform string, skipReasoningReplay, skipInputItemIDs bool) ([]byte, bool, error)
+		}); ok {
+			normalizedBody, normalized, normalizeErr = skipAware.CompatibilityBodyWithSkip(body, responsesLite, skipSchemasPlatform, skipReasoningReplay, skipInputItemIDs)
+		} else {
+			// Alternate forwarding adapters can implement the original compatibility entry
+			// point; run its complete checks when they cannot accept prelude observations.
+			normalizedBody, normalized, normalizeErr = p.CompatibilityBody(body, responsesLite)
+		}
 		if normalizeErr != nil {
 			return nil, fmt.Errorf("normalize passthrough Responses compatibility: %w", normalizeErr)
 		}
@@ -220,7 +255,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		}
 	}
 
-	policyModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	policyModel := strings.Clone(strings.TrimSpace(wirejson.ParseView(body).Get("model").String()))
 	if policyModel == "" {
 		policyModel = reqModel
 	}
@@ -290,7 +325,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 	var deliveryErr error
 	var imageOutputSizes []string
 	for {
-		actualModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+		actualModel := strings.Clone(strings.TrimSpace(wirejson.ParseView(body).Get("model").String()))
 		if actualModel == "" {
 			actualModel = reqModel
 		}
@@ -315,6 +350,10 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 			return nil, ctx.Err()
 		}
 
+		if !prepareRecorded && !startTime.IsZero() {
+			prepareRecorded = true
+			timing.ObserveProviderPrepare(ctx, time.Since(startTime))
+		}
 		upstreamStart := time.Now()
 		resp, err = p.SendPass(upstreamReq)
 		p.Latency(time.Since(upstreamStart))
@@ -355,7 +394,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 			// budget flag.
 			if retryBody, fallbackModel, retry := p.CompactRetry(requestedModel, body, resp.StatusCode, upstreamMsg, probeBody, compactModelFallbackRetried); retry {
 				p.CompactObserved(resp, probeBody, upstreamMsg)
-				fromModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+				fromModel := strings.Clone(strings.TrimSpace(wirejson.ParseView(body).Get("model").String()))
 				body = retryBody
 				upstreamPassthroughModel = fallbackModel
 				compactModelFallbackRetried = true

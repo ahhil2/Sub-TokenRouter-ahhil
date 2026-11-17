@@ -38,20 +38,36 @@ func TestUsageLogFromService_IncludesOpenAIWSMode(t *testing.T) {
 	require.False(t, FromUsageAdmin(httpLog).OpenAIWSMode)
 }
 
-// TestUsageLogTimingFromService_MapsStages supplies first-byte offset,
-// attempt count and connection reuse. It requires those observations to
-// appear in the returned timing response.
+// TestUsageLogTimingFromService_MapsStages supplies transport observations and
+// payload measurements from both fork timing formats. It checks encoded fields
+// retain measured zero and older ingress bytes while absent stages stay omitted.
 func TestUsageLogTimingFromService_MapsStages(t *testing.T) {
 	t.Parallel()
 
 	var row usage.UsageLog
-	require.NoError(t, json.Unmarshal([]byte(`{"Timings":{"values":{"upstream_first_response_byte_ms":1200,"upstream_attempt_count":2,"upstream_connection_reused":1}}}`), &row))
+	require.NoError(t, json.Unmarshal([]byte(`{"Timings":{"values":{"upstream_first_response_byte_ms":1200,"upstream_attempt_count":2,"upstream_connection_reused":1,"request_body_received_bytes":64,"request_raw_bytes":64,"request_decoded_bytes":256,"request_compressed":1,"upstream_request_bytes":280,"request_body_decode_ms":0,"provider_prepare_ms":5}}}`), &row))
 	got := TimingFromUsage(&row)
 	require.NotNil(t, got)
 	require.Equal(t, int64(1200), *got.UpstreamFirstResponseByteMs)
 	require.Equal(t, int64(2), *got.UpstreamAttemptCount)
 	require.NotNil(t, got.UpstreamConnectionReused)
 	require.True(t, *got.UpstreamConnectionReused)
+	encoded, err := json.Marshal(got)
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &fields))
+	for name, want := range map[string]float64{
+		"request_body_received_bytes": 64,
+		"request_raw_bytes":           64,
+		"request_decoded_bytes":       256,
+		"request_compressed":          1,
+		"upstream_request_bytes":      280,
+		"request_body_decode_ms":      0,
+		"provider_prepare_ms":         5,
+	} {
+		require.Equal(t, want, fields[name], name)
+	}
+	require.NotContains(t, fields, "scheduler_select_ms")
 }
 
 // TestUsageLogFromServiceSharesAverageTPS exercises both usage response roles

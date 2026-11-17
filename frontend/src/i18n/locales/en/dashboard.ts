@@ -233,6 +233,9 @@ export default {
       tooManyRules: 'Up to 100 model redirect rules are allowed',
     },
     fallbackWhenGroupUnavailable: 'Auto fallback when unavailable',
+    forceClaude1hCache: 'Force Claude 1h cache',
+    forceClaude1hCacheHint:
+      'Rewrites existing Claude ephemeral prompt cache lifetimes on requests from this key to 1h.',
     statusLabel: 'Status',
     selectStatus: 'Select status',
     saving: 'Saving...',

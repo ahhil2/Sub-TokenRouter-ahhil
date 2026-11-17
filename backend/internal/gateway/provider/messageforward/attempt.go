@@ -89,7 +89,7 @@ type attempt struct {
 // synchronous forwarding; another provider attempt receives another state
 // instance.
 func newAttempt(s *Runtime, c HTTPBoundary, provider *gatewayprovider.ExecutionProvider) *attempt {
-	return &attempt{s: s, c: c, provider: provider, state: &AttemptState{}}
+	return &attempt{s: s, c: c, provider: provider, state: &AttemptState{PrepareStartedAt: time.Now()}}
 }
 
 // input captures provider presence and startup failure policy for the
@@ -282,15 +282,19 @@ func (a *attempt) PlatformModel(model string) string {
 	return gatewayprovider.ExecutionModelPolicy(a.provider).AnthropicUpstream(model)
 }
 
-// InjectTTL reports whether current provider and runtime policy permit cache
-// TTL injection.
-func (a *attempt) InjectTTL(ctx context.Context) bool {
-	return a.s.injectTTL(ctx, a.provider)
+// InjectTTL reports whether current provider and per-Key runtime policy permit
+// cache TTL injection for the resolved upstream model.
+func (a *attempt) InjectTTL(ctx context.Context, model string) bool {
+	return a.s.injectTTL(ctx, a.provider, model)
 }
 
 // CacheTTL delegates one-hour TTL injection into Anthropic cache control
-// annotations.
+// annotations and marks the attempt state so buildPassthroughRequest does not
+// repeat the scan.
 func (a *attempt) CacheTTL(body []byte) []byte {
+	if a.state != nil {
+		a.state.CacheTTL1hApplied = true
+	}
 	return claude.InjectAnthropicCacheControlTTL1h(body)
 }
 

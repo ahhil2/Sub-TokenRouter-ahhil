@@ -107,4 +107,49 @@ describe('request timing grid', () => {
     expect(text.indexOf('8KB')).toBeLessThan(text.indexOf('requests.timing.events'))
     wrapper.unmount()
   })
+
+  // A timing record carries admission stages, preprocess sub-stages, post-slot attempt
+  // preparation, and timeline milestones. The test protects nesting preprocess sub-stages
+  // inside Stage 1 before Stage 2 post-slot preparation and Stage 3 timeline events.
+  it('nests preprocess substages before post-slot preparation and timeline milestones', () => {
+    const wrapper = mount(RequestTimingDetails, {
+      props: {
+        timing: {
+          request_decoded_bytes: 2048,
+          upstream_request_bytes: 4096,
+          request_compressed: 1,
+          request_body_read_ms: 0,
+          preprocess_ms: 16,
+          user_slot_wait_ms: 0,
+          provider_slot_wait_ms: 0,
+          request_body_decode_ms: 2,
+          bootstrap_ms: 14,
+          provider_prepare_ms: 18,
+          provider_slot_acquired_ms: 16,
+          upstream_wrote_request_ms: 34,
+          upstream_first_response_byte_ms: 534,
+        },
+      },
+    })
+    const text = wrapper.text()
+    expect(text).toContain('requests.decodedSize')
+    expect(text).toContain('2.0KB')
+    expect(text).toContain('requests.upstreamRequestSize')
+    expect(text).toContain('4.0KB')
+    expect(text).toContain('requests.requestCompressed')
+    expect(text).toContain('requests.timing.compressedYes')
+    expect(text).toContain('1. requests.timing.beforeSlot')
+    expect(text).toContain('requests.timing.preprocessSteps')
+    expect(text).toContain('2. requests.timing.afterSlot')
+    expect(text).toContain('3. requests.timing.events')
+    expect(text).toContain('+500ms')
+    expect(text.indexOf('requests.timing.preprocessSteps')).toBeLessThan(
+      text.indexOf('requests.timingNames.user_slot_wait_ms'),
+    )
+    expect(text.indexOf('requests.timing.afterSlot')).toBeLessThan(
+      text.indexOf('requests.timing.events'),
+    )
+    expect(text).not.toContain('requests.timingNames.moderation_external_ms')
+    wrapper.unmount()
+  })
 })

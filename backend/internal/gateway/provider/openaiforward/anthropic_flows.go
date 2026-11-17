@@ -94,6 +94,7 @@ func ForwardNativeMessages(ctx context.Context, body []byte, defaultMappedModel 
 	// can cause compatible upstreams to reject the request.
 	body = p.StripEmpty(body)
 	body = p.FilterSearch(body, upstreamModel)
+	body = p.CacheTTL(ctx, body, upstreamModel)
 
 	p.Log("[CN Anthropic passthrough] provider=%d(%s) platform=%s model=%s upstream=%s stream=%v",
 		profile.ID, profile.Name, profile.Platform, originalModel, upstreamModel, clientStream)

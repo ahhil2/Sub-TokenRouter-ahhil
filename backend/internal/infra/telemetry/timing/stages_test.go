@@ -140,6 +140,11 @@ func TestStagesIngressPartialReadDiagnostics(t *testing.T) {
 				got := stages.FailureSnapshot()
 				require.Equal(t, int64(100), got["request_content_length"])
 				require.Equal(t, int64(len(tc.data)), got["request_body_received_bytes"])
+				if n > 0 || tc.err == io.EOF {
+					require.Equal(t, int64(len(tc.data)), got["request_raw_bytes"])
+				} else {
+					require.NotContains(t, got, "request_raw_bytes")
+				}
 				require.Equal(t, int64(2000), got["request_body_read_started_ms"])
 				require.Equal(t, int64(7000), got["request_body_read_finished_ms"])
 				require.Equal(t, int64(5000), got["request_body_read_ms"])
@@ -190,5 +195,72 @@ func TestStagesIngressBlockedReadRemainsObservable(t *testing.T) {
 		got = stages.FailureSnapshot()
 		require.Equal(t, int64(61000), got["request_body_read_finished_ms"])
 		require.Equal(t, int64(1), got["request_body_read_failed"])
+	})
+}
+
+// TestStagesSubstageTelemetryAndAttemptRequestBytes exercises wire byte reads,
+// body-decode subtraction, pre-admission substages, and per-attempt preparation
+// across two exchanges. Initial admission totals remain exact while retry
+// attempts isolate their own preparation duration and request byte size.
+func TestStagesSubstageTelemetryAndAttemptRequestBytes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, s := WithStages(context.Background(), time.Now(), nil)
+		body := s.ReadBody(delayedStageBody{strings.NewReader("payload")})
+		readStart := time.Now()
+		raw, err := io.ReadAll(body)
+		require.NoError(t, err)
+		time.Sleep(150 * time.Millisecond)
+		ObserveBodyDecode(ctx, int64(len(raw)*2), true, time.Since(readStart))
+		// A second replay normalization over already-decompressed bytes must keep
+		// request_compressed=1 and accumulate decode time without re-subtracting wire wait.
+		replayStart := time.Now()
+		time.Sleep(20 * time.Millisecond)
+		ObserveBodyDecode(ctx, int64(len(raw)*2), false, time.Since(replayStart))
+
+		ObserveSubstage(ctx, "ingress_validate_ms", 25*time.Millisecond)
+		ObserveSubstage(ctx, "bootstrap_ms", 5*time.Millisecond)
+		ObserveSubstage(ctx, "moderation_extract_ms", 10*time.Millisecond)
+		ObserveSubstage(ctx, "moderation_external_ms", 320*time.Millisecond)
+		ObserveSubstage(ctx, "session_ms", 8*time.Millisecond)
+		ObserveSubstage(ctx, "scheduler_select_ms", 12*time.Millisecond)
+		time.Sleep(360 * time.Millisecond)
+
+		s.Admit()
+		// Post-admission substage calls during retries must not alter frozen admission metrics.
+		ObserveSubstage(ctx, "scheduler_select_ms", 999*time.Millisecond)
+
+		ObserveProviderPrepare(ctx, 40*time.Millisecond)
+		time.Sleep(40 * time.Millisecond)
+		attempt1 := s.BeginAttempt()
+		s.SetAttemptRequestBytes(attempt1, 16384)
+		attempt1Fail := s.AttemptFailureSnapshot()
+		require.Equal(t, int64(40), attempt1Fail["provider_prepare_ms"])
+		require.Equal(t, int64(16384), attempt1Fail["upstream_request_bytes"])
+
+		ObserveProviderPrepare(ctx, 15*time.Millisecond)
+		time.Sleep(15 * time.Millisecond)
+		attempt2 := s.BeginAttempt()
+		s.SetAttemptRequestBytes(attempt2, 8192)
+		s.FinishAttempt(attempt2)
+
+		snap := s.Snapshot()
+		require.Equal(t, int64(7), snap["request_raw_bytes"])
+		require.Equal(t, int64(14), snap["request_decoded_bytes"])
+		require.Equal(t, int64(1), snap["request_compressed"])
+		require.Equal(t, int64(170), snap["request_body_decode_ms"])
+		require.Equal(t, int64(25), snap["ingress_validate_ms"])
+		require.Equal(t, int64(5), snap["bootstrap_ms"])
+		require.Equal(t, int64(10), snap["moderation_extract_ms"])
+		require.Equal(t, int64(320), snap["moderation_external_ms"])
+		require.Equal(t, int64(8), snap["session_ms"])
+		require.Equal(t, int64(12), snap["scheduler_select_ms"])
+		require.Equal(t, int64(15), snap["provider_prepare_ms"])
+		require.Equal(t, int64(8192), snap["upstream_request_bytes"])
+		require.Equal(t, snap["provider_slot_acquired_ms"], snap["request_body_read_ms"]+snap["preprocess_ms"]+snap["user_slot_wait_ms"]+snap["provider_slot_wait_ms"])
+
+		failSnap := s.FailureSnapshot()
+		require.Equal(t, int64(170), failSnap["request_body_decode_ms"])
+		require.Equal(t, int64(15), failSnap["provider_prepare_ms"])
+		require.Equal(t, int64(8192), failSnap["upstream_request_bytes"])
 	})
 }

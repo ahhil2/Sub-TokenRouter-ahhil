@@ -210,3 +210,37 @@ func TestRunContentModerationDisabledBypassesReview(t *testing.T) {
 	require.Equal(t, 1, logs.FilterMessage("content_moderation.gateway_check_start").Len())
 	require.Equal(t, 1, logs.FilterMessage("content_moderation.gateway_check_done").Len())
 }
+
+// TestBuildContentModerationInputReusesSnapshotUntilBodyChanges publishes a
+// Cyber request snapshot and builds moderation inputs before and after body
+// replacement. Identical protocol and backing bytes populate PreExtracted, while
+// a rewritten slice clears PreExtracted so moderation reparses the new payload.
+func TestBuildContentModerationInputReusesSnapshotUntilBodyChanges(t *testing.T) {
+	c := newContentModerationHelperTestContext()
+	body := []byte(`{"input":[{"type":"message","role":"user","content":"check this prompt"}]}`)
+	SetOpenAICyberWarningRequestSnapshot(c, moderation.ContentModerationProtocolOpenAIResponses, body)
+
+	reused := BuildContentModerationInput(
+		GatewayModerationEndpoints{},
+		c,
+		nil,
+		authctx.AuthSubject{UserID: 42},
+		moderation.ContentModerationProtocolOpenAIResponses,
+		"gpt-5",
+		body,
+	)
+	require.NotNil(t, reused.PreExtracted)
+	require.Equal(t, "check this prompt", reused.PreExtracted.Text)
+
+	rewritten := []byte(`{"input":[{"type":"message","role":"user","content":"rewritten prompt"}]}`)
+	invalidated := BuildContentModerationInput(
+		GatewayModerationEndpoints{},
+		c,
+		nil,
+		authctx.AuthSubject{UserID: 42},
+		moderation.ContentModerationProtocolOpenAIResponses,
+		"gpt-5",
+		rewritten,
+	)
+	require.Nil(t, invalidated.PreExtracted)
+}

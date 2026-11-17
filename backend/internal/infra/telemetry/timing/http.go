@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
 // http.go records external HTTP durations under normalized dependency labels.
@@ -72,6 +74,13 @@ func InstrumentClient(client *http.Client) *http.Client {
 func Do(client *http.Client, req *http.Request) (*http.Response, error) {
 	if client == nil {
 		client = http.DefaultClient
+	}
+	if req != nil {
+		if s := StagesFromContext(req.Context()); s != nil {
+			if attempt := telemetry.RequestAttemptFromContext(req.Context()); attempt.Number > 0 && req.ContentLength >= 0 {
+				s.SetAttemptRequestBytes(int64(attempt.Number), req.ContentLength)
+			}
+		}
 	}
 	if req == nil || !Active(req.Context()) {
 		return client.Do(req)

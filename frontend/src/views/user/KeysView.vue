@@ -798,6 +798,21 @@
           <Toggle v-model="formData.fallback_when_group_unavailable" size="sm" />
         </div>
 
+        <!-- This switch rewrites existing Claude ephemeral cache markers on requests from this key to a one-hour lifetime. -->
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('keys.forceClaude1hCache') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+              {{ t('keys.forceClaude1hCacheHint') }}
+            </p>
+          </div>
+          <Toggle
+            v-model="formData.force_claude_1h_cache"
+            size="sm"
+            data-test="force-claude-1h-cache-toggle"
+          />
+        </div>
+
         <!-- Model redirects are edited as rows; removing every row submits an empty mapping object during update. -->
         <ModelMappingEditor
           v-model="formData.model_mapping_rows"
@@ -1969,6 +1984,7 @@ const formData = ref({
   composite_groups: [] as Array<ReturnType<typeof newCompositeBinding>>, // Stable prefix-to-group draft rows.
   status: 'active' as 'active' | 'inactive', // Editable active/inactive selection.
   fast_mode_policy: 'follow_request' as ApiKeyFastModePolicy, // Request Fast-mode override policy.
+  force_claude_1h_cache: false, // Forced Claude 1h cache override flag.
   // billing_mode selects how preferred_subscription_id is submitted: subscription
   // mode sends the chosen ID, and other modes send null. Editing omits both
   // fields when their draft values match the selected key's stored billing values.
@@ -2720,6 +2736,7 @@ const editKey = (key: ApiKey) => {
     // Terminal server states display as inactive in this two-state editor; submission separately decides whether a status update is allowed for the persisted state.
     status: key.status === 'active' ? 'active' : 'inactive',
     fast_mode_policy: key.fast_mode_policy ?? 'follow_request',
+    force_claude_1h_cache: key.force_claude_1h_cache ?? false,
     billing_mode: key.billing_mode ?? 'auto',
     preferred_subscription_id: key.preferred_subscription_id ?? null,
     model_mapping_rows: Object.entries(key.model_mapping ?? {})
@@ -2956,6 +2973,7 @@ const submitKeyForm = async () => {
             }))
           : undefined,
         fast_mode_policy: formData.value.fast_mode_policy,
+        force_claude_1h_cache: formData.value.force_claude_1h_cache,
         model_mapping: modelMapping,
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
@@ -2999,6 +3017,7 @@ const submitKeyForm = async () => {
             }))
           : undefined,
         fast_mode_policy: formData.value.fast_mode_policy,
+        force_claude_1h_cache: formData.value.force_claude_1h_cache,
         billing_mode: formData.value.billing_mode,
         preferred_subscription_id:
           formData.value.billing_mode === 'subscription'
@@ -3150,6 +3169,7 @@ const closeModals = () => {
     composite_groups: [],
     status: 'active',
     fast_mode_policy: 'follow_request',
+    force_claude_1h_cache: false,
     billing_mode: 'auto',
     preferred_subscription_id: null,
     model_mapping_rows: [],

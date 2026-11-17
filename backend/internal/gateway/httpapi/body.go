@@ -3,7 +3,9 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
@@ -11,19 +13,36 @@ import (
 // body.go reads request bodies and adapts lenient JSON normalization errors for
 // HTTP handlers. Client JSON can contain raw control bytes that a strict parser
 // rejects inside strings. Gateway adapters delegate that compatibility pass to
-// the OpenAI normalizer and translate its expanded-size limit into the HTTP
-// error type consumed by endpoint handlers.
+// the OpenAI normalizer, record decoded payload telemetry, and translate its
+// expanded-size limit into the HTTP error type consumed by endpoint handlers.
+
+// gatewayRequestBodyMaxInitCap bounds initial buffer preallocation for
+// authenticated gateway JSON uploads so multi-megabyte histories avoid repeated
+// growth copies without trusting arbitrary Content-Length headers.
+const gatewayRequestBodyMaxInitCap = 8 << 20
 
 // ReadLenientJSONRequestBodyWithPrealloc reads and decodes the body before
 // escaping raw control bytes inside JSON strings. maxNormalizedBytes limits the
-// normalized result; read and decoding failures stop processing before normalization.
-// The caller still performs structural JSON validation on successful output.
+// normalized result; read and decoding failures stop processing before normalization,
+// while successful reads record decoded payload bytes and elapsed decoding time.
 func ReadLenientJSONRequestBodyWithPrealloc(req *http.Request, maxNormalizedBytes int64) ([]byte, error) {
-	body, err := ReadRequestBodyWithPrealloc(req)
+	maxInitCap := gatewayRequestBodyMaxInitCap
+	if maxNormalizedBytes > 0 && maxNormalizedBytes < int64(maxInitCap) {
+		maxInitCap = int(maxNormalizedBytes)
+	}
+	startedAt := time.Now()
+	body, compressed, err := httpx.ReadRequestBodyWithMaxPrealloc(req, maxInitCap)
 	if err != nil {
 		return nil, err
 	}
-	return NormalizeLenientJSONRequestBody(body, maxNormalizedBytes)
+	normalized, err := NormalizeLenientJSONRequestBody(body, maxNormalizedBytes)
+	if err != nil {
+		return nil, err
+	}
+	if req != nil {
+		timing.ObserveBodyDecode(req.Context(), int64(len(normalized)), compressed, time.Since(startedAt))
+	}
+	return normalized, nil
 }
 
 // NormalizeLenientJSONRequestBody normalizes client JSON and translates size failures
@@ -40,13 +59,22 @@ func NormalizeLenientJSONRequestBody(body []byte, limit int64) ([]byte, error) {
 	return result, err
 }
 
-// ReadRequestBodyWithPrealloc delegates body reading and decompression to httpx.
-// A nil request or body returns nil without error. The reader consumes the body;
-// successful decoding updates encoding and length metadata, while callers that
-// need to reread input install a replacement body themselves.
+// ReadRequestBodyWithPrealloc delegates body reading and decompression to httpx
+// with the authenticated gateway preallocation bound and records decoded payload
+// telemetry. A nil request or body returns nil without error. The reader consumes
+// the body; successful decoding updates encoding and length metadata, while callers
+// that need to reread input install a replacement body themselves.
 // httpx can truncate decoded bytes at 64 MiB without a size error. Callers
 // validate completeness, supply any limit on encoded or unencoded input, and
 // close the original body after its use.
 func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
-	return httpx.ReadRequestBodyWithPrealloc(req)
+	startedAt := time.Now()
+	body, compressed, err := httpx.ReadRequestBodyWithMaxPrealloc(req, gatewayRequestBodyMaxInitCap)
+	if err != nil {
+		return nil, err
+	}
+	if req != nil {
+		timing.ObserveBodyDecode(req.Context(), int64(len(body)), compressed, time.Since(startedAt))
+	}
+	return body, nil
 }

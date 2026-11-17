@@ -353,6 +353,10 @@ app 为所有需要幂等的用户和管理员 HTTP 处理器绑定同一个协�
 
 没有 usage 的失败请求在 `failure_timings` 保留上述诊断。正文读取失败，或正文读取、入口至审核、入口至认证结束任一达到 3 秒时，系统日志记录 `gateway.ingress_timing` 和请求 ID；字段仅包含数值计时、字节数和状态。应用观测从到达应用开始，不能区分应用之前的客户端网络与代理缓冲，需要结合代理和客户端计时。
 
+为细化准备阶段与载荷体积诊断，`detailed_timing` 与失败阶段快照还会按实际执行路径附带可选字段：`request_raw_bytes`（入站原始读取字节）、`request_decoded_bytes`（解压与宽容 JSON 规范化后的字节）、`request_compressed`（入站压缩标记，`0` 或 `1`）、`upstream_request_bytes`（当次上游尝试实际发送字节），以及 `request_body_decode_ms`、`ingress_validate_ms`、`bootstrap_ms`、`moderation_extract_ms`、`moderation_external_ms`、`session_ms`、`scheduler_select_ms`、`provider_prepare_ms` 等子阶段耗时。其中准入前子阶段属于 `preprocess_ms` 的细分观测，`provider_prepare_ms` 记录取得提供商槽位后到当次上游交换开始前的报文准备耗时，不改变前述四段准入耗时的求和关系。
+
+请求体大小显示按 `request_raw_bytes`、历史记录的 `request_body_received_bytes`、`request_content_length` 顺序选择首个已记录值，零字节也视为已记录。管理员 Excel 导出的阶段详情保留这些原始字段和新增子阶段，历史记录缺失的值留空。
+
 首事件允许正常元数据，排除心跳和空的保活 delta。有效内容包含正文、明文思考、工具名称及实际参数，排除单独的角色、ID、空占位、签名和密文；重复的完整终态不延长内容输出区间。`first_visible_output_ms` 表示成功写入最终下游 writer，`first_downstream_flush_ms` 表示包含上游事件的首次 HTTP Flush，可由元数据触发。二者不证明客户端已经收到或渲染内容，本地产生的错误与排队心跳不建立这些交付指标。
 
 平均输出 TPS 使用同一上游尝试的 `输出 token × 1000 /（upstream_finished_ms − upstream_started_ms）`，即输出 token 除以上游总耗时秒数，由服务端统一保留一位小数。分母包含等待首字、接收正文和最终用量的时间，排队和之前尝试的耗时归属于各自阶段。上游须正常完成、usage 完整、输出 token 和耗时均为正；流式、单块和非流式文本响应都可计算。没有完整计时快照的历史记录返回 `null`。
