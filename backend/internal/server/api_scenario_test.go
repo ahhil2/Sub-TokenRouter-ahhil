@@ -52,8 +52,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
-// Public panel responses expose selected user fields while administrator
-// responses carry management details and configured-state flags. These cases
+// api_scenario_test.go verifies public and administrator API response fields.
+// Public responses expose user fields while administrator responses carry
+// management details and configured-state flags. These cases
 // cross identity/httpapi/session_handler.go, apikey/httpapi/key_handler.go,
 // usage/httpapi/usage_handler.go, billing/httpapi/subscription_handler.go,
 // billing/httpapi/admin_subscription_handler.go,
@@ -586,7 +587,7 @@ func TestAPIContracts(t *testing.T) {
 			name: "GET /api/v1/groups/available",
 			setup: func(t *testing.T, deps *contractDeps) {
 				t.Helper()
-				// User group responses expose public fields and the session-isolation switch.
+				// User group responses include pricing eligibility and session isolation.
 				deps.groupRepo.SetActive([]routing.Group{
 					{
 						ID:             10,
@@ -625,6 +626,7 @@ func TestAPIContracts(t *testing.T) {
 						"description": "desc",
 						"display_brand": "",
 						"rate_multiplier": 1.5,
+						"identity_discount_exempt": false,
 						"is_exclusive": false,
 						"status": "active",
 						"claude_code_only": false,
