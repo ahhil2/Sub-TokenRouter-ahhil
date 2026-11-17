@@ -308,6 +308,8 @@ workflow 设置 `GOFLAGS=-count=1`，每次重新执行 Go 测试。同一分支
 
 Go 的模块、编译和 golangci-lint 缓存分 lint、test、build 三组，由 `.github/actions/setup-go` 恢复。缓存键由组名、`go.sum` 与 golangci-lint 版本的哈希、提交 SHA 组成，恢复时按前缀取最近一份。main 分支的 push 成功后保存缓存，go-integration 恢复 go-test 保存的 test 组。pnpm 的下载缓存由 `actions/setup-node` 管理。
 
+`go-lint` 在 GitHub 托管的 Linux 运行器上，先清理该作业不使用的预装 Android SDK 和 .NET SDK，再安装 Go 并恢复缓存，为缓存解压和临时编译文件腾出空间。清理前后输出 `df`，供日志核对；项目文件及 Go 缓存保留，自托管运行器跳过这一步。
+
 ### 本地全量验证
 
 `make verify` 依次执行 lint、test-tools、test、test-integration、build、test-embed、test-scripts 和 test-installer，任何一步失败就停止。它需要 Docker、PostgreSQL 18 的 `pg_dump` 和 `psql`、`.golangci-version` 声明的 golangci-lint，以及 Python 3.10+。macOS 上的安装器测试通过 Ubuntu 24.04 容器执行。发布前或改动范围很大时运行它。
