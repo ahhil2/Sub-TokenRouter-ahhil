@@ -346,6 +346,7 @@ describe('PaymentProviderDialog payment guide', () => {
       provider_key: 'easypay',
       instance_id: 23,
       config: {
+        allowMerchantOrderNoAsTradeNo: 'false',
         pid: 'pid-1',
         apiBase: 'https://pay.example.com',
         notifyUrl: 'https://example.com/api/v1/payment/webhook/easypay',
@@ -399,5 +400,98 @@ describe('PaymentProviderDialog payment guide', () => {
     await wrapper.find('form').trigger('submit.prevent')
 
     expect(wrapper.emitted('save')).toBeUndefined()
+  })
+})
+
+// A saved GMPay instance hydrates its public configuration with an omitted signing secret.
+// Saving retains the hosted mode and required method while suppressing automatic refund controls.
+it('saves GMPay as hosted cryptocurrency checkout with its existing secret omitted', async () => {
+  const provider = providerFactory({
+    provider_key: 'epusdt',
+    name: 'Crypto',
+    supported_types: ['epusdt'],
+    payment_mode: 'popup',
+    config: {
+      apiBase: 'https://pay.example.com',
+      pid: '1001',
+      currency: 'CNY',
+      notifyUrl: 'https://site.example.com/api/v1/payment/webhook/epusdt',
+    },
+  })
+  const wrapper = mountDialog({ editing: provider })
+  ;(
+    wrapper.vm as unknown as {
+      loadProvider: (provider: ProviderInstance) => void /* public draft hydration method */
+    }
+  ).loadProvider(provider)
+  await nextTick()
+  await wrapper.find('form').trigger('submit.prevent')
+  const event = wrapper.emitted('save')?.[0]?.[0] as Record<string, unknown>
+  expect(event).toMatchObject({
+    provider_key: 'epusdt',
+    payment_mode: 'popup',
+    supported_types: ['epusdt'],
+    refund_enabled: false,
+  })
+  expect(event.config).not.toHaveProperty('secretKey')
+  wrapper.unmount()
+})
+
+describe('PaymentProviderDialog merchant order number compatibility', () => {
+  // Existing drafts hydrate the switch from public configuration. Saving either toggle
+  // direction emits an explicit string so partial backend merges can also disable it.
+  it.each([undefined, 'false', 'true'])(
+    'round-trips and toggles the saved compatibility value %s',
+    async (value) => {
+      const provider = providerFactory({
+        provider_key: 'easypay',
+        supported_types: ['alipay'],
+        config: {
+          pid: 'merchant',
+          apiBase: 'https://pay.example.com',
+          ...(value === undefined ? {} : { allowMerchantOrderNoAsTradeNo: value }),
+        },
+      })
+      const wrapper = mountDialog({ editing: provider })
+      ;(
+        wrapper.vm as unknown as {
+          loadProvider: (provider: ProviderInstance) => void /* existing draft hydration */
+        }
+      ).loadProvider(provider)
+      await nextTick()
+      const toggle = wrapper.findComponent('[data-testid="easypay-merchant-order-number"]')
+      expect(toggle.attributes('checked')).toBe(String(value === 'true'))
+      await wrapper.find('form').trigger('submit.prevent')
+      const before = wrapper.emitted('save')?.[0]?.[0] as {
+        config: Record<string, string> /* emitted provider configuration */
+      }
+      expect(before.config.allowMerchantOrderNoAsTradeNo).toBe(value === 'true' ? 'true' : 'false')
+      toggle.vm.$emit('toggle')
+      await nextTick()
+      await wrapper.find('form').trigger('submit.prevent')
+      const after = wrapper.emitted('save')?.[1]?.[0] as {
+        config: Record<string, string> /* emitted provider configuration */
+      }
+      expect(after.config.allowMerchantOrderNoAsTradeNo).toBe(value === 'true' ? 'false' : 'true')
+      wrapper.unmount()
+    },
+  )
+
+  // Resetting a reused dialog creates a new EasyPay draft with compatibility disabled.
+  // Selecting another provider removes the instance-specific switch from the form.
+  it('defaults new instances to off and hides the switch for other providers', async () => {
+    const wrapper = mountDialog()
+    const editor = wrapper.vm as unknown as {
+      reset: (key: string) => void /* new provider draft initialization */
+    }
+    editor.reset('easypay')
+    await nextTick()
+    expect(
+      wrapper.find('[data-testid="easypay-merchant-order-number"]').attributes('checked'),
+    ).toBe('false')
+    editor.reset('stripe')
+    await nextTick()
+    expect(wrapper.find('[data-testid="easypay-merchant-order-number"]').exists()).toBe(false)
+    wrapper.unmount()
   })
 })

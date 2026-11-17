@@ -13,13 +13,18 @@ import (
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// response_buffered_test.go tests terminal selection and usage reconstruction
+// while buffering Responses streams. Earlier accounting must survive sparse
+// terminal payloads, while explicit resets and failed terminal events keep their
+// own meaning for client output and billing.
+
 // TestReadCompatBufferedTerminalRetainsImageAccounting reports image usage before
 // a terminal with missing or partial usage. Both image buckets must reach billing
 // alongside accumulated text and cache counts after client conversion finishes.
 func TestReadCompatBufferedTerminalRetainsImageAccounting(t *testing.T) {
 	for _, terminalUsage := range []string{"", `,"usage":{"output_tokens":10}`} {
 		t.Run(terminalUsage, func(t *testing.T) {
-			body := "data: " + `{"type":"response.in_progress","response":{"usage":{"input_tokens":100,"output_tokens":3,"input_tokens_details":{"cached_tokens":20,"image_tokens":40},"output_tokens_details":{"image_tokens":2}}}}` + "\n\n" +
+			body := "data: " + `{"type":"response.in_progress","response":{"usage":{"input_tokens":100,"output_tokens":3,"input_tokens_details":{"cached_tokens":20,"cached_tokens_details":{"image_tokens":15},"image_tokens":40},"output_tokens_details":{"image_tokens":2}}}}` + "\n\n" +
 				"data: " + `{"type":"response.completed","response":{"id":"resp_image","status":"completed","output":[]` + terminalUsage + `}}` + "\n\n"
 			response := &http.Response{Body: io.NopCloser(strings.NewReader(body))}
 			final, usage, _, err := ReadCompatBufferedTerminal(response, CompatBufferedOptions{
@@ -34,6 +39,7 @@ func TestReadCompatBufferedTerminalRetainsImageAccounting(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 100, usage.InputTokens)
 			require.Equal(t, 20, usage.CacheReadInputTokens)
+			require.Equal(t, 15, usage.ImageCacheReadTokens)
 			require.Equal(t, 40, usage.ImageInputTokens)
 			require.Equal(t, 2, usage.ImageOutputTokens)
 			require.Equal(t, usage.InputTokens, final.Usage.InputTokens)

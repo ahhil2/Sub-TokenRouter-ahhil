@@ -1,9 +1,12 @@
+import { createPinia } from 'pinia'
+import { createI18n } from 'vue-i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import PaymentView from '../PaymentView.vue'
 import { PAYMENT_RECOVERY_STORAGE_KEY } from '@/utils/payment/paymentFlow'
 import { formatPaymentAmount } from '@/utils/payment/currency'
 import AmountInput from '@/components/payment/AmountInput.vue'
+import PaymentStatusPanel from '@/components/payment/PaymentStatusPanel.vue'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
@@ -1512,5 +1515,137 @@ describe('PaymentView credit amount validation', () => {
     await pay.trigger('click')
     expect(createOrder).not.toHaveBeenCalled()
     wrapper.unmount()
+  })
+})
+
+// Personal recharge terms retain the selected currency and site unit while distinguishing
+// inherited, equal, lower, and one-to-one rates through the actual translation component.
+describe('PaymentView personal recharge rate', () => {
+  // Rendering both locales with real named slots protects the deleted global number,
+  // emphasized personal number, accessible explanation, and credited balance calculation.
+  it.each([
+    ['en', 18, 10, true],
+    ['zh', 18, 10, true],
+    ['en', 0.5, 10, true],
+    ['zh', 1, 10, true],
+    ['en', 10, 10, false],
+  ] as const)(
+    'renders %s personal rate %s against %s',
+    async (locale, rate, globalRate, struck) => {
+      routeState.path = '/purchase'
+      routeState.query = {}
+      getCheckoutInfo.mockResolvedValue(
+        checkoutInfoFixture({
+          balance_recharge_multiplier: rate,
+          default_balance_recharge_multiplier: globalRate,
+          user_balance_recharge_multiplier: rate,
+        }),
+      )
+      const wrapper = shallowMount(PaymentView, {
+        global: {
+          plugins: [createPinia(), createI18n({ legacy: false, locale, messages: { en, zh } })],
+          stubs: {
+            I18nT: false,
+            RouterLink: true,
+            MotionTransition: motionTransitionStub,
+            AppLayout: { template: '<div><slot /></div>' },
+            Teleport: true,
+            Transition: false,
+          },
+        },
+      })
+      await flushPromises()
+      wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', 100)
+      await flushPromises()
+      const personal = wrapper.get('[data-test="personal-recharge-rate"]')
+      expect(personal.text()).toBe(rate.toFixed(2))
+      expect(personal.classes()).toEqual(
+        expect.arrayContaining(['text-primary-600', 'dark:text-primary-400', 'font-semibold']),
+      )
+      expect(wrapper.find('[data-test="default-recharge-rate"]').exists()).toBe(struck)
+      expect(wrapper.get('[data-test="recharge-rate-preview"]').text()).toContain('CNY')
+      expect(translate).toHaveBeenCalledWith(
+        'payment.personalRechargeRateAccessible',
+        expect.objectContaining({ amount: rate.toFixed(2), defaultAmount: '10.00' }),
+      )
+      const summary = wrapper.get('[data-test="recharge-rate-preview"]').element.parentElement
+      expect(summary?.textContent).toContain(
+        (100 * rate).toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }),
+      )
+      wrapper.unmount()
+    },
+  )
+})
+
+// Hosted cryptocurrency creation can time out after the server saves its order. The
+// purchase page must retain that identity through the waiting panel and a later remount.
+describe('PaymentView EPUSDT recovery', () => {
+  // The gateway returns an unconfirmed creation with saved personal-rate credit. Checkout
+  // enters its waiting state once and reloads that same order without another submission.
+  it('retains an unconfirmed cryptocurrency order across checkout reloads', async () => {
+    routeState.path = '/purchase'
+    routeState.query = {}
+    window.localStorage.clear()
+    createOrder.mockReset().mockRejectedValueOnce({
+      reason: 'PAYMENT_CREATE_UNCONFIRMED',
+      metadata: {
+        order_id: '501',
+        out_trade_no: 'tr_crypto_recovery',
+        amount: '1800',
+        pay_amount: '100',
+        currency: 'CNY',
+        expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      },
+    })
+    getCheckoutInfo.mockReset().mockResolvedValue(
+      checkoutInfoFixture({
+        methods: { epusdt: checkoutInfoFixture().data.methods.wxpay },
+        balance_recharge_multiplier: 18,
+        default_balance_recharge_multiplier: 10,
+        user_balance_recharge_multiplier: 18,
+      }),
+    )
+    const options = {
+      global: {
+        plugins: [createPinia()],
+        stubs: {
+          MotionTransition: motionTransitionStub,
+          AppLayout: { template: '<div><slot /></div>' },
+          RouterLink: true,
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    }
+    const wrapper = shallowMount(PaymentView, options)
+    await flushPromises()
+    wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', 100)
+    await flushPromises()
+    const submit = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('payment.crypto.cashier'))!
+    await submit.trigger('click')
+    await flushPromises()
+    expect(createOrder).toHaveBeenCalledTimes(1)
+    expect(wrapper.getComponent(PaymentStatusPanel).props('orderId')).toBe(501)
+    expect(wrapper.getComponent(PaymentStatusPanel).props('payUrl')).toBe('')
+    expect(JSON.parse(window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)!)).toMatchObject({
+      orderId: 501,
+      outTradeNo: 'tr_crypto_recovery',
+      amount: 1800,
+      payAmount: 100,
+      paymentType: 'epusdt',
+      paymentMode: 'popup',
+    })
+    wrapper.unmount()
+    const restored = shallowMount(PaymentView, options)
+    await flushPromises()
+    expect(restored.getComponent(PaymentStatusPanel).props('orderId')).toBe(501)
+    expect(createOrder).toHaveBeenCalledTimes(1)
+    restored.unmount()
+    window.localStorage.clear()
   })
 })

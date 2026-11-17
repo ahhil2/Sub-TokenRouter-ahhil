@@ -222,7 +222,7 @@ internal/promotion internal/server/httpx internal/settings`, Tests: "internal/te
 internal/identity/httpapi/dto internal/pkg/ internal/promotion/... internal/server/httpx
 internal/settings`, Tests: ""},
 		"internal/protocol": {Production: "internal/protocol/...", Tests: "internal/testutil/assertion"},
-		"internal/routing": {Production: `internal/server/adminapi internal/modelcatalog ent/... internal/provider internal/apikey/httpapi/dto internal/billing internal/billing/pricing
+		"internal/routing": {Production: `internal/identity/httpapi/authctx internal/server/adminapi internal/modelcatalog ent/... internal/provider internal/apikey/httpapi/dto internal/billing internal/billing/pricing
 internal/billing/provider internal/idempotency internal/idempotency/httpapi
 internal/infra/postgres/... internal/infra/telemetry/... internal/pkg/ internal/protocol
 internal/protocol/openai internal/routing/... internal/scheduler/policy internal/server/httpx
@@ -414,6 +414,8 @@ internal/upstream/zhipu/...`, Tests: ""},
 	// filePermissions restricts each listed import to its named consumers, keeping
 	// neighboring source files and unlisted target subpackages outside that permission.
 	filePermissions = []filePermission{
+		// Personal marketplace requests read the JWT subject through the shared identity context.
+		{Scope: "internal/routing/httpapi", Imports: "internal/identity/httpapi/authctx", Files: "marketplace.go marketplace_test.go group_handler_test.go"},
 		// Site repository tests use dedicated migrated PostgreSQL containers for
 		// persisted generation budgets, lease recovery, and announcement edits.
 		{Scope: "internal/site/postgres", Imports: "internal/testutil/postgrescontainer", Files: "announcement_repo_integration_test.go pelican_integration_test.go"},
@@ -427,6 +429,9 @@ internal/upstream/zhipu/...`, Tests: ""},
 		{Scope: "internal/provider/httpapi", Imports: "internal/modelcatalog/testkit", Files: "management_catalog_test.go provider_probe_scenario_test.go"},
 		// Token persistence tests round-trip real ciphertext through the migrated store and identity service.
 		{Scope: "internal/identity/postgres", Imports: "internal/infra/crypto", Files: "mcp_tokens_integration_test.go"},
+		// User repository tests inspect the registration index and replay recharge
+		// migrations to verify nullable defaults and finite-rate constraints.
+		{Scope: "internal/identity/postgres", Imports: modulePath + "/migrations", Files: "user_repo_test.go user_repo_integration_test.go"},
 		// 容器启动等待由共用测试入口提供，许可限定到接入该入口的文件。
 		{Scope: "internal/infra/redis", Imports: "internal/testutil/rediscontainer", Files: "helpers_integration_test.go"},
 		{Scope: "internal/ops/postgres", Imports: "internal/testutil/rediscontainer", Files: "main_integration_test.go"},

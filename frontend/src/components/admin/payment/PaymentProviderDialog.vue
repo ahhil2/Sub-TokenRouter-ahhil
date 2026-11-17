@@ -39,6 +39,7 @@
           @toggle="form.enabled = !form.enabled"
         />
         <ToggleSwitch
+          v-if="form.provider_key !== 'epusdt'"
           :label="t('admin.settings.payment.refundEnabled')"
           :checked="form.refund_enabled"
           @toggle="
@@ -196,6 +197,17 @@
         <p v-if="paymentGuide" class="mb-3 text-xs text-gray-500 dark:text-gray-400">
           {{ paymentGuide.summary }}
         </p>
+        <div v-if="form.provider_key === 'easypay'" class="mb-4 space-y-2">
+          <ToggleSwitch
+            data-testid="easypay-merchant-order-number"
+            :label="t('admin.settings.payment.easypayMerchantOrderNoCompatibility')"
+            :checked="config.allowMerchantOrderNoAsTradeNo === 'true'"
+            @toggle="toggleEasyPayMerchantOrderNoCompatibility"
+          />
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.settings.payment.easypayMerchantOrderNoCompatibilityHint') }}
+          </p>
+        </div>
         <div class="space-y-3">
           <div v-for="field in resolvedFields" :key="field.key">
             <label class="input-label">
@@ -485,6 +497,8 @@ import {
 // public configuration, so absent sensitive values remain blank and are omitted from the
 // emitted configuration. Fields marked clearable retain an empty string when the
 // administrator clears them.
+// EasyPay compatibility is submitted as an explicit string boolean so disabling
+// the switch replaces its persisted value during partial configuration merging.
 //
 // Callback URLs are split into independently editable origins and fixed provider paths,
 // then recombined for submission. EasyPay custom methods keep their identifiers and
@@ -494,9 +508,10 @@ import {
 // requests.
 
 // defaultPaymentMode returns the initial mode for the selected provider key. EasyPay
-// starts with QR checkout, and other providers use the empty mode interpreted by their own
-// checkout implementation.
+// starts with QR checkout, GMPay uses hosted checkout, and other providers use the
+// empty mode interpreted by their own checkout implementation.
 function defaultPaymentMode(providerKey: string): string {
+  if (providerKey === 'epusdt') return PAYMENT_MODE_POPUP
   if (providerKey === 'easypay') return PAYMENT_MODE_QRCODE
   return ''
 }
@@ -509,8 +524,9 @@ function providerSupportsPaymentMode(providerKey: string): boolean {
 
 // isValidPaymentMode checks a stored mode against the selected provider's supported
 // choices. Empty mode is accepted for Alipay and providers without mode controls, while
-// EasyPay requires a named mode.
+// EasyPay requires a named mode, while GMPay always uses hosted popup mode.
 function isValidPaymentMode(providerKey: string, mode: string): boolean {
+  if (providerKey === 'epusdt') return mode === PAYMENT_MODE_POPUP
   if (providerKey === 'easypay') {
     return mode === PAYMENT_MODE_QRCODE || mode === PAYMENT_MODE_POPUP
   }
@@ -948,7 +964,12 @@ function handleSave() {
     name: form.name,
     supported_types: form.supported_types,
     enabled: form.enabled,
-    payment_mode: supportsPaymentMode.value ? form.payment_mode : '',
+    payment_mode:
+      form.provider_key === 'epusdt'
+        ? PAYMENT_MODE_POPUP
+        : supportsPaymentMode.value
+          ? form.payment_mode
+          : '',
     refund_enabled: form.refund_enabled,
     allow_user_refund: form.refund_enabled ? form.allow_user_refund : false,
     config: filteredConfig,
@@ -1014,6 +1035,8 @@ function buildProviderConfig(): Record<string, string> {
   }
   if (form.provider_key === 'easypay') {
     filteredConfig.customMethods = serializeEasyPayCustomMethods(normalizedEasyPayCustomMethods())
+    filteredConfig.allowMerchantOrderNoAsTradeNo =
+      config.allowMerchantOrderNoAsTradeNo === 'true' ? 'true' : 'false'
   }
 
   const paths = PROVIDER_CALLBACK_PATHS[form.provider_key]
@@ -1029,6 +1052,15 @@ function buildProviderConfig(): Record<string, string> {
   }
 
   return filteredConfig
+}
+
+// toggleEasyPayMerchantOrderNoCompatibility flips the draft's explicit compatibility
+// setting. An absent value behaves as disabled until the administrator enables it.
+// The save builder serializes both switch positions as literal strings for partial
+// configuration updates.
+function toggleEasyPayMerchantOrderNoCompatibility() {
+  config.allowMerchantOrderNoAsTradeNo =
+    config.allowMerchantOrderNoAsTradeNo === 'true' ? 'false' : 'true'
 }
 
 // syncEasyPayCustomMethods reconciles EasyPay method configuration with the selected

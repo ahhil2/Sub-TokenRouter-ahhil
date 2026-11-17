@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect/sql"
+
 	dbent "github.com/TokenFlux/TokenRouter/ent"
 	"github.com/TokenFlux/TokenRouter/ent/paymentauditlog"
 	"github.com/TokenFlux/TokenRouter/ent/paymentorder"
@@ -22,10 +24,11 @@ import (
 // separate buyer lock, while daily history uses UTC payment confirmation time.
 // Merchant-number allocation checks bounded fresh candidates without reserving
 // one against concurrent inserts. Provider response persistence is a later
-// independent update that retains empty details and zero expiration, and
-// best-effort checkout failure writes FAILED without a prior-status guard.
-// Those later writes can follow external progress, so their errors remain
-// visible to recovery callers.
+// independent update that retains empty details and zero expiration. EasyPay
+// response writes lock the order and retain confirmed transaction references
+// and fulfillment timestamps, since callbacks can complete before checkout
+// returns. Best-effort checkout failure writes FAILED without a prior-status
+// guard, and write errors remain visible to recovery callers.
 
 // CreateCheckout persists a pending order and its order-owned recharge code in
 // one newly owned transaction. It checks pending/provider-processing count
@@ -174,15 +177,54 @@ func allocateCheckoutTradeNumber(ctx context.Context, tx *dbent.Tx) (string, err
 // PersistCheckoutResponse stores nonempty provider details and selected
 // instance identity on an existing order. Supply a nonnil selection; nil
 // provider response is an error, and zero provider expiration retains the
-// draft's stored expiration. This write follows external initiation and
-// applies no prior-status condition, so callers retain an error for local
-// recovery if provider progress already exists.
+// draft's stored expiration. This write follows external initiation and can
+// race a verified callback or a provider configuration refresh.
+//
+// EasyPay locks the order before selecting which details can change. A saved
+// transaction can be initialized from checkout only while the order is unpaid
+// and pending or processing; an established different transaction stays bound.
+// EasyPay detail writes retain their timestamp so a late response cannot
+// invalidate an active fulfillment lease. Checkout links can still be saved after payment,
+// and the transaction publishes those details before returning the order.
 func (s *OrderStore) PersistCheckoutResponse(ctx context.Context, orderID int64, sel *payment.InstanceSelection, pr *payment.CreatePaymentResponse) (*payment.Order, error) {
 	if pr == nil {
 		return nil, fmt.Errorf("payment provider returned an empty create response")
 	}
-	orderUpdate := s.client.PaymentOrder.UpdateOneID(orderID).
-		SetNillablePaymentTradeNo(payment.NilIfEmpty(pr.TradeNo)).
+	client := s.client
+	var tx *dbent.Tx
+	var current *dbent.PaymentOrder
+	tradeNo := pr.TradeNo
+	if payment.GetBasePaymentType(sel.ProviderKey) == payment.TypeEasyPay {
+		var err error
+		tx, err = s.client.Tx(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("begin checkout response transaction: %w", err)
+		}
+		// A callback can bind a real transaction while an older adapter is awaiting
+		// checkout. Hold the row through this decision and publication so that binding wins.
+		defer func() { _ = tx.Rollback() }()
+		client = tx.Client()
+		current, err = client.PaymentOrder.Query().Where(paymentorder.IDEQ(orderID)).
+			Where(func(query *sql.Selector) {
+				// SQLite fixtures omit row locks; production transactions retain the lock
+				// until checkout details and the selected transaction binding are committed.
+				if query.Dialect() != "sqlite3" {
+					query.ForUpdate()
+				}
+			}).Only(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("lock checkout response order: %w", err)
+		}
+		unpaid := current.PaidAt == nil &&
+			(current.Status == payment.OrderStatusPending || current.Status == payment.OrderStatusProcessing)
+		// An old adapter can return the merchant echo after callback confirmation.
+		// Keep the stored channel identity whenever payment or an earlier binding won.
+		if !unpaid || (current.PaymentTradeNo != "" && current.PaymentTradeNo != current.OutTradeNo) {
+			tradeNo = ""
+		}
+	}
+	orderUpdate := client.PaymentOrder.UpdateOneID(orderID).
+		SetNillablePaymentTradeNo(payment.NilIfEmpty(tradeNo)).
 		SetNillablePayURL(payment.NilIfEmpty(pr.PayURL)).
 		SetNillableQrCode(payment.NilIfEmpty(pr.QRCode)).
 		SetNillableProviderInstanceID(payment.NilIfEmpty(sel.InstanceID)).
@@ -192,12 +234,24 @@ func (s *OrderStore) PersistCheckoutResponse(ctx context.Context, orderID int64,
 		SetNillablePaymentInvoiceURL(payment.NilIfEmpty(pr.InvoiceURL)).
 		SetNillablePaymentInvoicePdfURL(payment.NilIfEmpty(pr.InvoicePDF)).
 		SetNillablePaymentInvoiceStatus(payment.NilIfEmpty(pr.InvoiceStatus))
+	if current != nil {
+		// Checkout links do not change payment progress. Retain the locked timestamp so
+		// fulfillment that already claimed this order can finalize against its saved lease.
+		orderUpdate.SetUpdatedAt(current.UpdatedAt)
+	}
 	if !pr.ExpiresAt.IsZero() {
 		orderUpdate = orderUpdate.SetExpiresAt(pr.ExpiresAt)
 	}
 	order, err := orderUpdate.Save(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("update order with payment details: %w", err)
+	}
+	if tx != nil {
+		// Publish the checkout details while the transaction still protects the selected
+		// trade reference; callbacks waiting on this order observe the committed result.
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit checkout response: %w", err)
+		}
 	}
 	return OrderFromEntity(order), nil
 }

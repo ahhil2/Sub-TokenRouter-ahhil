@@ -5,6 +5,7 @@
 
 export default {
   marketplace: {
+    exclusive: 'Exclusive',
     title: 'Model Marketplace',
     subtitle: 'View available models',
     backHome: 'Back Home',
@@ -252,8 +253,8 @@ export default {
     allMarkedAsRead: 'All announcements marked as read',
     newCount: '{count} new announcement | {count} new announcements',
     readAt: 'Read at',
-    read: 'Read',
     unread: 'Unread',
+    acknowledge: 'Got it',
     startsAt: 'Starts at',
     endsAt: 'Ends at',
     empty: 'No announcements',
@@ -553,7 +554,24 @@ export default {
     actualPay: 'Actual Payment',
     orderSummary: 'Order summary',
     createOrder: 'Confirm Payment',
+    crypto: {
+      title: 'Pay with cryptocurrency',
+      hint: 'Choose a token and network at checkout, then transfer the displayed amount. Your purchase is fulfilled after payment confirmation.',
+      cashier: 'Go to checkout',
+      cashierNote: 'Confirm the token, network, and transfer amount at checkout.',
+      waiting: 'Complete payment at checkout',
+      waitingHint: 'Return here after the transfer. Payment results update automatically.',
+      continue: 'Continue payment',
+      checkStatus: 'Check payment status',
+      confirmationHint:
+        'If you have transferred funds, keep your order number and transaction record. Wait for payment confirmation before making another transfer.',
+      expiredHint:
+        'If you have already transferred funds, contact support with your order number and transaction hash.',
+      creationUnconfirmed:
+        'Order creation is being checked. Please do not submit another order; check your order history for updates.',
+    },
     methods: {
+      epusdt: 'Cryptocurrency',
       easypay: 'EasyPay',
       alipay: 'Alipay',
       wxpay: 'WeChat Pay',
@@ -666,6 +684,8 @@ export default {
     amountTooHigh: 'Maximum amount is {max}',
     amountNoMethod: 'No payment method available for this amount',
     rechargeRatePreview: 'Current rate: 1 {currency} = {amount} {unitName}',
+    personalRechargeRateAccessible:
+      'Current personal rate: 1 {currency} = {amount} {unitName}; global rate: {defaultAmount}',
     refundReason: 'Refund Reason',
     refundReasonPlaceholder: 'Please describe your refund reason',
     stripeLoadFailed: 'Failed to load payment component. Please refresh and try again.',

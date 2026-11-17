@@ -8,6 +8,37 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// usage_test.go exercises sparse Chat and Responses accounting before protocol
+// conversion. Fixtures combine cache aliases, image subdivisions, malformed
+// typed fields, and terminal snapshots so conversion preserves reported work
+// without inventing cache modality or retaining counters after an explicit reset.
+
+// TestUsageAccumulatorRetainsImageCacheAllocation merges image cache subdivisions
+// with sparse events and aggregate replacements. Only an observed subdivision
+// assigns image cache, and explicit replacement totals cannot inherit stale modality.
+func TestUsageAccumulatorRetainsImageCacheAllocation(t *testing.T) {
+	for _, detail := range []string{"input_tokens_details", "prompt_tokens_details"} {
+		t.Run(detail, func(t *testing.T) {
+			var accumulator UsageAccumulator
+			initial := []byte(`{"input_tokens":100,"output_tokens":3,"` + detail + `":{"cached_tokens":60,"cached_tokens_details":{"image_tokens":15}}}`)
+			accumulator.Observe(initial)
+			require.Equal(t, 15, accumulator.ForwardUsage().ImageCacheReadTokens)
+			accumulator.Observe([]byte(`{"output_tokens":10}`))
+			require.Equal(t, 15, accumulator.ForwardUsage().ImageCacheReadTokens)
+			accumulator.Observe([]byte(`{"` + detail + `":{"cached_tokens":60,"cached_tokens_details":{"image_tokens":0}}}`))
+			require.Zero(t, accumulator.ForwardUsage().ImageCacheReadTokens)
+			require.Equal(t, 60, accumulator.ForwardUsage().CacheReadInputTokens)
+			accumulator.Observe(initial)
+			accumulator.Observe([]byte(`{"` + detail + `":{"cached_tokens":20}}`))
+			require.Zero(t, accumulator.ForwardUsage().ImageCacheReadTokens)
+			require.Equal(t, 20, accumulator.ForwardUsage().CacheReadInputTokens)
+			accumulator.Observe(initial)
+			accumulator.Observe([]byte(`{"input_tokens":0,"output_tokens":0,"total_tokens":0}`))
+			require.Equal(t, ForwardUsage{}, accumulator.ForwardUsage())
+		})
+	}
+}
+
 // TestUsageAccumulatorRetainsIndependentImageBuckets interleaves image details,
 // cache counts, and sparse text updates. Explicit bucket zeroes and complete
 // zero snapshots must clear only the observations authorized by their shape.

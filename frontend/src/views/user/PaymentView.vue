@@ -57,6 +57,7 @@
     <!-- The app-main flex column supplies alignment; automatic side margins would shrink checkout and misalign it with the page heading. -->
     <div
       class="purchase-viewport relative w-full"
+      :class="{ 'pb-24 md:pb-0': isEPUSDTSelected && paymentPhase === 'select' }"
       :style="{ '--purchase-direction': activeTab === 'subscription' ? 1 : -1 }"
     >
       <MotionTransition name="purchase-slide" :css="!loading">
@@ -291,6 +292,25 @@
                     :selected="selectedMethod"
                     @select="selectedMethod = $event"
                   />
+                  <div
+                    v-if="isEPUSDTSelected"
+                    class="mt-4 rounded-control border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-950"
+                  >
+                    <div class="flex items-center gap-2">
+                      <Icon
+                        name="recharge"
+                        size="sm"
+                        class="text-primary-600"
+                        :animate-on-hover="false"
+                      />
+                      <h3 class="text-sm font-medium text-gray-900 dark:text-white">{{
+                        t('payment.crypto.title')
+                      }}</h3>
+                    </div>
+                    <p class="mt-2 text-xs leading-6 text-gray-500 dark:text-dark-300">{{
+                      t('payment.crypto.hint')
+                    }}</p>
+                  </div>
                 </section>
 
                 <!-- Stripe billing details. -->
@@ -428,10 +448,7 @@
                         >{{ formatSelectedPaymentAmount(checkoutTotalAmount) }}</dd
                       >
                     </div>
-                    <div
-                      v-if="!isSubscriptionCheckout && balanceRechargeMultiplier !== 1"
-                      class="flex justify-between gap-4"
-                    >
+                    <div v-if="showRechargeRate" class="flex justify-between gap-4">
                       <dt class="text-gray-500 dark:text-dark-400">{{
                         t('payment.creditedBalance')
                       }}</dt>
@@ -441,16 +458,49 @@
                     </div>
                   </dl>
                   <p
-                    v-if="!isSubscriptionCheckout && balanceRechargeMultiplier !== 1"
+                    v-if="showRechargeRate"
                     class="mt-3 text-xs text-gray-500 dark:text-dark-400"
+                    data-test="recharge-rate-preview"
                   >
-                    {{
+                    <template v-if="hasPersonalRechargeRate">
+                      <span class="sr-only">{{
+                        t('payment.personalRechargeRateAccessible', {
+                          currency: selectedCurrency,
+                          amount: balanceRechargeMultiplier.toFixed(2),
+                          defaultAmount: defaultBalanceRechargeMultiplier.toFixed(2),
+                          unitName: balanceUnitName,
+                        })
+                      }}</span>
+                      <I18nT
+                        keypath="payment.rechargeRatePreview"
+                        tag="span"
+                        scope="global"
+                        aria-hidden="true"
+                      >
+                        <template #currency>{{ selectedCurrency }}</template>
+                        <template #amount>
+                          <s
+                            v-if="balanceRechargeMultiplier !== defaultBalanceRechargeMultiplier"
+                            class="mr-1 tabular-nums"
+                            data-test="default-recharge-rate"
+                            >{{ defaultBalanceRechargeMultiplier.toFixed(2) }}</s
+                          >
+                          <span
+                            class="font-semibold tabular-nums text-primary-600 dark:text-primary-400"
+                            data-test="personal-recharge-rate"
+                            >{{ balanceRechargeMultiplier.toFixed(2) }}</span
+                          >
+                        </template>
+                        <template #unitName>{{ balanceUnitName }}</template>
+                      </I18nT>
+                    </template>
+                    <template v-else>{{
                       t('payment.rechargeRatePreview', {
                         currency: selectedCurrency,
                         amount: balanceRechargeMultiplier.toFixed(2),
                         unitName: balanceUnitName,
                       })
-                    }}
+                    }}</template>
                   </p>
 
                   <div class="mt-6 space-y-2">
@@ -470,10 +520,17 @@
                         {{ t('common.processing') }}
                       </template>
                       <template v-else
-                        >{{ t('payment.createOrder') }}
+                        >{{
+                          isEPUSDTSelected ? t('payment.crypto.cashier') : t('payment.createOrder')
+                        }}
                         {{ formatSelectedPaymentAmount(checkoutTotalAmount) }}</template
                       >
                     </button>
+                    <p
+                      v-if="isEPUSDTSelected"
+                      class="text-center text-xs leading-6 text-gray-500 dark:text-dark-300"
+                      >{{ t('payment.crypto.cashierNote') }}</p
+                    >
                     <button
                       v-if="isSubscriptionCheckout"
                       type="button"
@@ -496,6 +553,28 @@
           </template>
         </div>
       </MotionTransition>
+    </div>
+    <!-- Mobile cryptocurrency checkout keeps its charge and action visible while the buyer reviews the amount and payment instructions. -->
+    <div
+      v-if="
+        isEPUSDTSelected && paymentPhase === 'select' && (activeTab === 'recharge' || selectedPlan)
+      "
+      class="fixed inset-x-0 bottom-0 z-header flex items-center justify-between gap-4 border-t border-gray-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] dark:border-dark-600 dark:bg-dark-900 md:hidden"
+    >
+      <div>
+        <p class="text-xs text-gray-500 dark:text-dark-300">{{ t('payment.actualPay') }}</p>
+        <p class="text-lg font-semibold tabular-nums text-gray-900 dark:text-white">{{
+          formatSelectedPaymentAmount(checkoutTotalAmount)
+        }}</p>
+      </div>
+      <button
+        class="btn btn-primary"
+        :disabled="!checkoutCanSubmit || submitting"
+        @click="handleCheckoutSubmit"
+      >
+        {{ submitting ? t('common.processing') : t('payment.crypto.cashier') }}
+        <Icon name="externalLink" size="sm" :animate-on-hover="false" />
+      </button>
     </div>
     <!-- Renewal plan selection dialog. -->
     <BaseDialog
@@ -548,7 +627,7 @@ import { useLocaleRefresh } from '@/composables/useLocaleRefresh'
 import { vSegmented } from '@/directives/segmented'
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { I18nT, useI18n } from 'vue-i18n'
 import { calculateRechargeCredit, isValidRechargeCredit } from '@/utils/payment/rechargeCredit'
 import UserIdentityBenefits from '@/components/common/UserIdentityBenefits.vue'
 import { RouterLink, useRoute } from 'vue-router'
@@ -657,6 +736,8 @@ const checkout = ref<CheckoutInfoResponse>({
   plans: [],
   balance_disabled: false,
   balance_recharge_multiplier: 1,
+  default_balance_recharge_multiplier: 1,
+  user_balance_recharge_multiplier: null,
   subscription_usd_to_cny_rate: 0,
   recharge_fee_rate: 0,
   method_fees: {},
@@ -721,8 +802,23 @@ const enabledMethods = computed(() => Object.keys(visibleMethods.value))
 const validAmount = computed(() => amount.value ?? 0)
 const balanceRechargeMultiplier = computed(() => {
   const multiplier = checkout.value.balance_recharge_multiplier
-  return multiplier > 0 ? multiplier : 1
+  return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1
 })
+// Personal-rate presence remains distinct from equality with global terms, so explicit
+// one-to-one overrides still display the account's recharge terms and credited amount.
+const hasPersonalRechargeRate = computed(
+  () => checkout.value.user_balance_recharge_multiplier != null,
+)
+// Older checkout replies contain only the effective rate, which also supplies their
+// ordinary default display without claiming that a personal override exists.
+const defaultBalanceRechargeMultiplier = computed(
+  () => checkout.value.default_balance_recharge_multiplier ?? balanceRechargeMultiplier.value,
+)
+const showRechargeRate = computed(
+  () =>
+    !isSubscriptionCheckout.value &&
+    (hasPersonalRechargeRate.value || balanceRechargeMultiplier.value !== 1),
+)
 // The subscription rate is CNY per USD. Zero disables conversion and charges the stored plan
 // price, matching the backend opt-in condition.
 const subscriptionUsdToCnyRate = computed(() => {
@@ -783,6 +879,8 @@ const globalMaxAmount = computed(() => {
 
 // Selected method's limits (for validation and error messages)
 const selectedLimit = computed(() => visibleMethods.value[selectedMethod.value])
+// Cryptocurrency checkout uses a hosted cashier and its own explanatory purchase state.
+const isEPUSDTSelected = computed(() => selectedMethod.value === 'epusdt')
 const isStripeSelected = computed(
   () => (normalizeVisibleMethod(selectedMethod.value) || selectedMethod.value) === 'stripe',
 )

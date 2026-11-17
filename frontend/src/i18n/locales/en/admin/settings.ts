@@ -1033,6 +1033,9 @@ export default {
       providerWxpay: 'WeChat Pay (Direct)',
       providerStripe: 'Stripe',
       providerAirwallex: 'Airwallex',
+      providerEPUSDT: 'EPUSDT / GMPay (EPay protocol)',
+      field_epusdtApiBaseHint:
+        'Enter the EPUSDT HTTPS base URL, such as https://pay.example.com. Uses the EPay submit.php flow with MD5 signatures and the merchant API key secret.',
       typeDisabled: 'type disabled',
       enableTypesFirst: 'Enable at least one payment type above first',
       easypayRedirect: 'Redirect',
@@ -1091,6 +1094,9 @@ export default {
       field_cidAlipay: 'Alipay Channel ID',
       field_cidWxpay: 'WeChat Channel ID',
       easypayCustomMethods: 'Custom EasyPay methods',
+      easypayMerchantOrderNoCompatibility: 'Allow checkout to echo the merchant order number',
+      easypayMerchantOrderNoCompatibilityHint:
+        'For providers that return your merchant order number as the checkout transaction number. On first payment confirmation, it can be replaced by the transaction number verified through an authenticated order lookup. Signature, merchant, order, and amount checks still apply.',
       easypayCustomMethodsHint:
         'Add provider-specific methods supported by this EasyPay endpoint. The payment type is stored on TokenRouter orders; the upstream type is sent as EasyPay type.',
       addCustomMethod: 'Add method',

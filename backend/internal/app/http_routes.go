@@ -151,6 +151,7 @@ func providePaymentRouteMount(user *paymenthttp.PaymentHandler, webhook *payment
 // creative registrars receive the heavy-query limiter in addition to those
 // group guards.
 func provideUserRouteMount(
+	eModelMarketplace *routinghttp.MarketplaceHandler,
 	eUserPromotion *promotionhttp.UserHandler,
 	eSubscription *billinghttp.SubscriptionHandler,
 	eAnnouncement *sitehttp.AnnouncementHandler,
@@ -177,6 +178,7 @@ func provideUserRouteMount(
 		authenticated.GET("/user/identity-groups", eMemberGroups.Self)
 		promotionhttp.RegisterUserRoutes(authenticated, eUserPromotion)
 		apikeyhttp.RegisterUserRoutes(authenticated, eAPIKey)
+		routinghttp.RegisterUserMarketplaceRoutes(authenticated, eModelMarketplace)
 		teamhttp.RegisterUserRoutes(authenticated, eTeam, security.StepUp)
 		usagehttp.RegisterUserRoutes(authenticated, eUsage, security.Panel.Heavy())
 		creativehttp.RegisterUserRoutes(authenticated, eCreative, security.Panel.Heavy())

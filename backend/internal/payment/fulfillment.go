@@ -17,10 +17,12 @@ import (
 // repeatable balance or subscription delivery.
 // Verified provider progress can arrive repeatedly or after a local pending
 // order was closed. Notification handling first resolves merchant identity and
-// checks saved provider metadata and EasyPay transaction identity, then
+// checks saved provider metadata and EasyPay/EPUSDT EPay transaction identity, then
 // conditionally records payment state and resumes entitlement work. Only Stripe failure
 // notifications select the terminal payment-failure transition; other failure
 // callbacks are ignored before lookup.
+// Opted-in EasyPay observations can replace an initial merchant-number echo
+// only when the authenticated paid query identifies that same merchant order.
 //
 // Fulfillment claims paid/failed or stale recharging state and uses the reread
 // stored timestamp to condition final completion/failure. That reread checks
@@ -35,7 +37,8 @@ import (
 // Redeem actions choose missing-code creation, unused-code redemption or
 // used-code continuation in balance fulfillment. FulfillmentLeaseDuration
 // supplies the stale recharging takeover age for timestamp-conditioned
-// finalization.
+// finalization. Adapter confirmation metadata carries narrowly scoped permission
+// to bind a verified EasyPay transaction after an initial merchant-number echo.
 const (
 	// RedeemActionCreate selects code creation before redemption when lookup
 	// returned nil or any error.
@@ -50,6 +53,11 @@ const (
 	// FulfillmentLeaseDuration is the five-minute stale recharging age used by
 	// conditional claim, independently of notification timing or provider state.
 	FulfillmentLeaseDuration = 5 * time.Minute
+
+	// EasyPayConfirmedMerchantOrderNo identifies the merchant order verified by an
+	// opted-in adapter's paid query. Only adapter-owned confirmation metadata may
+	// carry this marker; external callbacks cannot provide it directly.
+	EasyPayConfirmedMerchantOrderNo = "easypay_confirmed_merchant_order_no"
 )
 
 // ErrOrderNotFound classifies a callback merchant/legacy ID whose permitted
@@ -179,10 +187,12 @@ func ParseLegacyPaymentOrderID(orderID string, notFound bool) (int64, bool) {
 // ordinary audit before returning. Snapshot metadata validation separately has
 // its own absent/unrecognized-key rules and is not implied by a successful key
 // comparison. The caller retains signature verification ownership before this
-// order association stage. EasyPay observations must retain an existing
-// transaction number, because that reference also identifies later refunds.
+// order association stage. EasyPay and EPUSDT EPay observations must retain a saved
+// transaction number so another external payment cannot replace that binding.
+// The initial EasyPay merchant-number echo can be corrected before payment only
+// when adapter-owned confirmation metadata explicitly permits that order.
 func (s *Fulfillment) ValidatePaymentNotificationOrder(ctx context.Context, o *Order, pk, tradeNo string, metadata map[string]string) error {
-	if err := validateEasyPayTradeNumber(o, pk, tradeNo); err != nil {
+	if err := validatePaymentTradeNumber(o, pk, tradeNo, metadata); err != nil {
 		return err
 	}
 	instanceProviderKey := ""
@@ -211,15 +221,29 @@ func (s *Fulfillment) ValidatePaymentNotificationOrder(ctx context.Context, o *O
 	return nil
 }
 
-// validateEasyPayTradeNumber checks a reported EasyPay transaction against a
-// previously stored nonempty reference. Other adapters retain their own
-// reference rules, including Stripe's session, invoice and intent transitions.
-func validateEasyPayTradeNumber(order *Order, providerKey, tradeNo string) error {
-	if GetBasePaymentType(providerKey) == TypeEasyPay && order.PaymentTradeNo != "" &&
-		order.PaymentTradeNo != tradeNo {
-		return fmt.Errorf("easypay transaction number conflicts with the stored order")
+// validatePaymentTradeNumber preserves a previously bound EasyPay or EPUSDT
+// transaction. Other adapters own their reference transitions. Empty references
+// and exact matches use ordinary confirmation, whose caller still verifies money
+// and merchant identity before changing persistent state.
+//
+// An opted-in EasyPay adapter can attest that its paid query explicitly matched
+// this merchant order. That permits a saved merchant-number echo to be replaced
+// only before the first paid transition. Rechecking after concurrent state
+// reloads keeps an established transaction binding immutable.
+func validatePaymentTradeNumber(order *Order, providerKey, tradeNo string, metadata map[string]string) error {
+	isEasyPay := GetBasePaymentType(providerKey) == TypeEasyPay
+	if (!isEasyPay && providerKey != TypeEPUSDT) || order.PaymentTradeNo == "" || order.PaymentTradeNo == tradeNo {
+		return nil
 	}
-	return nil
+	if isEasyPay && order.PaidAt == nil && order.OutTradeNo != "" &&
+		order.PaymentTradeNo == order.OutTradeNo && tradeNo != "" &&
+		metadata[EasyPayConfirmedMerchantOrderNo] == order.OutTradeNo {
+		switch order.Status {
+		case OrderStatusPending, OrderStatusProcessing, OrderStatusExpired, OrderStatusCancelled:
+			return nil
+		}
+	}
+	return fmt.Errorf("%s transaction number conflicts with the stored order", providerKey)
 }
 
 // ConfirmPayment requires finite positive reported gateway money and compares
@@ -409,7 +433,7 @@ func (s *Fulfillment) ToPaid(ctx context.Context, o *Order, tradeNo string, paid
 	// late success, while already paid/granted states follow their continuation
 	// path.
 	for range 5 {
-		if err := validateEasyPayTradeNumber(o, pk, tradeNo); err != nil {
+		if err := validatePaymentTradeNumber(o, pk, tradeNo, metadata); err != nil {
 			return err
 		}
 		previousStatus := o.Status

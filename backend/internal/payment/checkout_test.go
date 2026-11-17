@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
+
+// checkout_test.go verifies checkout input, provider snapshots, and payment amount
+// selection with local fixtures. Credited wallet amounts remain separate from
+// currency charges, and account lookup failures stop previews before inherited
+// terms can be reported for an unknown buyer.
 
 type checkoutIdentityStore struct {
 	CheckoutStore
@@ -523,4 +529,16 @@ func TestCheckoutRejectsUnknownOrderTypes(t *testing.T) {
 		_, err := checkout.ValidateOrderInput(context.Background(), CreateOrderRequest{OrderType: orderType, Amount: 100}, &PaymentConfig{})
 		require.Equal(t, "INVALID_CHECKOUT_ORDER_TYPE", apperror.Reason(err))
 	}
+}
+
+// TestGetBalanceRechargeRatesFailsOnBuyerLookupError supplies an unavailable
+// account reader. Checkout preview must return the read error instead of
+// reporting the global rate as this buyer's confirmed recharge terms.
+func TestGetBalanceRechargeRatesFailsOnBuyerLookupError(t *testing.T) {
+	lookupErr := errors.New("buyer unavailable")
+	checkout := NewCheckout(nil, nil, nil, nil, CheckoutRuntime{
+		User: func(context.Context, int64) (*Buyer, error) { return nil, lookupErr },
+	})
+	_, err := checkout.GetBalanceRechargeRates(context.Background(), 42, 10)
+	require.ErrorIs(t, err, lookupErr)
 }

@@ -24,7 +24,7 @@ import (
 // unfinished-fulfillment scans rotate copied ID pages under shared cursor
 // coordination, advancing selection before later reads or work succeed.
 // Pending reconciliation uses the store's bounded oldest unexpired
-// Alipay/WeChat candidates instead. Cancellation-failure history adds an
+// Alipay/WeChat/GMPay candidates instead. Cancellation-failure history adds an
 // updated_at cooldown, while stale processing is audited after a longer age.
 // Provider references retain merchant/session/invoice/payment identities
 // according to adapter query needs.
@@ -344,6 +344,8 @@ func (s *OrderLifecycle) QueryPaymentOrderWithProvider(ctx context.Context, prov
 // succeeds. Fulfillment then validates amount/provider metadata separately.
 // EasyPay records its queried reference with the paid transition after order
 // validation, keeping concurrent queries from changing a fulfillment lease.
+// An opted-in adapter's paid-query proof permits the initial merchant-number
+// echo to be replaced during that transition. Later conflicting references fail.
 // Processing uses reported or saved trade reference and the normal progress
 // notification, while queried failure returns its label without invoking
 // failure handling here. Other statuses return empty,nil.
@@ -369,7 +371,7 @@ func (s *OrderLifecycle) ApplyQueriedPaymentStatus(ctx context.Context, o *Order
 			}
 			resp = retriedResp
 		}
-		if err := validateEasyPayTradeNumber(o, prov.ProviderKey(), resp.TradeNo); err != nil {
+		if err := validatePaymentTradeNumber(o, prov.ProviderKey(), resp.TradeNo, resp.Metadata); err != nil {
 			return LifecycleCheckPaidResultUncertain, err
 		}
 		notificationTradeNo := o.PaymentTradeNo
@@ -571,7 +573,7 @@ func (s *OrderLifecycle) VerifyOrderByOutTradeNo(ctx context.Context, outTradeNo
 // context is checked between rows, returning the count observed before
 // cancellation.
 //
-// The PostgreSQL candidate query chooses oldest unexpired Alipay/WeChat method
+// The PostgreSQL candidate query chooses oldest unexpired Alipay/WeChat/GMPay method
 // or provider labels. Per-order application errors are logged and skipped;
 // CheckPaid itself can convert query failures to empty,nil. Only already-paid
 // outcomes with nil error increase the count, which is an outcome observation

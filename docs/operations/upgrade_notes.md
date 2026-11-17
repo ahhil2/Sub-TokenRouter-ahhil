@@ -4,6 +4,15 @@
 
 各节里提到的认证缓存版本、调度缓存命名空间，都是对应迁移发布时的值。当前认证缓存版本为 48，缓存规则以[提供商调度与缓存一致性](../architecture/provider_scheduling_and_cache.md)为准。后面的迁移可能取代前面的字段，所以不能只看某一节判断当前的接口；「当前状态」一列标出了已被取代的专题。
 
+<a id="personal_recharge_multiplier"></a>
+## 个人充值倍率（迁移 313，上游 308）
+
+`313_user_balance_recharge_multiplier.sql` 为 `users` 添加可空的 `balance_recharge_multiplier`。已有用户保持 NULL，继续继承全局充值倍率；个人值必须是有限正数。迁移可以重复执行，重新执行时保留已保存的个人值。
+
+前后端一起升级，并在所有后端更新后再设置个人倍率。个人倍率覆盖全局充值倍率，支付页面显示按有效倍率计算的到账金额；这项设置与分组消费倍率、身份折扣分别计算。订单创建时保存到账额度，之后修改个人或全局倍率不会重算已有订单，付款补单和退款继续使用订单快照。具体金额规则见[支付与权益](../domains/payments_and_entitlements.md#personal_recharge_multiplier)。
+
+升级前验证数据库备份，升级后检查未设置时继承、个人覆盖、清空后恢复继承，以及修改倍率后的历史订单履约与退款。旧后端只按全局倍率创建订单，回退前应清空个人设置并核对充值页面；新增列可以保留。
+
 <a id="api_key_claude_cache_lifetime"></a>
 ## Key 级 Claude 缓存时长（迁移 312，上游 313）
 

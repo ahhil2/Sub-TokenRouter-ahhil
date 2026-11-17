@@ -16,6 +16,9 @@ import (
 // Buyer retains the account fields needed to validate and snapshot checkout.
 type Buyer struct {
 	ID int64 // buyer account identity
+	// BalanceRechargeMultiplier applies to new balance orders when present.
+	// Nil follows the current global setting; historical orders use saved credits.
+	BalanceRechargeMultiplier *float64
 	// Email: account email address; Username: account display name; Notes:
 	// account administration notes; Status: account lifecycle state
 	Email, Username, Notes, Status string
@@ -57,7 +60,8 @@ type CheckoutStore interface {
 	// PersistCheckoutResponse saves nonempty provider references and any returned
 	// expiration on the existing order. The selected instance is nonnil; an empty
 	// provider response is an error, and these writes occur after external
-	// initiation.
+	// initiation. EasyPay persistence preserves a confirmed transaction and the
+	// fulfillment timestamp when checkout returns after callback processing.
 	PersistCheckoutResponse(context.Context, int64, *InstanceSelection, *CreatePaymentResponse) (*Order, error)
 	// FailCheckout marks the addressed order FAILED after initiation or response
 	// persistence fails. The adapter update is unconditional on prior status; the

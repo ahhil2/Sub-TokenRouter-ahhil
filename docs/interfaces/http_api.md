@@ -9,6 +9,7 @@
 - [全局入口](#全局入口)：所有请求共同经过的处理顺序。
 - [路由族](#路由族)：URL 前缀、认证方式和负责的模块。
 - [支付管理恢复](#payment_admin_recovery)：订单强制过期和退款查单。
+- [用户专属充值倍率](#personal_recharge_multiplier_api)：管理员覆盖值、排序和用户充值预览。
 - [身份登录接口](#身份登录接口)：修改 OAuth start、人机验证和 One Tap 时读取。
 - [创作台接口](#创作台接口)：修改工作区、任务和输出交付时读取。
 - [提供商管理接口](#提供商管理接口)：修改批量管理、测试、诊断和导入时读取。
@@ -66,11 +67,13 @@ RequestLogger
 | `/api/event_logging/batch` | 无 | 兼容 Claude Code 遥测的空接收端，固定返回成功 |
 | `/api/v1/auth/*` | 大多公开，账户管理的子流程按路由加 JWT 或短期状态 | `app/http_routes.go`；注册、登录、刷新、找回密码、OAuth、Passkey 登录和身份补全 |
 | `/api/v1/user/*`、`/keys`、`/team`、`/groups`、`/subscriptions`、`/redeem` 等 | 用户 JWT | `app/http_routes.go`；用户面板的资源、团队、Key、用量和权益查询 |
+| `/api/v1/marketplace/models`、`/api/v1/marketplace/stats` | 无 | `routing/httpapi`；公开模型分组和首页汇总 |
+| `/api/v1/marketplace/models/available` | 用户 JWT | `routing/httpapi`；公开分组和当前用户获授权的专属分组，响应为 `private, no-store` |
 | `/api/v1/admin/*` | 管理员 JWT 或受限的管理密钥；部分操作还需要 step-up | `app/http_routes_admin.go`；用户、分组、提供商、价格配置、设置、运维、备份、支付和安全管理 |
 | `/mcp` | 专用 MCP Bearer 令牌 | 四个通用管理工具，按具体操作授权；协议为 MCP JSON-RPC，见 [MCP 管理接口](mcp_management.md) |
 | `/api/v1/payment/*` | 用户 JWT | `app/http_routes.go`；读取配置和套餐、下单、查单、取消、invoice 和申请退款 |
 | `/api/v1/payment/public/*` | 签名的 resume token，或旧订单的验证约束 | 恢复支付结果；这组接口只服务已知订单，匿名列举订单是不允许的 |
-| `/api/v1/payment/webhook/*` | 提供商验签 | EasyPay、Alipay、WeChat Pay、Stripe、Airwallex 的通知 |
+| `/api/v1/payment/webhook/*` | 提供商验签 | EasyPay、EPUSDT/GMPay、Alipay、WeChat Pay、Stripe、Airwallex 的通知 |
 | `/v1/*` 和兼容的裸路径别名 | TokenRouter API Key | Anthropic 和 OpenAI 兼容的消息、Responses、Chat、图片、视频、模型、用量和批任务 |
 | `/v1beta/*` | TokenRouter API Key | Gemini 原生的模型 URL、生成、流式生成和 token 统计 |
 | `/antigravity/*` | TokenRouter API Key，加强制平台 | Antigravity 专用的 Claude 和 Gemini 入口，以及管理用的自省接口 |
@@ -112,12 +115,23 @@ Markdown 正文需要 JWT，并且菜单可见；管理员页面只对管理员�
 - 成功响应的 `data` 是 `{ revoked_subscription_id, replacement_subscription_id, rebound_api_key_count }`；没有接续的订阅时，`replacement_subscription_id` 为 `null`，改绑数量为 `0`。
 - 订阅不属于当前用户或不存在，返回 `SUBSCRIPTION_NOT_FOUND`；不是当前 active 的记录，返回 `SUBSCRIPTION_NOT_ACTIVE`（409）；最高层额度还有剩余或套餐不限额，返回 `SUBSCRIPTION_QUOTA_NOT_EXHAUSTED`（409）。撤销不退款，用户端也没有恢复接口。
 
+<a id="personal_recharge_multiplier_api"></a>
+## 用户专属充值倍率
+
+管理员用户列表、详情和更新响应包含可空数字 `balance_recharge_multiplier`。`PUT /api/v1/admin/users/:id` 省略该字段时保留原值，传 null 时清除覆盖，传有限正数时设置覆盖；其他数值返回 `INVALID_BALANCE_RECHARGE_MULTIPLIER`。普通用户的资料更新没有这个可写字段。
+
+`GET /api/v1/admin/users` 支持 `sort_by=balance_recharge_multiplier` 和 `sort_order=asc|desc`，数值排序后按同方向用户 ID 排序，NULL 始终末尾。MCP 的 `users.update` 使用相同字段与语义。
+
+`GET /api/v1/payment/checkout-info` 需要当前用户身份，返回 `balance_recharge_multiplier`（实际倍率）、`default_balance_recharge_multiplier`（全局倍率）和 `user_balance_recharge_multiplier`（可空的专属倍率）。下单接口不接收用户指定的倍率，服务端读取当前条款。资金快照规则见[用户专属充值倍率](../domains/payments_and_entitlements.md#personal_recharge_multiplier)。
+
 <a id="payment_admin_recovery"></a>
 ## 支付管理恢复
 
 `POST /api/v1/payment/orders` 的 `order_type` 只接受 `balance`、`subscription`，省略时按 `balance` 处理。其他值返回 `INVALID_CHECKOUT_ORDER_TYPE`；倍率计算后的到账金额为零或超出存储范围时返回 `INVALID_CREDITED_AMOUNT`，并且不创建订单。
 
 支付、推广和 Promo 的路由分别绑定 `payment/httpapi` 和 `promotion/httpapi`。Webhook 按原始的 body、query 和 Header 验签。
+
+`GET|POST /api/v1/payment/webhook/epusdt` 接收 EPUSDT/GMPay 的 EPay 通知。服务端核对签名、商户、订单号和法币金额，并向收银台查询已支付状态后处理权益。浏览器返回页面只展示或查询订单，不能确认支付。配置与退款限制见[EPUSDT/GMPay 支付](../domains/payments_and_entitlements.md#epusdt_payments)。
 
 管理员可以用以下接口恢复支付订单，它们都经过管理员认证、面板限流和审计中间件：
 

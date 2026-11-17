@@ -17,7 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// Production registration must agree with the saved HTTP method/path inventory
+// http_routes_registration_scenario_test.go checks production route registration.
+// Registration must agree with the saved HTTP method/path inventory
 // and preserve guard order. An early middleware captures the selected chain
 // then aborts, letting the scenario dispatch every route safely with
 // constructed placeholder handlers and inspect removed administration paths
@@ -74,6 +75,10 @@ func TestNativeRouteInventory(t *testing.T) {
 				}
 			}
 			return -1
+		}
+		if route.Path == "/api/v1/marketplace/models/available" {
+			require.GreaterOrEqual(t, position("inventoryJWT"), 0)
+			require.Greater(t, position("inventoryAudit"), position("inventoryJWT"))
 		}
 		// Contact enumeration belongs to the JWT-authenticated messaging workflow.
 		// Verify both guards here because MCP dispatches do not carry browser JWTs.

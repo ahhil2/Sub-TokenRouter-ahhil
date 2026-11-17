@@ -161,7 +161,7 @@ type ModelMarketplaceModel struct {
 }
 
 // ModelMarketplaceCapacity holds current aggregate provider capacity
-// observations for a public group.
+// observations for an authorized group.
 type ModelMarketplaceCapacity struct {
 	ConcurrencyUsed int `json:"concurrency_used"` // occupied provider concurrency slots
 	ConcurrencyMax  int `json:"concurrency_max"`  // aggregate provider concurrency capacity
@@ -207,7 +207,8 @@ type ModelMarketplaceAvailability struct {
 type ModelMarketplaceGroup struct {
 	SearchTerms []string          `json:"search_terms,omitempty"`  // localized group search texts
 	Resolution  locale.Resolution `json:"localization_resolution"` // resolved group display language
-	ID          int64             `json:"id"`                      // stored public group identifier
+	ID          int64             `json:"id"`                      // stored visible group identifier
+	IsExclusive bool              `json:"is_exclusive"`            // requires explicit user authorization
 	Name        string            `json:"name"`                    // resolved group display name
 	Description string            `json:"description"`             // resolved group display description
 
@@ -232,8 +233,8 @@ type ModelMarketplaceGroup struct {
 	// Availability contains observed probe history when supplied by routing; a
 	// missing summary remains absent and does not invent an availability rate.
 	Availability *ModelMarketplaceAvailability `json:"availability,omitempty"` // optional historical probe summary
-	ModelCount   int                           `json:"model_count"`            // resolved public model count
-	Models       []ModelMarketplaceModel       `json:"models"`                 // requestable public model entries
+	ModelCount   int                           `json:"model_count"`            // resolved requestable model count
+	Models       []ModelMarketplaceModel       `json:"models"`                 // requestable visible model entries
 }
 
 // ModelMarketplaceOptions contains group labels and model identifiers for homepage
@@ -249,7 +250,7 @@ type ModelMarketplaceOption struct {
 	ID string `json:"id"` // requestable model identifier
 }
 
-// ModelMarketplaceGroupsFromRouting returns public group DTOs in the supplied
+// ModelMarketplaceGroupsFromRouting returns authorized group DTOs in the supplied
 // order, including an empty nonnil slice for empty input. It allocates group
 // and model records, while attribute pointers, model modality/protocol
 // slices, protocol attribute maps, search texts, and optional scalar pointers
@@ -276,6 +277,7 @@ func ModelMarketplaceGroupsFromRouting(groups []routing.ModelMarketplaceGroup) [
 		out = append(out, ModelMarketplaceGroup{
 			SearchTerms: group.SearchTerms, Resolution: group.Resolution,
 			ID:          group.ID,
+			IsExclusive: group.IsExclusive,
 			Name:        group.Name,
 			Description: group.Description,
 

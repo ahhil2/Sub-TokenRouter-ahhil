@@ -5,9 +5,11 @@
     :class="$slots.performance ? 'lg:grid-cols-5' : 'lg:grid-cols-4'"
   >
     <div class="card p-4">
-      <div class="flex flex-col items-start gap-2 lg:flex-row lg:items-center lg:gap-3">
-        <div class="shrink-0 rounded-control bg-blue-100 p-2 dark:bg-blue-900/30 text-blue-600">
-          <Icon name="document" size="md" />
+      <div class="flex flex-col items-start gap-2 lg:flex-row lg:gap-3">
+        <div
+          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-blue-100 dark:bg-blue-900/30 text-blue-600"
+        >
+          <Icon name="document" size="md" class="h-5 w-5" />
         </div>
         <div class="min-w-0 flex-1">
           <p class="text-xs font-medium text-gray-500">{{ t('usage.totalRequests') }}</p>
@@ -19,8 +21,10 @@
       </div>
     </div>
     <div class="card p-4">
-      <div class="flex flex-col items-start gap-2 lg:flex-row lg:items-center lg:gap-3">
-        <div class="shrink-0 rounded-control bg-amber-100 p-2 dark:bg-amber-900/30 text-amber-600">
+      <div class="flex flex-col items-start gap-2 lg:flex-row lg:gap-3">
+        <div
+          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-amber-100 dark:bg-amber-900/30 text-amber-600"
+        >
           <Icon name="cube" size="md" class="h-5 w-5" />
         </div>
         <div class="min-w-0 flex-1">
@@ -70,8 +74,10 @@
     </div>
     <slot name="performance" />
     <div class="card p-4">
-      <div class="flex flex-col items-start gap-2 lg:flex-row lg:items-center lg:gap-3">
-        <div class="shrink-0 rounded-control bg-green-100 p-2 dark:bg-green-900/30 text-green-600">
+      <div class="flex flex-col items-start gap-2 lg:flex-row lg:gap-3">
+        <div
+          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-green-100 dark:bg-green-900/30 text-green-600"
+        >
           <BalanceIcon size="md" />
         </div>
         <div class="min-w-0 flex-1">
@@ -104,11 +110,11 @@
       </div>
     </div>
     <div class="card p-4">
-      <div class="flex flex-col items-start gap-2 lg:flex-row lg:items-center lg:gap-3">
+      <div class="flex flex-col items-start gap-2 lg:flex-row lg:gap-3">
         <div
-          class="shrink-0 rounded-control bg-purple-100 p-2 dark:bg-purple-900/30 text-purple-600"
+          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-purple-100 dark:bg-purple-900/30 text-purple-600"
         >
-          <Icon name="clock" size="md" />
+          <Icon name="clock" size="md" class="h-5 w-5" />
         </div>
         <div class="min-w-0 flex-1">
           <p class="text-xs font-medium text-gray-500">{{ t('usage.avgDuration') }}</p>

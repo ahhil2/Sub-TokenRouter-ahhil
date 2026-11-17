@@ -20,6 +20,8 @@ import (
 // usage_accounting_scenario_test.go covers response_chat.go and
 // response_messages.go with the shared protocol usage accumulator. Client
 // completion must preserve image accounting after sparse terminal observations.
+// The billing result retains explicitly reported cached image input even when
+// the converted client model represents only aggregate cache hits.
 
 // accountingStreamSink captures converted stream payloads for terminal assertions.
 type accountingStreamSink struct {
@@ -47,17 +49,17 @@ func TestConvertedResponsesStreamsPreserveImageAccounting(t *testing.T) {
 		}{
 			{
 				name: "absent usage",
-				want: wire.ForwardUsage{InputTokens: 100, OutputTokens: 3, CacheReadInputTokens: 20, ImageInputTokens: 40, ImageOutputTokens: 2},
+				want: wire.ForwardUsage{InputTokens: 100, OutputTokens: 3, CacheReadInputTokens: 20, ImageCacheReadTokens: 15, ImageInputTokens: 40, ImageOutputTokens: 2},
 			},
 			{
 				name:  "sparse usage",
 				usage: `,"usage":{"output_tokens":10}`,
-				want:  wire.ForwardUsage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 20, ImageInputTokens: 40, ImageOutputTokens: 2},
+				want:  wire.ForwardUsage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 20, ImageCacheReadTokens: 15, ImageInputTokens: 40, ImageOutputTokens: 2},
 			},
 			{
 				name:  "explicit zero images",
 				usage: `,"usage":{"input_tokens_details":{"image_tokens":0},"output_tokens_details":{"image_tokens":0}}`,
-				want:  wire.ForwardUsage{InputTokens: 100, OutputTokens: 3, CacheReadInputTokens: 20},
+				want:  wire.ForwardUsage{InputTokens: 100, OutputTokens: 3, CacheReadInputTokens: 20, ImageCacheReadTokens: 15},
 			},
 			{
 				name:  "complete zero reset",
@@ -65,7 +67,7 @@ func TestConvertedResponsesStreamsPreserveImageAccounting(t *testing.T) {
 			},
 		} {
 			t.Run(client+"/"+fixture.name, func(t *testing.T) {
-				body := "data: " + `{"type":"response.created","response":{"id":"resp_images","model":"model","usage":{"input_tokens":100,"output_tokens":3,"input_tokens_details":{"cached_tokens":20,"image_tokens":40},"output_tokens_details":{"image_tokens":2}}}}` + "\n\n" +
+				body := "data: " + `{"type":"response.created","response":{"id":"resp_images","model":"model","usage":{"input_tokens":100,"output_tokens":3,"input_tokens_details":{"cached_tokens":20,"cached_tokens_details":{"image_tokens":15},"image_tokens":40},"output_tokens_details":{"image_tokens":2}}}}` + "\n\n" +
 					"data: " + `{"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"OK"}` + "\n\n" +
 					"data: " + `{"type":"response.completed","response":{"id":"resp_images","status":"completed","output":[]` + fixture.usage + `}}` + "\n\n"
 				response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}

@@ -525,6 +525,10 @@
             </div>
           </template>
 
+          <template #cell-balance_recharge_multiplier="{ value }">
+            <span v-if="value != null" class="tabular-nums">{{ value.toFixed(2) }}</span>
+          </template>
+
           <!-- Usage headers open a metric menu because these cells sort the current page locally; their columns keep DataTable server sorting disabled. -->
           <template
             v-for="usageKey in USAGE_COLUMN_KEYS"
@@ -1049,6 +1053,11 @@ const allColumns = computed<Column[]>(() => [
   { key: 'groups', label: t('admin.users.columns.groups'), sortable: false },
   { key: 'subscriptions', label: t('admin.users.columns.subscriptions'), sortable: false },
   { key: 'balance', label: t('admin.users.columns.balance'), sortable: true },
+  {
+    key: 'balance_recharge_multiplier',
+    label: t('admin.users.columns.balanceRechargeMultiplier'),
+    sortable: true,
+  },
   { key: 'usage', label: t('admin.users.columns.usage'), sortable: false },
   { key: 'usage_anthropic', label: t('admin.users.columns.usageAnthropic'), sortable: false },
   { key: 'usage_openai', label: t('admin.users.columns.usageOpenAI'), sortable: false },
@@ -1250,6 +1259,7 @@ const loadInitialSortState = (): {
     'username',
     'role',
     'balance',
+    'balance_recharge_multiplier',
     'concurrency',
     'status',
     'last_used_at',

@@ -55,7 +55,7 @@
 
 ## 控件尺寸
 
-- 按钮、输入框和下拉触发器共用 36px 基线（`.btn` 和 `.input` 都是 `min-h-9`），分页器控件也是 36px，表格页脚的分页尺寸和其他地方一样。在基线之上再写 `h-9` 是冗余写法，门禁会拦截；紧凑档需要 36px 时，用 `btn-sm/md/lg + h-9` 提到这一档。
+- 按钮、输入框和下拉触发器共用 36px 基线（`.btn` 和 `.input` 都是 `min-h-9`），分页器是紧凑例外：控件高 28px、上下留白各 4px，页脚内容高 36px。在基线之上再写 `h-9` 是冗余写法，门禁会拦截；紧凑档需要 36px 时，用 `btn-sm/md/lg + h-9` 提到这一档。
 - 主操作用 `.btn-primary`；普通的编辑、查询、筛选和链接操作用 `primary-*` 品牌色。状态提示、业务分类和第三方品牌使用各自的配色。radio 和 range 通过全局 `accent-color` 使用 `primary-600`。checkbox 是原生 input，勾选、半选、禁用和键盘行为都由浏览器提供，外观由 `style.css` 统一设置：浅色填充 `primary-700`，深色填充 `primary-600`，白色勾选标记复用通用的 check 路径，描边 1.75。选中和取消时用 `--motion-fast` 做缩放和透明度过渡，半选显示一条横线；系统强制配色时显示浏览器的原生外观。
 - 原生按钮、`role="button"` 和 `.btn` 的文字不可选中，按钮内的图片不可拖拽；正文、表格数据和输入内容可以选中复制。
 - 图标按钮有两档：`.btn-icon`（h-9 w-9）和 `.btn-icon-sm`（h-8 w-8），自带 `rounded-control` 和居中布局，调用处只需补 hover 和颜色类。`.btn-sm` 用在表格行内等紧凑场景。
@@ -112,7 +112,8 @@
 
 | 值 | token | 用途 |
 |---|---|---|
-| 30 | `chart-tooltip` / `sidebar-overlay` | 图表 tooltip（有意低于导航）/ 侧栏遮罩 |
+| 30 | `sidebar-overlay` | 侧栏遮罩 |
+| 45 | `chart-tooltip` | 图表 tooltip，高于侧栏，低于顶栏和弹窗 |
 | 40 | `sidebar` | 侧栏 |
 | 50 | `header` / `modal` | 顶栏 / 弹窗遮罩（同一层由 DOM 顺序和 teleport 决定先后） |
 | 60 | `modal-nested` | 嵌套弹窗、筛选面板 |
@@ -127,6 +128,8 @@
 局部的堆叠上下文不进入这张表，也不加全局 token：DataTable 内部（0/20/200/210/220）、CreativeCanvas 画布内部、CustomPageView 目录抽屉、弹窗内的 sticky 表头（z-[1]）都加 `check-ui-allow` 豁免。表格内的局部 dropdown 用普通的 `z-50` 即可，它处在局部上下文里，不占用命名层级。
 
 ## 弹窗
+
+顶栏公告列表与详情共用同一面板，列表在详情下方保持挂载。返回按钮或 Escape 返回列表并恢复原行焦点与滚动位置；再次按 Escape 关闭列表。列表显示单行摘要、未读圆点，七天内显示相对时间，较早公告显示日历日期。首次加载显示占位，已有条目在刷新和全部标记已读时保持可见。详情标题和发布时间固定，Markdown 正文独立滚动；主动打开的预览从头部关闭，自动弹出公告另有确认按钮。摘要保留英文换行间的空格，连续中日韩字符换行直接连接。
 
 - 提供商管理的弹窗在首次打开时异步导入并挂载，关闭后保留实例。依赖 `show` 初始化的组件需要处理首次挂载时已经为 `true` 的情况；监听器使用 `immediate`，关闭时按组件的规则结束轮询和临时操作。
 - 默认使用 `BaseDialog`：宽度档位有 narrow、normal、wide、extra-wide、full；Escape 关闭、点击外部关闭、焦点管理和背景滚动锁定都已内置。新弹窗直接用它，手写 `fixed inset-0` 外壳会缺少这些行为。
@@ -180,7 +183,7 @@
 
 Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`，由编译器给组件选择器添加作用域属性。`:global(.dark) .component-class` 会被编译成单独的 `.dark`，使组件背景、边框或阴影作用到页面根元素；滚动条伪元素也要保留组件选择器。
 
-深色模式下，侧栏和顶栏同样使用不透明的 `--page-bg`，和页面同色。控制台、首页和公开模型广场的顶栏共用 `.site-header`；深色模式关闭顶栏的背景模糊，滚动内容和移动端侧栏遮罩都不会改变它的底色。浅色模式下，顶栏是 80% 透明度的白色并带背景模糊，侧栏是白色。
+控制台、首页和公开模型广场的顶栏共用 `.site-header`。浅色顶栏使用不透明度为 65% 的白色，深色顶栏使用不透明度为 80% 的 `--page-bg`；两种模式都保留背景模糊，透出滚动内容，文字和图标保持原有不透明度。侧栏使用不透明背景：浅色为白色，深色为与页面同色的 `--page-bg`。
 
 深色模式的层次靠接近底色的表面和低透明度的边线区分。`borderColor.dark`、`divideColor.dark`、`ringColor.dark` 共用 `darkEdges`，和 `colors.dark` 的实色分开，调整边框时文字和背景不受影响。
 
@@ -215,9 +218,11 @@ Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`
 
 ## 图表主题
 
+用户使用记录默认选择浏览器本地当天，按小时展示趋势。仪表盘没有有效已保存范围时选择「今天」，并提供当天快捷入口；有效范围偏好继续恢复。趋势曲线载入及切换数据时，从左向右显露最终高度，减少动态效果模式直接显示完整曲线。
+
 - 模型、分组和端点分布表的名称与展开箭头默认使用普通文字色（浅色 `gray-900`、深色 `white`）。可展开的行在整行悬停时将名称和箭头显示为品牌色（浅色 `primary-600`、深色 `primary-500`）。关闭明细或分组 ID 小于等于 0 时使用普通文字色。
 - 饼图和圆环图按原始指标值画扇区，每项的占比是该项数值除以所有项之和，tooltip 用同一组数值计算百分比。扇区数据保持原值：不做对数压缩，也不设最小占比，零值不占扇区。消费排行的"其他"汇总项也按实际费用计算。
-- 分组和端点分布的条形图、柱状图使用从零开始的线性数值轴，柱长和原始指标值成正比，不使用对数轴或数据压缩。
+- 分组、端点、团队成员消费和 Ops 请求耗时分布使用圆环图；分组与端点的明细表保留，成员与耗时图例标明各扇区，提示框展示原始指标及占比。
 - 图表主题从 `composables/useChartTheme.ts` 取：它提供响应式的 `colors`（text、muted、grid 三档，zinc 色系）和 `onThemeChange` 重绘钩子。`document.documentElement.classList.contains('dark')` 这种快照判断没有响应式依赖，切换主题后不会重新计算，门禁会拦截。vue-chartjs 场景下，colors 是响应式的，切换主题时自动重绘；Stripe Elements 等命令式场景，用 watch 加 `elements.update({ appearance })` 重新应用。
 - 分布图的调色板只有一份 `CHART_PALETTE`（12 色，按切片排名取色），"Others" 汇总切片用 `CHART_OTHER_COLOR`；token 趋势的序列色用 `CHART_SERIES_COLORS`。刻度字号 `CHART_TICK_FONT_SIZE`（10），图例字号 `CHART_LEGEND_FONT_SIZE`（11）。
 - 以下业务配色留在组件内部：TeamMemberUsageCharts 的成员固定配色（同一成员在不同图表里颜色一致）；OpsSwitchRateTrendChart 和 DashboardView 的本地图表主题（深色刻度 `#D4D4D8`、网格 `#27272A`，浅色使用品牌色调的字面值）；DailyRevenueChart 的线条和填充色。
@@ -235,7 +240,7 @@ Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`
 
 数据还没取到时，在内容将要出现的位置显示骨架，页头、筛选工具栏、卡片外框和表格列结构都保留。加载期间显示业务零值或"暂无数据"会误导用户，应当显示骨架。通用骨架用 `Skeleton.vue` 和 `.skeleton` 的中性色和轻微脉动，减少动画模式下关闭脉动。装饰块加 `aria-hidden`，区域用加载标签和 `aria-busy` 标明状态。
 
-现有的骨架组件包括管理员仪表盘的 `DashboardSkeleton`、设置页的 `SettingsSkeleton`、模型广场的 `ModelMarketplaceSkeleton`、图表的 `ChartSkeleton`，以及 DataTable 的表格行和移动端卡片。公告按时间线条目占位，热力图直接用日期格子占位。用户仪表盘的用量指标卡、趋势图和模型排行只在第一次取数时显示骨架，分别占位数值、绘图区和 5 行排行；刷新、切换范围或筛选时，已有数据保持显示。加载成功或失败后退出占位，进入页面的数据、错误或空状态分支。标题下方的实时状态条，第一次取数时用行内骨架占位数值；之后轮询失败时，数值显示为占位符 `—`，界面上没有错误弹窗。
+现有的骨架组件包括管理员仪表盘的 `DashboardSkeleton`、设置页的 `SettingsSkeleton`、模型广场的 `ModelMarketplaceSkeleton`、图表的 `ChartSkeleton`，以及 DataTable 的表格行和移动端卡片。仪表盘公告按时间线条目占位，顶栏公告列表按标题、日期和摘要行占位，热力图直接用日期格子占位。用户仪表盘的用量指标卡、趋势图和模型排行只在第一次取数时显示骨架，分别占位数值、绘图区和 5 行排行；刷新、切换范围或筛选时，已有数据保持显示。加载成功或失败后退出占位，进入页面的数据、错误或空状态分支。标题下方的实时状态条，第一次取数时用行内骨架占位数值；之后轮询失败时，数值显示为占位符 `—`，界面上没有错误弹窗。
 
 页面、弹窗和局部数据区都用这套规则。列表、表单、字段详情和文档正文可以用 `ContentSkeleton`；统计页按实际的卡片网格组合 `Skeleton` 和 `ChartSkeleton`。原生表格用 `TableSkeletonBody`，保留实际的表头，并传入当前可见的列数，条件列变化时占位列同步调整。加载更多时只在列表末尾追加占位，已有内容保持显示。
 
@@ -317,7 +322,7 @@ Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`
 
 全站只有一套密度：表头 `px-4 py-2 text-xs font-medium tracking-wider`，数据单元格 `px-4 py-3 text-sm`。`.table` 组件类、`TablePageLayout` 的深度样式和 `DataTable` 三处要保持一致。
 
-分页表格的表体和 `Pagination` 共用一个 `rounded-surface` 外框，外框用 `overflow-hidden` 裁出底部圆角。分页放在表体的滚动区域之外，两者之间直接相接，没有 `space-y-*` 或外边距；固定高度的表格用 flex 分配表体高度，分页不收缩。`TablePageLayout` 已经包含这个结构；独立卡片和弹窗也按这个约定，嵌入 `UsageTable` 时传 `flat`，表格只保留外框这一层边框。桌面分页上下留白 8px，浅色底 `gray-50/80`，深色底 `dark-900`，控件高 36px；窄屏显示上一页、下一页和当前页数。
+分页表格的表体和 `Pagination` 共用一个 `rounded-surface` 外框，外框用 `overflow-hidden` 裁出底部圆角。分页放在表体的滚动区域之外，两者之间直接相接，没有 `space-y-*` 或外边距；固定高度的表格用 flex 分配表体高度，分页不收缩。`TablePageLayout` 已经包含这个结构；独立卡片和弹窗也按这个约定，嵌入 `UsageTable` 时传 `flat`，表格只保留外框这一层边框。分页上下留白各 4px，浅色底 `gray-50/80`，深色底 `dark-900`，控件高 28px；窄屏显示上一页、下一页和当前页数。
 
 移动端卡片里，`DataTable` 的每一行左边是 `text-xs` 标签，右边是单元格内容，两边用 `items-baseline` 按首行文字对齐。单元格的首个元素是图标、头像或色条时，flex 容器会拿这个元素的底边当基线，标签就会偏下。这类单元格给第一行文字加 `self-baseline`，参考 `GroupBadge` 的分组名和 `UsageTable` 的 Token、延迟列。徽章组件也照这样处理，例如 `PlatformBadge`、`CapacityBadge`。文字是裸文本节点时，先包一层 `<span>`。
 
@@ -353,7 +358,7 @@ Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`
 - `onboarding.css` 覆盖 driver.js 第三方样式时使用的 `!important`。
 - i18n 文案里内嵌的导览 HTML（`src/i18n/**`）属于内容字符串，它的 inline style 不参与 token 校验。
 - 测试文件里断言"某个类名不存在"的负断言会被扫描命中，在该语句旁加 `check-ui-allow` 注释豁免。
-- 保留手写外壳的弹窗：BackupSettings 的 R2Guide 和 SubscriptionsView 的指南弹窗（max-w-2xl，BaseDialog 没有对应档位）、AnnouncementPopup 和 AnnouncementBell 的弹窗（独立的层级和定制过渡）、ProviderTestModal 的图片灯箱（媒体覆盖层，用强遮罩档）。新增弹窗默认用 BaseDialog，不要照搬这些结构。
+- 保留手写外壳的弹窗：BackupSettings 的 R2Guide 和 SubscriptionsView 的指南弹窗（max-w-2xl，BaseDialog 没有对应档位）、AnnouncementPopup 和 AnnouncementBell 的弹窗（复用 `.modal-overlay` 和 `.modal-content`，公告专用层级，组件负责滚动锁与 Escape）、ProviderTestModal 的图片灯箱（媒体覆盖层，用强遮罩档）。新增弹窗默认用 BaseDialog，不要照搬这些结构。
 - RiskControlView 搜索框的 `pl-9` 图标留白（和 `input-icon-*` 的各档数值都不同，局部保留）。
 - ProvidersView 跟随鼠标的操作菜单（定位方式特殊，不使用 `getFloatingPanelPosition`）。
 - textarea 按内容决定高度、GroupBadge 的方角造型、OpsDashboard 250ms 的路由同步防抖（用途和搜索防抖不同）、CreativeCanvas 工具条和 CreativeRunHistory 条目详情的结构性展开动画，都是局部写法，保持原样。
