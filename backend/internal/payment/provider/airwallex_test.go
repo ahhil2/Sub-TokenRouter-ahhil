@@ -20,12 +20,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/payment"
 )
 
-// Airwallex request fixtures replace a validated service base with a private
-// TLS loopback endpoint and its trusted client before operations run. They
-// inspect submitted decimal money, account headers and returned intent or
-// refund observations using fixed JSON responses. Callback fixtures construct
-// HMAC headers locally and check parsed identity, money and timestamp-age
-// rejection; they do not call a vendor service.
+// airwallex_test.go checks payment intents, refunds, authentication and
+// callbacks through TLS loopback services and signed local payloads. Request
+// fixtures replace a validated service base with the loopback endpoint and its
+// trusted client before operations run, then inspect decimal money, account
+// headers and returned intent or refund observations.
+//
+// Network fixtures derive credentials from their full test names because the
+// production token cache outlives individual servers and listeners may reuse
+// ports. Each fixture removes its captured cache key at cleanup, leaving
+// parallel fixtures' tokens available. Callback fixtures construct HMAC headers
+// locally and check identity, money and timestamp-age rejection.
 
 // TestNewAirwallexValidatesConfig rejects an unapproved host and a country
 // label containing a digit. A valid demo fixture then reports the adapter
@@ -76,8 +81,8 @@ func TestAirwallexCreatePaymentUsesServerAmountAndStableRequestID(t *testing.T) 
 		// discarded and the client result supplies the asserted observation.
 		switch r.URL.Path {
 		case "/api/v1/authentication/login":
-			require.Equal(t, "cid", r.Header.Get("x-client-id"))
-			require.Equal(t, "key", r.Header.Get("x-api-key"))
+			require.Equal(t, "cid-"+t.Name(), r.Header.Get("x-client-id"))
+			require.Equal(t, "key-"+t.Name(), r.Header.Get("x-api-key"))
 			_, _ = w.Write([]byte(`{"token":"token-1","expires_at":"2099-01-01T00:00:00Z"}`))
 		case "/api/v1/pa/payment_intents/create":
 			require.Equal(t, "Bearer token-1", r.Header.Get("Authorization"))
@@ -144,8 +149,8 @@ func TestAirwallexCreatePaymentUsesConfiguredCurrency(t *testing.T) {
 	defer server.Close()
 
 	prov, err := NewAirwallex("1", map[string]string{
-		"clientId":      "cid",
-		"apiKey":        "key",
+		"clientId":      "cid-" + t.Name(),
+		"apiKey":        "key-" + t.Name(),
 		"webhookSecret": "whsec",
 		"apiBase":       airwallexDemoAPIBase,
 		"currency":      "hkd",
@@ -156,6 +161,10 @@ func TestAirwallexCreatePaymentUsesConfiguredCurrency(t *testing.T) {
 	// directing this private fixture to its trusted loopback TLS service.
 	prov.config["apiBase"] = server.URL + "/api/v1"
 	prov.httpClient = server.Client()
+	// The global cache retains tokens after server shutdown. Remove this currency
+	// fixture's entry so repeated runs release the authorization state they own.
+	cacheKey := prov.tokenCacheKey()
+	t.Cleanup(func() { airwallexAccessTokens.Delete(cacheKey) })
 
 	resp, err := prov.CreatePayment(context.Background(), payment.CreatePaymentRequest{
 		OrderID:   "sub2_order",
@@ -209,8 +218,8 @@ func TestAirwallexRequestsUseConfiguredAccountID(t *testing.T) {
 	defer server.Close()
 
 	prov, err := NewAirwallex("1", map[string]string{
-		"clientId":      "cid",
-		"apiKey":        "key",
+		"clientId":      "cid-" + t.Name(),
+		"apiKey":        "key-" + t.Name(),
 		"webhookSecret": "whsec",
 		"apiBase":       airwallexDemoAPIBase,
 		"accountId":     "acct_123",
@@ -220,6 +229,10 @@ func TestAirwallexRequestsUseConfiguredAccountID(t *testing.T) {
 	// directing this private fixture to its trusted loopback TLS service.
 	prov.config["apiBase"] = server.URL + "/api/v1"
 	prov.httpClient = server.Client()
+	// Capture the final account-bearing key so cleanup releases this fixture's
+	// token while other parallel account and payment fixtures retain their entries.
+	cacheKey := prov.tokenCacheKey()
+	t.Cleanup(func() { airwallexAccessTokens.Delete(cacheKey) })
 
 	_, err = prov.CreatePayment(context.Background(), payment.CreatePaymentRequest{
 		OrderID: "sub2_order",
@@ -445,12 +458,13 @@ func TestAirwallexQueryOrderMapsSucceeded(t *testing.T) {
 // mustTestAirwallexProvider constructs valid demo settings, then replaces the
 // private endpoint and client with the supplied TLS fixture. It fails on
 // construction error; callers own the server lifetime and use the adapter
-// after this fixture-only replacement.
+// after this fixture-only replacement. Credentials include the full test name,
+// and cleanup removes this instance's final cache key after its requests finish.
 func mustTestAirwallexProvider(t *testing.T, server *httptest.Server) *Airwallex {
 	t.Helper()
 	prov, err := NewAirwallex("1", map[string]string{
-		"clientId":      "cid",
-		"apiKey":        "key",
+		"clientId":      "cid-" + t.Name(),
+		"apiKey":        "key-" + t.Name(),
 		"webhookSecret": "whsec",
 		"apiBase":       airwallexDemoAPIBase,
 	})
@@ -459,6 +473,10 @@ func mustTestAirwallexProvider(t *testing.T, server *httptest.Server) *Airwallex
 	// directing this private fixture to its trusted loopback TLS service.
 	prov.config["apiBase"] = server.URL + "/api/v1"
 	prov.httpClient = server.Client()
+	// The production cache is shared across tests, so release only the key built
+	// from this fixture's endpoint and credentials after its final request.
+	cacheKey := prov.tokenCacheKey()
+	t.Cleanup(func() { airwallexAccessTokens.Delete(cacheKey) })
 	return prov
 }
 
