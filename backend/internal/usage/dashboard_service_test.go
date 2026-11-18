@@ -12,11 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Dashboard cache freshness determines whether reads query storage
+// dashboard_service_test.go checks dashboard cache freshness and actor-rate
+// isolation. Cache freshness determines whether reads query storage
 // immediately or return a stored snapshot and request replacement. These
 // fixtures capture serialized writes and query ranges, checking invalid-entry
 // eviction, cache disablement and aggregation watermark display alongside the
 // observed refresh calls.
+// Scoped-rate fixtures also retain the repository's shared global pointer and
+// serialized cache entries so user-specific replacements cannot alter either.
 
 // usageRepoStub supplies shared dashboard values, captures ranges and
 // announces query invocation.
@@ -31,6 +34,16 @@ type usageRepoStub struct {
 	rangeStart         time.Time       // captured inclusive range start
 	rangeEnd           time.Time       // captured exclusive range end
 	onCall             chan struct{}   // optional query invocation signal channel
+}
+
+// dashboardUserRatesRepoStub adds actor-rate observations to the global fixture.
+type dashboardUserRatesRepoStub struct {
+	*usageRepoStub       // shared global statistics fixture
+	userID         int64 // last requested actor identifier
+	rpm            int64 // configured actor request rate
+	tpm            int64 // configured actor token rate
+	err            error // injected actor query failure
+	calls          int   // actor query invocation count
 }
 
 // dashboardCacheStub captures cache operations and the latest serialized
@@ -58,6 +71,72 @@ type dashboardCacheStub struct {
 type dashboardAggregationRepoStub struct {
 	watermark time.Time // configured aggregation progress instant
 	err       error     // injected watermark read failure
+}
+
+// GetUserRealtimePerformance records a serial actor query and returns configured
+// rates or failure. Tests read the captured identity after the service call ends.
+func (r *dashboardUserRatesRepoStub) GetUserRealtimePerformance(_ context.Context, userID int64) (int64, int64, error) {
+	r.userID = userID
+	r.calls++
+	return r.rpm, r.tpm, r.err
+}
+
+// TestDashboardService_UserRatesPreserveGlobalCache queries one actor after a
+// global cache miss. It protects both the shared repository result and the
+// serialized cache from receiving that actor's rates.
+func TestDashboardService_UserRatesPreserveGlobalCache(t *testing.T) {
+	global := &DashboardStats{TotalUsers: 20, TotalRequests: 90, Rpm: 12, Tpm: 1200}
+	repo := &dashboardUserRatesRepoStub{
+		usageRepoStub: &usageRepoStub{stats: global},
+		rpm:           3,
+		tpm:           300,
+	}
+	cache := &dashboardCacheStub{}
+	svc := NewDashboardService(repo, nil, cache, &Options{Dashboard: DashboardConfig{Enabled: true}})
+	scoped, err := svc.GetDashboardStatsWithUserRates(t.Context(), 7)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), repo.userID)
+	require.Equal(t, int64(3), scoped.Rpm)
+	require.Equal(t, int64(300), scoped.Tpm)
+	require.Equal(t, global.TotalRequests, scoped.TotalRequests)
+	require.Equal(t, global.TotalUsers, scoped.TotalUsers)
+	require.NotSame(t, global, scoped)
+	require.Equal(t, int64(12), global.Rpm)
+	require.Equal(t, int64(1200), global.Tpm)
+	stored := cache.readLastEntry(t)
+	require.Equal(t, int64(12), stored.Stats.Rpm)
+	require.Equal(t, int64(1200), stored.Stats.Tpm)
+
+	for _, userID := range []int64{0, -1} {
+		got, err := svc.GetDashboardStatsWithUserRates(t.Context(), userID)
+		require.NoError(t, err)
+		require.Equal(t, int64(12), got.Rpm)
+		require.Equal(t, int64(1200), got.Tpm)
+	}
+	require.Equal(t, 1, repo.calls)
+}
+
+// TestDashboardService_UserRatesRequireAvailableReader rejects missing or failed
+// actor-rate reads. A selected user must never receive global rates as a
+// successful replacement for unavailable measurements.
+func TestDashboardService_UserRatesRequireAvailableReader(t *testing.T) {
+	global := &usageRepoStub{stats: &DashboardStats{Rpm: 12, Tpm: 1200}}
+	svc := NewDashboardService(global, nil, nil, nil)
+	got, err := svc.GetDashboardStatsWithUserRates(t.Context(), 7)
+	require.ErrorContains(t, err, "user performance statistics unavailable")
+	require.Nil(t, got)
+
+	wantErr := errors.New("actor query failed")
+	repo := &dashboardUserRatesRepoStub{usageRepoStub: global, err: wantErr}
+	svc = NewDashboardService(repo, nil, nil, nil)
+	got, err = svc.GetDashboardStatsWithUserRates(t.Context(), 7)
+	require.ErrorIs(t, err, wantErr)
+	require.Nil(t, got)
+	require.Equal(t, int64(12), global.stats.Rpm)
+
+	svc = NewDashboardService(repo, nil, nil, nil, DashboardReaders{})
+	_, err = svc.GetDashboardStatsWithUserRates(t.Context(), 7)
+	require.ErrorContains(t, err, "user performance statistics unavailable")
 }
 
 // GetDashboardStats counts and optionally announces a dashboard read before

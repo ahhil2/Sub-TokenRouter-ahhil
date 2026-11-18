@@ -28,6 +28,8 @@ export default {
     performance: 'Performance',
     performanceHint:
       'Global rates over the last 60 seconds. RPM counts requests; TPM counts input and output tokens, excluding cached tokens.',
+    userPerformanceHint:
+      'Selected user in the last minute: RPM counts requests; TPM counts input and output tokens, excluding cache tokens.',
     avgResponse: 'Avg Response',
     averageTime: 'Average Time',
     active: 'active',
@@ -329,8 +331,8 @@ export default {
     deleteUser: 'Delete User',
     deleteConfirmMessage:
       "Are you sure you want to delete user '{email}'? This action cannot be undone.",
-    searchPlaceholder: 'Search by email, username, notes, or API key...',
-    searchUsers: 'Search by email, username, notes, or API key',
+    searchPlaceholder: 'Search by user ID, email, username, notes, or API key...',
+    searchUsers: 'Search by user ID, email, username, notes, or API key',
     roleFilter: 'Role Filter',
     allRoles: 'All Roles',
     allStatus: 'All Status',

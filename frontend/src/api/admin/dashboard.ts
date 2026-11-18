@@ -87,7 +87,8 @@ export interface DashboardSnapshotV2Params extends TrendParams {
 
 /**
  * DashboardSnapshotV2Stats adds service uptime to the administrator dashboard's
- * shared statistics fields.
+ * shared statistics fields. RPM and TPM cover the requested user's preceding minute
+ * when user_id is supplied; other statistics retain their whole-site scope.
  */
 export interface DashboardSnapshotV2Stats extends DashboardStats {
   uptime: number // Service uptime seconds.

@@ -22,7 +22,8 @@ import (
 // cache identity and become loader inputs, allowing the HTTP waiter to
 // observe its own cancellation while the loader continues for other waiters.
 //
-// The sections have different scopes: Stats uses full dashboard totals,
+// The sections have different scopes: Stats uses full dashboard totals and
+// recent rates for the selected actor, or global rates when no actor is selected.
 // UsersTrend uses the selected range and ranking limit, and the trend, model
 // and group charts receive their supported selectors. Model-name filtering
 // applies to Trend here. The cached response keeps generated time, uptime and
@@ -34,10 +35,10 @@ import (
 // responses and ETags for thirty seconds per entry.
 var dashboardSnapshotV2Cache = newSnapshotCache(30 * time.Second)
 
-// dashboardSnapshotV2Stats carries full administrator totals and the
-// handler's uptime observation.
+// dashboardSnapshotV2Stats carries administrator totals, optionally actor-scoped
+// minute rates, and the handler's uptime observation.
 type dashboardSnapshotV2Stats struct {
-	usage.DashboardStats       // embedded global dashboard metrics
+	usage.DashboardStats       // totals with selected actor rates
 	Uptime               int64 `json:"uptime"` // observed handler uptime seconds
 }
 
@@ -53,10 +54,10 @@ type dashboardSnapshotV2Response struct {
 	EndDate     string `json:"end_date"`    // formatted elapsed day end label
 	Granularity string `json:"granularity"` // normalized chart bucket label
 
-	// Stats contains full dashboard totals, independent of the selected chart
-	// bounds and filters. Nil omits that section when include_stats resolves
-	// false.
-	Stats *dashboardSnapshotV2Stats `json:"stats,omitempty"` // optional global dashboard section
+	// Stats contains full dashboard totals and preceding-minute rates. A positive
+	// UserID scopes only those rates; chart dates and other selectors leave them
+	// unchanged. Nil omits the section when include_stats resolves false.
+	Stats *dashboardSnapshotV2Stats `json:"stats,omitempty"` // optional dashboard statistics section
 	Trend []usage.TrendDataPoint    `json:"trend,omitempty"` // optional filtered trend buckets
 	// Models groups by the internal requested-model dimension and receives the
 	// supported identity and category selectors. The Model-name filter used by
@@ -108,7 +109,7 @@ type dashboardSnapshotV2CacheKey struct {
 	Stream             *bool  `json:"stream"`               // optional stream equality selector
 	BillingType        *int8  `json:"billing_type"`         // optional funding category selector
 	NativeCompactionV2 *bool  `json:"native_compaction_v2"` // optional compaction v2 selector
-	IncludeStats       bool   `json:"include_stats"`        // global dashboard inclusion flag
+	IncludeStats       bool   `json:"include_stats"`        // dashboard statistics inclusion flag
 	IncludeTrend       bool   `json:"include_trend"`        // filtered trend inclusion flag
 	IncludeModels      bool   `json:"include_models"`       // model grouping inclusion flag
 	IncludeGroups      bool   `json:"include_groups"`       // group grouping inclusion flag
@@ -217,11 +218,11 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 // construction time, and EndDate uses fixed elapsed-day subtraction when
 // formatting the response.
 //
-// Stats queries global dashboard metrics; UsersTrend queries the selected
-// range with its own limit. Trend receives the Model selector, while Models
-// and Groups receive their supported identity and category selectors. Every
-// enabled query must succeed before a combined result is returned, so
-// failures discard the partial response assembled in memory.
+// Stats combines global totals with selected-actor minute rates; UsersTrend
+// queries the selected range with its own limit. Trend receives the Model
+// selector, while Models and Groups receive their supported identity and
+// category selectors. Every enabled query must succeed before a combined result
+// is returned, so failures discard the partial response assembled in memory.
 func (h *DashboardHandler) buildSnapshotV2Response(
 	ctx context.Context,
 	startTime, endTime time.Time,
@@ -239,7 +240,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 	}
 
 	if includeStats {
-		stats, err := h.dashboardService.GetDashboardStats(ctx)
+		stats, err := h.dashboardService.GetDashboardStatsWithUserRates(ctx, filters.UserID)
 		if err != nil {
 			return nil, errors.New("failed to get dashboard statistics")
 		}

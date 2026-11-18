@@ -12,7 +12,13 @@
       <div class="min-w-0 flex-1">
         <p
           class="text-xs font-medium text-gray-500 dark:text-gray-400"
-          :title="t('admin.dashboard.performanceHint')"
+          :title="
+            t(
+              userScoped
+                ? 'admin.dashboard.userPerformanceHint'
+                : 'admin.dashboard.performanceHint',
+            )
+          "
         >
           {{ t('admin.dashboard.performance') }}
         </p>
@@ -45,15 +51,18 @@ import type { DashboardStats } from '@/api/admin/dashboard.types'
 import Icon from '@/components/icons/Icon.vue'
 import { formatTokens } from '@/utils/format'
 
-// PerformanceMetricsCard.vue displays the administrator dashboard's global request
-// and text-token rates in a shared card. Both administrator pages pass the same
-// snapshot fields for the preceding minute; the component formats those measurements
-// and shows missing observations separately from measured zero traffic.
+// PerformanceMetricsCard.vue displays administrator request and text-token rates in a
+// shared card. The parent supplies snapshot measurements for the preceding minute and
+// selects a whole-site or user-specific explanation. Missing observations display a dash
+// separately from measured zero traffic.
 
 defineProps<{
   // metrics contains the latest successful dashboard rates; null displays a dash
   // until the parent has received an observation from the snapshot endpoint.
   metrics: Pick<DashboardStats, 'rpm' | 'tpm'> | null
+  // userScoped selects the user-specific hint when true; omission describes whole-site
+  // rates. The parent supplies measurements matching this displayed scope.
+  userScoped?: boolean
 }>()
 
 // Shared dashboard translations label the rates and explain their measurement

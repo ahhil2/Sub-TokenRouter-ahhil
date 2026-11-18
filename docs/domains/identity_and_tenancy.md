@@ -44,7 +44,9 @@ Key 的使用方直接使用 `apikey.APIKey`、`APIKeyRepository` 和 `APIKeySer
 
 MCP 专用令牌属于签发它的管理员，保存独立的操作权限、有效期和撤销状态。认证使用摘要，完整令牌加密存储，所属管理员可以在浏览器中复制。每次调用读取当前用户和令牌；内部管理请求使用 `mcp_token` 身份，敏感操作默认通过所属管理员的浏览器会话确认；每个令牌可选择跳过 MCP 确认，既有近期 TOTP 要求继续生效。完整规则见 [MCP 管理接口](../interfaces/mcp_management.md#access_tokens)。
 
-管理员用户列表和详情的最近使用时间来自事务内维护的[用户活动汇总](../operations/observability_and_data_lifecycle.md#user_activity_summary)。排序在筛选后、分页前完成，升序把空时间放在前面，降序放在末尾；相同时间再按同方向的用户 ID 排序。搜索按邮箱、用户名、备注和 API Key 内容匹配，各字段分别查询候选用户 ID，再去重合并。计数和分页使用同一组条件。
+管理员用户列表和详情的最近使用时间来自事务内维护的[用户活动汇总](../operations/observability_and_data_lifecycle.md#user_activity_summary)。排序在筛选后、分页前完成，升序把空时间放在前面，降序放在末尾；相同时间再按同方向的用户 ID 排序。
+
+管理员用户搜索使用同一个 `search` 参数。邮箱、用户名、备注和 API Key 按内容匹配；输入由十进制数字组成、取值在正 `int64` 范围内时，还会精确匹配用户 ID，允许前导零。数字输入也参与文本匹配，零、带符号、非数字或超出范围的输入按文本搜索。各项查询的候选用户 ID 去重合并后，再应用身份组、状态、角色、分组和属性等筛选。软删除选择、计数和分页使用同一组条件，浏览器始终以字符串发送搜索词，避免大整数精度丢失。
 
 `User.preferred_locale` 是可为空的账户语言偏好，当前用户资料接口负责查询和修改。主动选择使用规范语言代码，登录、浏览器保存和邮件选择的顺序见[用户侧国际化](../interfaces/user_localization.md#language_selection)。管理员用户属性表单的定义和值按原文保存。
 

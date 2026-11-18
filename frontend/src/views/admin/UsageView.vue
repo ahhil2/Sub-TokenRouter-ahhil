@@ -3,7 +3,7 @@
     <div class="space-y-4">
       <UsageStatsCards :stats="usageStats">
         <template #performance>
-          <PerformanceMetricsCard :metrics="performanceStats" />
+          <PerformanceMetricsCard :metrics="performanceStats" :user-scoped="!!filters.user_id" />
         </template>
       </UsageStatsCards>
       <!-- Charts Section -->
@@ -332,9 +332,10 @@ import type { DashboardStats } from '@/api/admin/dashboard.types'
 // model-source caches have separate invalidation rules. Column preferences are stored
 // independently for usage and errors, and hidden-column migration appends newly hidden
 // defaults while retaining saved choices. Ranking mounts on first selection and continues
-// following shared filters afterward. Performance rates come from the dashboard's
-// global one-minute snapshot fields and share its display component; chart filters
-// continue to describe the separate usage totals and distributions.
+// following shared filters afterward. Performance rates use the snapshot's preceding
+// minute for the selected user or the whole site. Changing users clears the preceding
+// observation and invalidates pending snapshots before another response can publish.
+// Date and chart filters describe separate usage totals and distributions.
 
 // Translation and application notifications provide labels and request feedback for usage
 // records, filters, and export actions.
@@ -356,8 +357,9 @@ const route = useRoute()
 // distribution responses used by charts.
 const usageStats = ref<AdminUsageStatsResponse | null>(null)
 const usageLogs = ref<AdminUsageLog[]>([])
-// performanceStats retains the latest global rates across reloads; null shows an
-// unavailable observation until a dashboard snapshot supplies both measurements.
+// performanceStats retains the selected user's latest rates across same-user reloads.
+// Changing the user clears it to null until a snapshot supplies that user's measurements;
+// an absent user filter selects whole-site rates.
 const performanceStats = ref<Pick<DashboardStats, 'rpm' | 'tpm'> | null>(null)
 // Loading flags distinguish the records table, chart requests, and export operation so each
 // section can render its own progress.
@@ -870,14 +872,16 @@ const loadModelStats = async (source: ModelDistributionSource, force = false) =>
   }
 }
 
-// loadChartData retrieves global performance rates with the visible usage charts.
+// loadChartData retrieves user-scoped performance rates with the visible usage charts.
 // Request-ID filtering requests the rates while excluding trend and group sections.
-// The server keeps these one-minute rates independent of all chart filters.
+// The server uses the selected user or whole site for the preceding minute, independently
+// of the selected date range and other chart filters.
 //
 // A sequence identifies the current snapshot so older responses cannot replace
-// newer rates or charts, including after unmount. Current failures retain the last
-// successful observations. Model statistics use their separate loader and source
-// cache, while the existing snapshot request supplies rates alongside its charts.
+// newer rates or charts, including after unmount or a user change. Current failures retain
+// the last successful rates for the same user; the user watcher clears rates upon scope
+// changes. Model statistics use their separate loader and source cache, while the existing
+// snapshot request supplies rates alongside its charts.
 const loadChartData = async () => {
   const includeCharts = !filters.value.request_id
   // Capture chart ownership before awaiting the snapshot so only the latest
@@ -914,8 +918,8 @@ const loadChartData = async () => {
     trendData.value = snapshot.trend || []
     groupStats.value = snapshot.groups || []
   } catch (error) {
-    // Keep the preceding rates and charts on a current request failure; an
-    // obsolete or unmounted snapshot has already lost permission to report errors.
+    // Keep same-user rates and preceding charts on a current request failure; a user
+    // change already cleared rates and revoked the earlier snapshot's publication rights.
     if (seq !== chartReqSeq) return
     console.error('Failed to load chart data:', error)
   } finally {
@@ -1506,6 +1510,17 @@ onMounted(() => {
 watch(endpointDistributionSource, (source) => {
   void loadEndpointStats(source)
 })
+
+// Clear rates and invalidate pending snapshots synchronously with user selection. This
+// covers the interval before the filter's change event starts the replacement request.
+watch(
+  () => filters.value.user_id,
+  () => {
+    performanceStats.value = null
+    chartReqSeq += 1
+  },
+  { flush: 'sync' },
+)
 
 // Release page-owned request controllers and the outside-click listener when leaving this
 // view so pending cancelable work cannot retain those resources.

@@ -27,8 +27,8 @@ import (
 // denominators differ: administrator totals include every request, and user/key
 // dashboards count observed durations. Calendar supplies local midnight, but raw
 // administrator today spans use twenty-four elapsed hours. Administrator rates
-// use the preceding sixty seconds ending at query time; user and key rates use
-// separate five-minute windows.
+// use the preceding sixty seconds ending at query time, globally or for one
+// selected actor. User and API-key dashboards use separate five-minute windows.
 
 // UserStats contains raw actor request, token, and actual-charge totals.
 type UserStats struct {
@@ -49,7 +49,8 @@ type DashboardStats = usage.DashboardStats
 type UserDashboardStats = usage.UserDashboardStats
 
 // getPerformanceStats returns RPM and text TPM over the preceding sixty seconds.
-// Administrator dashboards pass a nonpositive user ID to select global records.
+// Administrator dashboards use a nonpositive user ID for global records or a
+// positive ID for the selected actor, with owned-team inclusion disabled.
 // The half-open window ends at query time, excludes future-dated usage, and
 // counts input and output tokens without cache creation or cache read tokens.
 func (r *Store) getPerformanceStats(ctx context.Context, userID int64, includeOwnedTeam bool) (rpm, tpm int64, err error) {
@@ -76,6 +77,16 @@ func (r *Store) getPerformanceStats(ctx context.Context, userID int64, includeOw
 	}
 	// A sixty-second window already expresses counts per minute.
 	return requestCount, tokenCount, nil
+}
+
+// GetUserRealtimePerformance returns administrator minute rates for one positive
+// actor ID. It applies exact user_id equality to raw usage, excluding owned-team
+// members, cache tokens, and future records; invalid IDs return an error.
+func (r *Store) GetUserRealtimePerformance(ctx context.Context, userID int64) (rpm, tpm int64, err error) {
+	if userID <= 0 {
+		return 0, 0, errors.New("user ID must be positive")
+	}
+	return r.getPerformanceStats(ctx, userID, false)
 }
 
 // GetUserStats returns raw actor totals for the supplied half-open range.

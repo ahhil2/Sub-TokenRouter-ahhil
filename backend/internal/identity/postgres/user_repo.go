@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -876,10 +877,13 @@ func (r *UserStore) ListWithFilters(ctx context.Context, params pagination.Pagin
 	return outUsers, pagination.ResultFromTotal(int64(total), params), nil
 }
 
-// identityUserSearch builds a UNION of case-insensitive email, username, note,
-// and API Key candidate account IDs. The outer user query controls account
-// soft deletion; key candidate search has no independent deleted-key
-// predicate.
+// identityUserSearch combines an exact positive decimal user ID with
+// case-insensitive email, username, note, and API Key candidate account IDs.
+// Numeric input still participates in every text search, and zero, signed,
+// nonnumeric, or overflowing input uses text matching alone. The outer user
+// query controls account soft deletion and other filters; key candidate
+// search has no independent deleted-key predicate. UNION removes duplicates
+// before the outer query counts and pages the selected users.
 func identityUserSearch(search string) predicate.User {
 	return func(s *entsql.Selector) {
 		builder := entsql.Dialect(s.Dialect())
@@ -887,6 +891,12 @@ func identityUserSearch(search string) predicate.User {
 		keys := builder.Table(apikey.Table).As("search_keys")
 		matches := builder.Select(users.C(dbuser.FieldID)).From(users).
 			Where(entsql.ContainsFold(users.C(dbuser.FieldEmail), search))
+		// Parse within the signed database ID range before adding a candidate;
+		// rejected numbers remain searchable in email, username, notes, and keys.
+		if userID, err := strconv.ParseUint(search, 10, 63); err == nil && userID > 0 {
+			matches.Union(builder.Select(users.C(dbuser.FieldID)).From(users).
+				Where(entsql.EQ(users.C(dbuser.FieldID), int64(userID))))
+		}
 		for _, field := range []string{dbuser.FieldUsername, dbuser.FieldNotes} {
 			matches.Union(builder.Select(users.C(dbuser.FieldID)).From(users).
 				Where(entsql.ContainsFold(users.C(field), search)))

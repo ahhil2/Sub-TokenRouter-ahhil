@@ -23,11 +23,113 @@ import (
 )
 
 // user_repo_integration_test.go checks PostgreSQL account lists, nullable recharge
-// rates, and masked updates. List queries combine cross-table search with
-// current/deleted account selection and activity-based ordering. The fixture
-// compares returned IDs and counts against Ent queries, then checks null
-// placement, ID tie breaks, pagination, and every supplied five-filter
-// intersection.
+// rates, and masked updates. List queries combine exact ID matching with
+// cross-table search, current/deleted account selection, and activity-based
+// ordering. Tests compare returned IDs and counts against expected matches and
+// Ent queries, then check null placement, ID tie breaks, pagination, and filter
+// intersections.
+
+// TestUserListSearchByID combines numeric IDs with matching account fields and
+// keys. It checks exact matching, range handling, deduplication, soft deletion,
+// filter intersections, and totals across separate result pages.
+func TestUserListSearchByID(t *testing.T) {
+	db := postgrescontainer.New(t)
+	client := ent.NewClient(ent.Driver(sql.OpenDB(dialect.Postgres, db)))
+	store := NewUserStore(client, db)
+	ctx := context.Background()
+	_, err := db.Exec(`INSERT INTO users(id,email,password_hash,username,notes,role,status,deleted_at) VALUES
+		(1201,'target@example.test','hash','target','1201','admin','active',NULL),
+		(1202,'mail1201@example.test','hash','mail','','user','active',NULL),
+		(1203,'name@example.test','hash','name1201','9223372036854775808 0x4b1 0000','user','active',NULL),
+		(1204,'notes@example.test','hash','notes','1201 +1201 -1201 1201.5','user','disabled',NULL),
+		(1205,'key@example.test','hash','key','','user','active',NULL),
+		(12010,'prefix@example.test','hash','prefix','','user','active',NULL),
+		(1301,'deleted@example.test','hash','deleted','','user','active',now()),
+		(9223372036854775807,'maximum@example.test','hash','maximum','','user','active',NULL)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO api_keys(user_id,key,name) VALUES
+		(1201,'sk-target','target'),(1205,'sk-search-1201','match'),(1205,'sk-other-1201','duplicate')`)
+	require.NoError(t, err)
+	noSubscriptions := false
+	for _, tc := range []struct {
+		name           string  // search behavior under test
+		search         string  // literal administrator search input
+		includeDeleted bool    // include deleted user records
+		page           int     // one-based requested page number
+		pageSize       int     // maximum rows per page
+		want           []int64 // ordered matching account IDs
+		total          int64   // matching accounts before pagination
+	}{
+		{"ID and all text fields", "1201", false, 1, 100, []int64{1201, 1202, 1203, 1204, 1205}, 5},
+		{"first result page", "1201", false, 1, 2, []int64{1201, 1202}, 5},
+		{"second result page", "1201", false, 2, 2, []int64{1203, 1204}, 5},
+		{"last result page", "1201", false, 3, 2, []int64{1205}, 5},
+		{"leading zeros", "001201", false, 1, 100, []int64{1201}, 1},
+		{"maximum signed ID", "9223372036854775807", false, 1, 100, []int64{9223372036854775807}, 1},
+		{"overflow stays text", "9223372036854775808", false, 1, 100, []int64{1203}, 1},
+		{"positive sign stays text", "+1201", false, 1, 100, []int64{1204}, 1},
+		{"negative sign stays text", "-1201", false, 1, 100, []int64{1204, 1205}, 2},
+		{"fraction stays text", "1201.5", false, 1, 100, []int64{1204}, 1},
+		{"hexadecimal stays text", "0x4b1", false, 1, 100, []int64{1203}, 1},
+		{"zero stays text", "0000", false, 1, 100, []int64{1203}, 1},
+		{"nonnumeric text", "PREFIX", false, 1, 100, []int64{12010}, 1},
+		{"ID prefix is not exact", "120", false, 1, 100, []int64{1201, 1202, 1203, 1204, 1205}, 5},
+		{"deleted ID hidden", "1301", false, 1, 100, []int64{}, 0},
+		{"deleted ID included", "1301", true, 1, 100, []int64{1301}, 1},
+		{"missing ID", "7654321", false, 1, 100, []int64{}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, total, err := store.ListWithFilters(ctx,
+				pagination.PaginationParams{Page: tc.page, PageSize: tc.pageSize, SortBy: "id", SortOrder: "asc"},
+				identity.UserListFilters{Search: tc.search, IncludeDeleted: tc.includeDeleted, IncludeSubscriptions: &noSubscriptions})
+			require.NoError(t, err)
+			actual := make([]int64, 0, len(rows))
+			for _, row := range rows {
+				actual = append(actual, row.ID)
+			}
+			require.Equal(t, tc.want, actual)
+			require.Equal(t, tc.total, total.Total)
+		})
+	}
+
+	var groupID, attributeID int64
+	require.NoError(t, db.QueryRow("INSERT INTO groups(name) VALUES('id-search-filter') RETURNING id").Scan(&groupID))
+	require.NoError(t, db.QueryRow("INSERT INTO user_attribute_definitions(key,name,type) VALUES('id-search-filter','ID filter','text') RETURNING id").Scan(&attributeID))
+	_, err = db.Exec("INSERT INTO user_allowed_groups(user_id,group_id) VALUES(1201,$1)", groupID)
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE api_keys SET group_id=$1 WHERE user_id=1201", groupID)
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO user_attribute_values(user_id,attribute_id,value) VALUES(1201,$1,'match')", attributeID)
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO user_identity_memberships(user_id,category,identity_code) VALUES(1201,'pricing','ahhilai')")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name    string                   // filter intersection under test
+		filters identity.UserListFilters // filters applied around exact ID
+		total   int64                    // matching accounts before pagination
+	}{
+		{"all matching filters", identity.UserListFilters{Role: "admin", Status: "active", IdentityGroup: "ahhilai", GroupName: "id-search-filter", APIKeyGroupID: groupID, Attributes: map[int64]string{attributeID: "match"}}, 1},
+		{"role excludes ID", identity.UserListFilters{Role: "user"}, 0},
+		{"status excludes ID", identity.UserListFilters{Status: "disabled"}, 0},
+		{"identity group excludes ID", identity.UserListFilters{IdentityGroup: "bonus_5"}, 0},
+		{"group excludes ID", identity.UserListFilters{GroupName: "missing-group"}, 0},
+		{"key group excludes ID", identity.UserListFilters{APIKeyGroupID: groupID + 1}, 0},
+		{"attribute excludes ID", identity.UserListFilters{Attributes: map[int64]string{attributeID: "absent"}}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.filters.Search = "001201"
+			tc.filters.IncludeSubscriptions = &noSubscriptions
+			rows, total, err := store.ListWithFilters(ctx,
+				pagination.PaginationParams{Page: 1, PageSize: 1}, tc.filters)
+			require.NoError(t, err)
+			require.Equal(t, tc.total, total.Total)
+			require.Len(t, rows, int(tc.total))
+			if tc.total > 0 {
+				require.EqualValues(t, 1201, rows[0].ID)
+			}
+		})
+	}
+}
 
 // TestUserListSearchAndActivityOrder seeds PostgreSQL accounts, keys, activity
 // summaries, and attribute/group data. It compares search results and totals,

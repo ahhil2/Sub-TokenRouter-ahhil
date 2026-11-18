@@ -21,7 +21,9 @@ import (
 // Cache age and aggregation lag answer separate questions. Cache age controls
 // refreshing; the aggregation watermark, runtime enablement, interval and
 // lookback determine StatsStale at each read. Queries have optional range and
-// public-counter capabilities discovered during construction. Cache
+// public-counter capabilities discovered during construction. User-scoped
+// snapshots replace recent rates on a copy after reading global statistics,
+// keeping actor observations out of the shared statistics cache. Cache
 // publication and eviction receive independent timeout contexts so a query can
 // still publish its result after the requesting context ends. Background
 // admission is supplied by the application lifecycle owner.
@@ -73,6 +75,14 @@ type dashboardPublicStatsFetcher interface {
 	// for raw usage totals; the PostgreSQL reader uses its calendar separately
 	// for today's tokens.
 	GetDashboardPublicStats(ctx context.Context, start, end time.Time, useAggregates bool) (*DashboardPublicStats, error)
+}
+
+// dashboardUserPerformanceFetcher reads recent administrator rates for one actor.
+type dashboardUserPerformanceFetcher interface {
+	// GetUserRealtimePerformance counts one positive actor's usage in the preceding
+	// sixty seconds, excluding the query instant and future records. TPM sums input
+	// and output tokens, while team ownership and payer identity do not widen scope.
+	GetUserRealtimePerformance(ctx context.Context, userID int64) (rpm, tpm int64, err error)
 }
 
 // dashboardStatsCacheEntry stores dashboard data and the insertion time used
@@ -135,14 +145,15 @@ type DashboardService struct {
 	preAggregation AggregationSettings // optional runtime aggregation settings
 }
 
-// DashboardReaders holds optional range and public-counter capabilities
+// DashboardReaders holds optional range, public-counter, and actor-rate capabilities
 // selected during service construction.
 type DashboardReaders struct {
-	// Range and Public are discovered from usageRepo unless NewDashboardService
-	// receives a reader set. The first supplied set replaces both discovered
-	// capabilities, including nil members.
-	Range  dashboardStatsRangeFetcher  // optional raw range capability
-	Public dashboardPublicStatsFetcher // optional public counter capability
+	// Range, Public, and UserPerformance are discovered from usageRepo unless
+	// NewDashboardService receives a reader set. The first supplied set replaces
+	// every discovered capability, including nil members.
+	Range           dashboardStatsRangeFetcher      // optional raw range capability
+	Public          dashboardPublicStatsFetcher     // optional public counter capability
+	UserPerformance dashboardUserPerformanceFetcher // optional actor rate capability
 }
 
 // NewDashboardService constructs an idle dashboard with repository
@@ -161,6 +172,7 @@ func NewDashboardService(usageRepo UsageLogRepository, aggRepo DashboardAggregat
 	sources := DashboardReaders{}
 	sources.Range, _ = usageRepo.(dashboardStatsRangeFetcher)
 	sources.Public, _ = usageRepo.(dashboardPublicStatsFetcher)
+	sources.UserPerformance, _ = usageRepo.(dashboardUserPerformanceFetcher)
 	if len(readers) > 0 {
 		sources = readers[0]
 	}
@@ -270,6 +282,37 @@ func (s *DashboardService) GetDashboardStats(ctx context.Context) (*DashboardSta
 		return nil, fmt.Errorf("get dashboard stats: %w", err)
 	}
 	return stats, nil
+}
+
+// GetDashboardStatsWithUserRates returns administrator totals with recent rates
+// for a selected actor. A nonpositive user ID uses the global dashboard path;
+// positive IDs require the actor-rate reader, and read failures return errors.
+//
+// Global statistics retain their existing cache and aggregation policy. The
+// selected actor's sixty-second rates replace only Rpm and Tpm on a value copy,
+// so neither a repository-owned result nor the serialized global cache acquires
+// user-specific rates. Callers cache that result under the selected user ID.
+func (s *DashboardService) GetDashboardStatsWithUserRates(ctx context.Context, userID int64) (*DashboardStats, error) {
+	if userID <= 0 {
+		return s.GetDashboardStats(ctx)
+	}
+	if s.readers.UserPerformance == nil {
+		return nil, errors.New("user performance statistics unavailable")
+	}
+	stats, err := s.GetDashboardStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rpm, tpm, err := s.readers.UserPerformance.GetUserRealtimePerformance(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get user performance statistics: %w", err)
+	}
+	// Repository readers may share their result pointer. Keep actor rates on this
+	// response's copy so subsequent global requests retain their original scope.
+	scoped := *stats
+	scoped.Rpm = rpm
+	scoped.Tpm = tpm
+	return &scoped, nil
 }
 
 // GetPublicDashboardStats returns homepage counters through the optional

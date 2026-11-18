@@ -10,6 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/settings/preaggregation"
+	"github.com/TokenFlux/TokenRouter/internal/team"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
@@ -45,6 +46,46 @@ func (s *UsageLogRepoSuite) TestAdminDashboardOneMinuteRates() {
 	s.Require().NoError(err)
 	s.Require().Equal(int64(2), raw.Rpm)
 	s.Require().Equal(int64(425), raw.Tpm)
+}
+
+// TestAdminUserOneMinuteRates isolates an actor from other users and owned-team
+// members. Persisted old, future, and cache-token observations must not contribute
+// to the selected actor's preceding-minute request and text-token counts.
+func (s *UsageLogRepoSuite) TestAdminUserOneMinuteRates() {
+	owner := mustCreateUser(s.T(), s.client, &identity.User{Email: "minute-owner@test.local"})
+	member := mustCreateUser(s.T(), s.client, &identity.User{Email: "minute-member@test.local"})
+	entity, err := s.client.Team.Create().SetName("minute team").SetStatus("active").SetMemberLimit(10).Save(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.client.TeamMembership.Create().SetTeamID(entity.ID).SetUserID(owner.ID).SetRole(team.TeamRoleOwner).Save(s.ctx)
+	s.Require().NoError(err)
+	key := mustCreateApiKey(s.T(), s.client, &apikey.APIKey{UserID: owner.ID, TeamID: &entity.ID, Key: "minute-team"})
+	p := mustCreateProvider(s.T(), s.client, &provider.Record{Name: "minute-scoped"})
+	now := time.Now().UTC()
+	recent := s.createUsageLog(owner, key, p, 100, 50, 0, now.Add(-30*time.Second))
+	s.createUsageLog(owner, key, p, 200, 75, 0, now.Add(-15*time.Second))
+	s.createUsageLog(owner, key, p, 1000, 2000, 0, now.Add(-2*time.Minute))
+	s.createUsageLog(owner, key, p, 4000, 5000, 0, now.Add(2*time.Minute))
+	other := s.createUsageLog(member, key, p, 600, 700, 0, now.Add(-20*time.Second))
+	_, err = s.tx.ExecContext(s.ctx, "UPDATE usage_logs SET cache_creation_tokens=3000, cache_read_tokens=7000 WHERE id=$1", recent.ID)
+	s.Require().NoError(err)
+	_, err = s.tx.ExecContext(s.ctx, "UPDATE usage_logs SET team_id=$1, billing_user_id=$2 WHERE id=$3", entity.ID, owner.ID, other.ID)
+	s.Require().NoError(err)
+
+	rpm, tpm, err := s.repo.GetUserRealtimePerformance(s.ctx, owner.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(int64(2), rpm)
+	s.Require().Equal(int64(425), tpm)
+	rpm, tpm, err = s.repo.GetUserRealtimePerformance(s.ctx, member.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(int64(1), rpm)
+	s.Require().Equal(int64(1300), tpm)
+	empty := mustCreateUser(s.T(), s.client, &identity.User{Email: "minute-empty@test.local"})
+	rpm, tpm, err = s.repo.GetUserRealtimePerformance(s.ctx, empty.ID)
+	s.Require().NoError(err)
+	s.Require().Zero(rpm)
+	s.Require().Zero(tpm)
+	_, _, err = s.repo.GetUserRealtimePerformance(s.ctx, 0)
+	s.Require().Error(err)
 }
 
 // TestAPIKeyDashboardAnalyticsParity records usage around Kathmandu dates with

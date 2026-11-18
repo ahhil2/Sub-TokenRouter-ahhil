@@ -5,9 +5,9 @@ import type { AdminUser } from '@/api/admin/users.types'
 import UsersView from '../UsersView.vue'
 
 // UsersView.spec.ts checks administrator user-table columns, saved preferences,
-// ordering, and bulk selection across pages. Mocked list and secondary-data endpoints
-// exercise the production view, while slot-rendering table stubs expose selected
-// identifiers and row order for assertions after asynchronous refreshes.
+// ordering, search input, and bulk selection across pages. Mocked list and secondary
+// endpoints exercise the production view, while slot-rendering table stubs expose
+// selected identifiers and row order for assertions after asynchronous refreshes.
 
 // Hoisted primary and secondary endpoint mocks let tests control user pages, groups,
 // custom attributes, and asynchronously loaded usage values.
@@ -219,6 +219,37 @@ describe('admin UsersView', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  // An administrator searches from a later page using IDs beyond JavaScript's safe
+  // integer range. Debounced requests send the exact strings and restart at page one.
+  it('sends complete numeric search strings and resets pagination', async () => {
+    vi.useFakeTimers()
+    listUsers.mockResolvedValue({
+      items: [createAdminUser()],
+      total: 40,
+      page: 1,
+      page_size: 20,
+      pages: 2,
+    })
+    const wrapper = mountUsersView()
+    await flushPromises()
+    wrapper.findComponent({ name: 'Pagination' }).vm.$emit('update:page', 2)
+    await flushPromises()
+    expect(listUsers).toHaveBeenLastCalledWith(2, 20, expect.any(Object), expect.any(Object))
+
+    for (const search of ['9223372036854775807', '9223372036854775808', '001201']) {
+      await wrapper.get('[placeholder="admin.users.searchUsers"]').setValue(search)
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+      expect(listUsers).toHaveBeenLastCalledWith(
+        1,
+        20,
+        expect.objectContaining({ search }),
+        expect.any(Object),
+      )
+    }
+    wrapper.unmount()
   })
 
   // The personal-rate column stays visible by default and leaves inherited cells empty.

@@ -7,7 +7,7 @@ import UsageView from '../UsageView.vue'
 import Pagination from '@/components/common/Pagination.vue'
 
 // UsageView.spec.ts tests administrator usage queries, endpoint caching, route
-// hydration, performance summaries, and workbook export. API substitutes control
+// hydration, user-scoped performance summaries, and workbook export. API substitutes control
 // response order and child controls expose page actions, while spreadsheet assertions
 // read serialized values and column preference cases retain the real page storage operations.
 
@@ -350,6 +350,146 @@ describe('admin UsageView 路由筛选', () => {
       expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('90.00K')
     } finally {
       wrapper.unmount()
+    }
+  })
+
+  // Changing the selected user moves the card between global and individual rates.
+  // Every transition clears the preceding scope while its snapshot is pending and
+  // displays only the new scope's values after that request completes.
+  it('clears performance rates when selecting, switching, and clearing users', async () => {
+    getSnapshotV2.mockResolvedValue({ stats: { rpm: 12, tpm: 5400 }, trend: [], groups: [] })
+    const wrapper = mountRouteFilteredUsageView(true)
+    try {
+      vi.advanceTimersByTime(120)
+      await flushPromises()
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('12')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('5.40K')
+      expect(
+        wrapper.get('[data-testid="performance-metrics-card"] [title]').attributes('title'),
+      ).toBe('admin.dashboard.performanceHint')
+
+      for (const scope of [
+        { userId: 5, rpm: 3, tpm: 300, displayedTPM: '300' },
+        { userId: 9, rpm: 7, tpm: 700, displayedTPM: '700' },
+        { userId: undefined, rpm: 21, tpm: 21000, displayedTPM: '21.00K' },
+      ]) {
+        let finishSnapshot!: (value: unknown) => void
+        getSnapshotV2.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishSnapshot = resolve
+            }),
+        )
+        wrapper
+          .findComponent(UsageFiltersStub)
+          .vm.$emit('update:modelValue', { user_id: scope.userId })
+        wrapper.findComponent(UsageFiltersStub).vm.$emit('change')
+        await flushPromises()
+
+        expect(getSnapshotV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ user_id: scope.userId, include_stats: true }),
+        )
+        expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
+        expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
+        expect(
+          wrapper.get('[data-testid="performance-metrics-card"] [title]').attributes('title'),
+        ).toBe(
+          scope.userId ? 'admin.dashboard.userPerformanceHint' : 'admin.dashboard.performanceHint',
+        )
+
+        finishSnapshot({ stats: { rpm: scope.rpm, tpm: scope.tpm }, trend: [], groups: [] })
+        await flushPromises()
+        expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe(String(scope.rpm))
+        expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe(scope.displayedTPM)
+      }
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  // Two user refreshes remain pending when selection moves to another user whose request
+  // fails. Neither a response between filter events nor one arriving after that failure
+  // may refill the cleared card; refreshing the unchanged scope still retains its rates.
+  it('keeps failed user scopes empty when an earlier scope finishes late', async () => {
+    routeQuery.user_id = '5'
+    getById.mockResolvedValue({ id: 5, email: 'selected@test.com' })
+    getSnapshotV2.mockResolvedValue({ stats: { rpm: 4, tpm: 800 }, trend: [], groups: [] })
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const wrapper = mountRouteFilteredUsageView(true)
+    try {
+      vi.advanceTimersByTime(120)
+      await flushPromises()
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('4')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('800')
+
+      let finishEarlier!: (value: unknown) => void
+      getSnapshotV2.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishEarlier = resolve
+          }),
+      )
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('refresh')
+      await flushPromises()
+      expect(getSnapshotV2).toHaveBeenLastCalledWith(expect.objectContaining({ user_id: 5 }))
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('4')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('800')
+
+      let finishBeforeChange!: (value: unknown) => void
+      getSnapshotV2.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishBeforeChange = resolve
+          }),
+      )
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('refresh')
+      await flushPromises()
+
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('update:modelValue', { user_id: 9 })
+      await flushPromises()
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
+
+      // Complete the latest old-user request before change dispatches a replacement.
+      // Filter identity itself must revoke ownership during this gap between events.
+      finishBeforeChange({ stats: { rpm: 88, tpm: 88000 }, trend: [], groups: [] })
+      await flushPromises()
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
+
+      let failCurrent!: (reason: Error) => void
+      getSnapshotV2.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            failCurrent = reject
+          }),
+      )
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('change')
+      await flushPromises()
+      expect(getSnapshotV2).toHaveBeenLastCalledWith(expect.objectContaining({ user_id: 9 }))
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
+
+      failCurrent(new Error('current user snapshot unavailable'))
+      await flushPromises()
+      expect(logError).toHaveBeenCalledWith('Failed to load chart data:', expect.any(Error))
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
+
+      finishEarlier({ stats: { rpm: 99, tpm: 99000 }, trend: [], groups: [] })
+      await flushPromises()
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
+
+      getSnapshotV2.mockResolvedValue({ stats: { rpm: 7, tpm: 700 }, trend: [], groups: [] })
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('refresh')
+      await flushPromises()
+      expect(getSnapshotV2).toHaveBeenLastCalledWith(expect.objectContaining({ user_id: 9 }))
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('7')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('700')
+    } finally {
+      wrapper.unmount()
+      logError.mockRestore()
     }
   })
 
