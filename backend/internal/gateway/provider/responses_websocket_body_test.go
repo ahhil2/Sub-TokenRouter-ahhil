@@ -15,44 +15,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// responses_websocket_body_test.go verifies provider-specific Responses request
-// normalization shared by WebSocket and HTTP forwarding. Fixtures exercise
-// credential-dependent compatibility, legacy conversion, replay identity, and
-// tool-schema repair while retaining unrelated input content and supported fields.
-
 // openAIResponsesInputTextMaxChars sets the ASCII prefix size in replay fixtures;
 // larger strings append extra content to check byte retention beyond that size.
 const openAIResponsesInputTextMaxChars = 10000000
-
-// TestResponsesCompatibilityRechecksLegacyFunctionSchemas supplies Chat-style
-// functions after the prelude has checked the original schema locations. Legacy
-// conversion introduces Responses tools, which must receive null-type repair and
-// lookaround cleanup even when the caller marks earlier schema checks complete.
-func TestResponsesCompatibilityRechecksLegacyFunctionSchemas(t *testing.T) {
-	body := []byte(`{
-		"model":"gpt-5.6-terra","store":false,"stream":true,"instructions":"test",
-		"messages":[{"role":"user","content":"hello"}],
-		"functions":[{"name":"lookup","parameters":{"type":null,"properties":{"q":{"type":"string","pattern":"(?=foo).*"}}}}]
-	}`)
-	provider := &providercore.Record{Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}
-	prechecked, changed, err := SanitizeOpenAIResponsesToolSchemasForPlatform(body, provider.Platform)
-	require.NoError(t, err)
-	require.False(t, changed)
-
-	for _, platform := range []string{"", capability.PlatformOpenAI} {
-		normalized, converted, err := NormalizeOpenAIResponsesCompatibilityBodyWithOptions(prechecked, provider, false, ResponsesCompatibilitySkipOptions{
-			SkipReasoningContentReplay: true,
-			SkipInputItemIDs:           true,
-			SkipToolSchemasPlatform:    platform,
-		})
-		require.NoError(t, err)
-		require.True(t, converted)
-		require.Equal(t, "lookup", gjson.GetBytes(normalized, "tools.0.name").String())
-		require.Equal(t, "object", gjson.GetBytes(normalized, "tools.0.parameters.type").String(), "prechecked platform %q", platform)
-		require.False(t, gjson.GetBytes(normalized, "tools.0.parameters.properties.q.pattern").Exists(), "prechecked platform %q", platform)
-		require.Contains(t, gjson.GetBytes(normalized, "input").Raw, "hello")
-	}
-}
 
 // TestWebSocketCompatibilityNormalizesTriggerAfterPairedOutputCleanup places
 // compaction_trigger before a call/output pair and user message. OAuth
@@ -632,4 +597,28 @@ func TestNormalizeOpenAIResponsesLitePayloadForProvider_RejectsNullAPIKeyBody(t 
 	require.ErrorContains(t, err, "request body must be a JSON object")
 	require.False(t, changed)
 	require.Equal(t, body, updated)
+}
+
+// TestResponsesCompatibilityRechecksLegacyFunctionSchemas supplies Chat-style
+// functions after the prelude has checked the original schema locations. Legacy
+// conversion introduces Responses tools, which receive null-type repair and
+// lookaround cleanup when the compatibility entry inspects the converted payload.
+func TestResponsesCompatibilityRechecksLegacyFunctionSchemas(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-5.6-terra","store":false,"stream":true,"instructions":"test",
+		"messages":[{"role":"user","content":"hello"}],
+		"functions":[{"name":"lookup","parameters":{"type":null,"properties":{"q":{"type":"string","pattern":"(?=foo).*"}}}}]
+	}`)
+	provider := &providercore.Record{Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}
+	prechecked, changed, err := SanitizeOpenAIResponsesToolSchemasForPlatform(body, provider.Platform)
+	require.NoError(t, err)
+	require.False(t, changed)
+
+	normalized, converted, err := NormalizeOpenAIResponsesWebSocketCompatibilityBody(prechecked, provider, false)
+	require.NoError(t, err)
+	require.True(t, converted)
+	require.Equal(t, "lookup", gjson.GetBytes(normalized, "tools.0.name").String())
+	require.Equal(t, "object", gjson.GetBytes(normalized, "tools.0.parameters.type").String())
+	require.False(t, gjson.GetBytes(normalized, "tools.0.parameters.properties.q.pattern").Exists())
+	require.Contains(t, gjson.GetBytes(normalized, "input").Raw, "hello")
 }

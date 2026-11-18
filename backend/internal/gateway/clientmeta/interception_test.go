@@ -40,20 +40,15 @@ func TestDetectInterceptType_MaxTokensOneHaikuRequiresClaudeCodeClient(t *testin
 
 // TestDetectInterceptType_IgnoresTitleKeywordInToolsAndRecognizesRealExtractor
 // supplies tool schemas containing title properties beside a real title prompt.
-// Ordinary tool requests allocate nothing and return InterceptTypeNone, while
-// genuine title-extractor prompts still match, including Unicode-escaped text.
+// Ordinary tool requests return InterceptTypeNone, while genuine title-extractor
+// prompts still match, including Unicode-escaped characters in marker text.
 func TestDetectInterceptType_IgnoresTitleKeywordInToolsAndRecognizesRealExtractor(t *testing.T) {
 	ordinaryWithTitleSchema := []byte(`{
 		"model":"claude-opus-4-6",
 		"tools":[{"name":"create_issue","input_schema":{"type":"object","title":"IssueInput","properties":{"title":{"type":"string"}}}}],
 		"messages":[{"role":"user","content":[{"type":"text","text":"Please implement \u003cdiv\u003e \u0026\u0026 update the PR title."}]}]
 	}`)
-	allocs := testing.AllocsPerRun(20, func() {
-		if got := DetectInterceptType(ordinaryWithTitleSchema, "claude-opus-4-6", 4096, true); got != InterceptTypeNone {
-			t.Fatalf("unexpected intercept %v", got)
-		}
-	})
-	require.Zero(t, allocs)
+	require.Equal(t, InterceptTypeNone, DetectInterceptType(ordinaryWithTitleSchema, "claude-opus-4-6", 4096, true))
 
 	realTitlePrompt := []byte(`{
 		"system":[{"type":"text","text":"Analyze if this message indicates a new conversation topic. If it does, extract a 2-3 word title."}],

@@ -2,9 +2,9 @@ package moderation
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
-	"unsafe"
 
 	"github.com/tidwall/gjson"
 )
@@ -158,28 +158,25 @@ func ExtractContentModerationInput(protocol string, body []byte) ContentModerati
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return ContentModerationInput{}
 	}
-	// Borrow validated request bytes during traversal so top-level history lookups do
-	// not heap-copy multi-megabyte arrays; retained units clone their strings below.
-	root := gjson.Parse(unsafe.String(unsafe.SliceData(body), len(body)))
 	builder := newContentModerationInputBuilder()
 	switch protocol {
 	case ContentModerationProtocolAnthropicMessages:
-		collectAnthropicCurrentTurn(root.Get("messages"), builder)
+		collectAnthropicCurrentTurn(gjson.GetBytes(body, "messages"), builder)
 	case ContentModerationProtocolOpenAIChat:
-		collectChatCurrentTurn(root.Get("messages"), builder)
+		collectChatCurrentTurn(gjson.GetBytes(body, "messages"), builder)
 	case ContentModerationProtocolOpenAIResponses:
-		collectResponsesCurrentInput(root.Get("input"), builder)
+		collectResponsesCurrentInput(gjson.GetBytes(body, "input"), builder)
 	case ContentModerationProtocolGemini:
-		collectGeminiCurrentTurn(root.Get("contents"), builder)
+		collectGeminiCurrentTurn(gjson.GetBytes(body, "contents"), builder)
 	case ContentModerationProtocolOpenAIImages:
-		builder.addText(ContentModerationSourceUser, root.Get("prompt").String())
-		collectContentValue(root.Get("images"), ContentModerationSourceUser, builder, false)
+		builder.addText(ContentModerationSourceUser, gjson.GetBytes(body, "prompt").String())
+		collectContentValue(gjson.GetBytes(body, "images"), ContentModerationSourceUser, builder, false)
 	default:
 		// Probe each supported top-level shape when the protocol is unknown; shared
 		// image deduplication keeps identical references from multiplying audit image units.
-		collectResponsesCurrentInput(root.Get("input"), builder)
-		collectChatCurrentTurn(root.Get("messages"), builder)
-		collectGeminiCurrentTurn(root.Get("contents"), builder)
+		collectResponsesCurrentInput(gjson.GetBytes(body, "input"), builder)
+		collectChatCurrentTurn(gjson.GetBytes(body, "messages"), builder)
+		collectGeminiCurrentTurn(gjson.GetBytes(body, "contents"), builder)
 	}
 	return builder.build()
 }
@@ -191,28 +188,27 @@ func newContentModerationInputBuilder() *contentModerationInputBuilder {
 }
 
 // addText retains nonblank text as the next review item and aggregate fragment.
-// It clones the retained string so borrowed body slices are never pinned,
-// normalizes source to user or tool, and treats a nil builder as a no-op.
+// It preserves the full supplied text and whitespace, normalizes source to user
+// or tool, and treats a nil builder as a no-op.
 func (b *contentModerationInputBuilder) addText(source string, text string) {
 	if b == nil || strings.TrimSpace(text) == "" {
 		return
 	}
-	ownedText := strings.Clone(text)
 	item := ContentModerationInputItem{
 		Index:  len(b.items),
 		Source: normalizeContentModerationSource(source),
 		Type:   ContentModerationItemTypeText,
-		Text:   ownedText,
+		Text:   text,
 	}
 	b.items = append(b.items, item)
-	b.textParts = append(b.textParts, ownedText)
+	b.textParts = append(b.textParts, text)
 }
 
 // addImage retains a supported trimmed image reference and assigns its first
 // review position. Nil builders and unsupported references are ignored. The
-// literal reference is cloned into independent storage and used as the
-// deduplication key, so the first accepted occurrence supplies the source and
-// SourceIndex even when another source later repeats that image.
+// literal reference is also the deduplication key, so the first accepted
+// occurrence supplies the source and SourceIndex even when another source later
+// repeats that image.
 //
 // The review item, image list, and image-position list are appended together.
 // This keeps downstream audit image indexes distinct from original review
@@ -230,22 +226,21 @@ func (b *contentModerationInputBuilder) addImage(source string, reference string
 	if _, ok := b.seenImages[reference]; ok {
 		return
 	}
-	ownedRef := strings.Clone(reference)
 	// Record the first reference before assigning its item index. Later tool or
 	// user occurrences retain this source association instead of appending another image unit.
-	b.seenImages[ownedRef] = struct{}{}
+	b.seenImages[reference] = struct{}{}
 	item := ContentModerationInputItem{
 		Index:    len(b.items),
 		Source:   normalizeContentModerationSource(source),
 		Type:     ContentModerationItemTypeImage,
-		ImageRef: ownedRef,
+		ImageRef: reference,
 	}
 	b.items = append(b.items, item)
-	b.images = append(b.images, ownedRef)
+	b.images = append(b.images, reference)
 	b.imageItems = append(b.imageItems, ContentModerationImage{
 		SourceIndex: item.Index,
 		Source:      item.Source,
-		Reference:   ownedRef,
+		Reference:   reference,
 	})
 }
 
@@ -281,14 +276,9 @@ func collectChatCurrentTurn(messages gjson.Result, builder *contentModerationInp
 	if !messages.IsArray() {
 		return
 	}
-	start := indexAfterLastRole(messages, "assistant")
-	index := 0
-	messages.ForEach(func(_, message gjson.Result) bool {
-		current := index
-		index++
-		if current < start {
-			return true
-		}
+	array := messages.Array()
+	start := indexAfterLastRole(array, "assistant")
+	for _, message := range array[start:] {
 		role := strings.ToLower(strings.TrimSpace(message.Get("role").String()))
 		switch role {
 		case "user":
@@ -296,8 +286,7 @@ func collectChatCurrentTurn(messages gjson.Result, builder *contentModerationInp
 		case "tool":
 			collectContentValue(message.Get("content"), ContentModerationSourceTool, builder, true)
 		}
-		return true
-	})
+	}
 }
 
 // collectAnthropicCurrentTurn collects user-role content after the last
@@ -315,24 +304,19 @@ func collectAnthropicCurrentTurn(messages gjson.Result, builder *contentModerati
 	if !messages.IsArray() {
 		return
 	}
-	start := indexAfterLastRole(messages, "assistant")
-	index := 0
-	messages.ForEach(func(_, message gjson.Result) bool {
-		current := index
-		index++
-		if current < start {
-			return true
-		}
+	array := messages.Array()
+	start := indexAfterLastRole(array, "assistant")
+	for _, message := range array[start:] {
 		if strings.ToLower(strings.TrimSpace(message.Get("role").String())) != "user" {
-			return true
+			continue
 		}
 		content := message.Get("content")
 		if content.Type == gjson.String {
 			builder.addText(ContentModerationSourceUser, content.String())
-			return true
+			continue
 		}
 		if !content.IsArray() {
-			return true
+			continue
 		}
 		content.ForEach(func(_, block gjson.Result) bool {
 			// Anthropic carries tool replies inside user messages; classify this block
@@ -344,8 +328,7 @@ func collectAnthropicCurrentTurn(messages gjson.Result, builder *contentModerati
 			collectContentValue(block, ContentModerationSourceUser, builder, false)
 			return true
 		})
-		return true
-	})
+	}
 }
 
 // collectResponsesCurrentInput accepts Responses input as a string, object, or
@@ -366,39 +349,29 @@ func collectResponsesCurrentInput(input gjson.Result, builder *contentModeration
 	case input.Type == gjson.String:
 		builder.addText(ContentModerationSourceUser, input.String())
 	case input.IsArray():
-		start := indexAfterLastResponsesModelItem(input)
-		index := 0
-		input.ForEach(func(_, item gjson.Result) bool {
-			current := index
-			index++
-			if current < start {
-				return true
-			}
+		array := input.Array()
+		start := indexAfterLastResponsesModelItem(array)
+		for _, item := range array[start:] {
 			collectResponsesInputItem(item, builder)
-			return true
-		})
+		}
 	case input.IsObject():
 		collectResponsesInputItem(input, builder)
 	}
 }
 
 // indexAfterLastResponsesModelItem returns the index after the final assistant
-// or recognized model tool call in a JSON array. It scans without allocating an
-// element slice, normalizing role and type spelling; zero means the whole array
-// is eligible for subsequent item classification.
-func indexAfterLastResponsesModelItem(items gjson.Result) int {
-	start := 0
-	index := 0
-	items.ForEach(func(_, item gjson.Result) bool {
+// or recognized model tool call. It scans backward, normalizing role and type
+// spelling; zero means the whole supplied list is eligible for subsequent item
+// classification.
+func indexAfterLastResponsesModelItem(items []gjson.Result) int {
+	for index, item := range slices.Backward(items) {
 		role := strings.ToLower(strings.TrimSpace(item.Get("role").String()))
 		typ := strings.ToLower(strings.TrimSpace(item.Get("type").String()))
 		if role == "assistant" || isResponsesModelToolCallType(typ) {
-			start = index + 1
+			return index + 1
 		}
-		index++
-		return true
-	})
-	return start
+	}
+	return 0
 }
 
 // isResponsesModelToolCallType reports whether normalized type names identify a
@@ -471,21 +444,16 @@ func collectGeminiCurrentTurn(contents gjson.Result, builder *contentModerationI
 	if !contents.IsArray() {
 		return
 	}
-	start := indexAfterLastRole(contents, "model")
-	index := 0
-	contents.ForEach(func(_, content gjson.Result) bool {
-		current := index
-		index++
-		if current < start {
-			return true
-		}
+	array := contents.Array()
+	start := indexAfterLastRole(array, "model")
+	for _, content := range array[start:] {
 		role := strings.ToLower(strings.TrimSpace(content.Get("role").String()))
 		if role != "" && role != "user" {
-			return true
+			continue
 		}
 		parts := content.Get("parts")
 		if !parts.IsArray() {
-			return true
+			continue
 		}
 		parts.ForEach(func(_, part gjson.Result) bool {
 			// Read both accepted function-response spellings before ordinary user parts,
@@ -509,25 +477,20 @@ func collectGeminiCurrentTurn(contents gjson.Result, builder *contentModerationI
 			addGeminiModerationImage(builder, ContentModerationSourceUser, part)
 			return true
 		})
-		return true
-	})
+	}
 }
 
 // indexAfterLastRole returns the position after the last matching normalized
-// role in a JSON array without allocating an element slice. Zero selects the
-// entire array when that separator is absent, allowing first-turn extraction to
-// use every classified user or tool unit.
-func indexAfterLastRole(items gjson.Result, role string) int {
-	start := 0
-	index := 0
-	items.ForEach(func(_, item gjson.Result) bool {
+// role in the supplied list. Zero selects the entire list when that separator
+// is absent, allowing first-turn extraction to use every classified user or
+// tool unit.
+func indexAfterLastRole(items []gjson.Result, role string) int {
+	for i, item := range slices.Backward(items) {
 		if strings.EqualFold(strings.TrimSpace(item.Get("role").String()), role) {
-			start = index + 1
+			return i + 1
 		}
-		index++
-		return true
-	})
-	return start
+	}
+	return 0
 }
 
 // collectContentValue adds strings, arrays, and objects using the

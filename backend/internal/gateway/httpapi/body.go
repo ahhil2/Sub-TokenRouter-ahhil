@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
@@ -16,22 +17,20 @@ import (
 // the OpenAI normalizer, record decoded payload telemetry, and translate its
 // expanded-size limit into the HTTP error type consumed by endpoint handlers.
 
-// gatewayRequestBodyMaxInitCap bounds initial buffer preallocation for
-// authenticated gateway JSON uploads so multi-megabyte histories avoid repeated
-// growth copies without trusting arbitrary Content-Length headers.
-const gatewayRequestBodyMaxInitCap = 8 << 20
-
 // ReadLenientJSONRequestBodyWithPrealloc reads and decodes the body before
 // escaping raw control bytes inside JSON strings. maxNormalizedBytes limits the
 // normalized result; read and decoding failures stop processing before normalization,
 // while successful reads record decoded payload bytes and elapsed decoding time.
 func ReadLenientJSONRequestBodyWithPrealloc(req *http.Request, maxNormalizedBytes int64) ([]byte, error) {
-	maxInitCap := gatewayRequestBodyMaxInitCap
-	if maxNormalizedBytes > 0 && maxNormalizedBytes < int64(maxInitCap) {
-		maxInitCap = int(maxNormalizedBytes)
-	}
 	startedAt := time.Now()
-	body, compressed, err := httpx.ReadRequestBodyWithMaxPrealloc(req, maxInitCap)
+	compressed := false
+	// Successful decompression clears the encoding header, so retain its original
+	// classification for the decoded-body diagnostic recorded after normalization.
+	if req != nil && req.Body != nil {
+		encoding := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Encoding")))
+		compressed = encoding != "" && encoding != "identity"
+	}
+	body, err := httpx.ReadRequestBodyWithPrealloc(req)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +59,7 @@ func NormalizeLenientJSONRequestBody(body []byte, limit int64) ([]byte, error) {
 }
 
 // ReadRequestBodyWithPrealloc delegates body reading and decompression to httpx
-// with the authenticated gateway preallocation bound and records decoded payload
+// with its bounded initial allocation and records decoded payload
 // telemetry. A nil request or body returns nil without error. The reader consumes
 // the body; successful decoding updates encoding and length metadata, while callers
 // that need to reread input install a replacement body themselves.
@@ -69,7 +68,14 @@ func NormalizeLenientJSONRequestBody(body []byte, limit int64) ([]byte, error) {
 // close the original body after its use.
 func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 	startedAt := time.Now()
-	body, compressed, err := httpx.ReadRequestBodyWithMaxPrealloc(req, gatewayRequestBodyMaxInitCap)
+	compressed := false
+	// Successful decompression clears the encoding header, so retain its original
+	// classification for the decoded-body diagnostic recorded after reading.
+	if req != nil && req.Body != nil {
+		encoding := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Encoding")))
+		compressed = encoding != "" && encoding != "identity"
+	}
+	body, err := httpx.ReadRequestBodyWithPrealloc(req)
 	if err != nil {
 		return nil, err
 	}

@@ -7517,8 +7517,8 @@ func TestSecondImageToolErrorPresentation(t *testing.T) {
 
 // TestResponsesPassthroughOAuthPromptAdditionalToolsSanitizesSchemas sends an
 // OAuth passthrough request whose tool schemas sit inside a legacy prompt
-// additional_tools array. Moving prompt into input must re-enable tool-schema
-// repair so null root types become object and lookaround patterns are removed.
+// additional_tools array. Forwarding must repair the moved schemas so null root
+// types become object and lookaround patterns are removed from tool parameters.
 func TestResponsesPassthroughOAuthPromptAdditionalToolsSanitizesSchemas(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

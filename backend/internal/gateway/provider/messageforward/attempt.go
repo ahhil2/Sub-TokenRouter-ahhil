@@ -289,12 +289,8 @@ func (a *attempt) InjectTTL(ctx context.Context, model string) bool {
 }
 
 // CacheTTL delegates one-hour TTL injection into Anthropic cache control
-// annotations and marks the attempt state so buildPassthroughRequest does not
-// repeat the scan.
+// annotations for the current provider request before credential preparation.
 func (a *attempt) CacheTTL(body []byte) []byte {
-	if a.state != nil {
-		a.state.CacheTTL1hApplied = true
-	}
 	return claude.InjectAnthropicCacheControlTTL1h(body)
 }
 

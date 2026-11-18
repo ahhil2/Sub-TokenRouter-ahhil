@@ -211,29 +211,17 @@ func TestRunContentModerationDisabledBypassesReview(t *testing.T) {
 	require.Equal(t, 1, logs.FilterMessage("content_moderation.gateway_check_done").Len())
 }
 
-// TestBuildContentModerationInputReusesSnapshotUntilBodyChanges publishes a
-// Cyber request snapshot and builds moderation inputs before and after body
-// replacement. Identical protocol and backing bytes populate PreExtracted, while
-// a rewritten slice clears PreExtracted so moderation reparses the new payload.
-func TestBuildContentModerationInputReusesSnapshotUntilBodyChanges(t *testing.T) {
+// TestBuildContentModerationInputPreservesCurrentBodyAndCyberSnapshot builds a
+// review after a prompt rewrite has replaced the captured Cyber warning body.
+// Ordinary moderation receives the current bytes while warning evidence retains
+// the original current-turn text.
+func TestBuildContentModerationInputPreservesCurrentBodyAndCyberSnapshot(t *testing.T) {
 	c := newContentModerationHelperTestContext()
-	body := []byte(`{"input":[{"type":"message","role":"user","content":"check this prompt"}]}`)
+	body := []byte(`{"input":[{"type":"message","role":"user","content":"original prompt"}]}`)
 	SetOpenAICyberWarningRequestSnapshot(c, moderation.ContentModerationProtocolOpenAIResponses, body)
 
-	reused := BuildContentModerationInput(
-		GatewayModerationEndpoints{},
-		c,
-		nil,
-		authctx.AuthSubject{UserID: 42},
-		moderation.ContentModerationProtocolOpenAIResponses,
-		"gpt-5",
-		body,
-	)
-	require.NotNil(t, reused.PreExtracted)
-	require.Equal(t, "check this prompt", reused.PreExtracted.Text)
-
 	rewritten := []byte(`{"input":[{"type":"message","role":"user","content":"rewritten prompt"}]}`)
-	invalidated := BuildContentModerationInput(
+	input := BuildContentModerationInput(
 		GatewayModerationEndpoints{},
 		c,
 		nil,
@@ -242,5 +230,12 @@ func TestBuildContentModerationInputReusesSnapshotUntilBodyChanges(t *testing.T)
 		"gpt-5",
 		rewritten,
 	)
-	require.Nil(t, invalidated.PreExtracted)
+	require.Equal(t, rewritten, input.Body)
+	current := moderation.ExtractContentModerationInput(input.Protocol, input.Body)
+	require.Equal(t, "rewritten prompt", current.Text)
+	snapshot, exists := c.Get(CyberWarningSnapshotKey)
+	require.True(t, exists)
+	cyberInput, ok := snapshot.(moderation.ContentModerationInput)
+	require.True(t, ok)
+	require.Equal(t, "original prompt", cyberInput.Text)
 }

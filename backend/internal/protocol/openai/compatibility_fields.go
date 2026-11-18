@@ -6,8 +6,6 @@ import (
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
-
-	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
 // compatibility_fields.go normalizes OAuth Responses input fields,
@@ -74,10 +72,9 @@ func NormalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 	}
 	normalized := body
 	changed := false
-	root := wirejson.ParseView(normalized)
-	prompt := root.Get("prompt")
+	prompt := gjson.GetBytes(normalized, "prompt")
 	if prompt.Exists() {
-		input := root.Get("input")
+		input := gjson.GetBytes(normalized, "input")
 		if prompt.Type != gjson.Null && (!input.Exists() || input.Type == gjson.Null) {
 			// Moving Raw retains the prompt's encoded numeric values and object
 			// fields while existing nonnull input remains authoritative over
@@ -93,12 +90,11 @@ func NormalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 			return body, false, fmt.Errorf("normalize oauth responses delete prompt: %w", err)
 		}
 		normalized = next
-		root = wirejson.ParseView(normalized)
 		changed = true
 	}
 	// Commands removal also applies when prompt was absent or input was
 	// already authoritative, so that cleanup does not depend on moving prompt.
-	if root.Get("commands").Exists() {
+	if gjson.GetBytes(normalized, "commands").Exists() {
 		next, err := sjson.DeleteBytes(normalized, "commands")
 		if err != nil {
 			return body, false, fmt.Errorf("normalize oauth responses delete commands: %w", err)
@@ -154,7 +150,7 @@ func ReplaceModelInBody(body []byte, newModel string) []byte {
 	if len(body) == 0 {
 		return body
 	}
-	if current := wirejson.ParseView(body).Get("model"); current.Exists() && current.String() == newModel {
+	if current := gjson.GetBytes(body, "model"); current.Exists() && current.String() == newModel {
 		return body
 	}
 	newBody, err := sjson.SetBytes(body, "model", newModel)

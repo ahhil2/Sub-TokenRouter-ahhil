@@ -54,39 +54,19 @@ const (
 // Read or decode failure leaves those metadata fields as supplied, although the
 // original body may already have been consumed.
 func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
-	body, _, err := ReadRequestBodyWithMaxPrealloc(req, requestBodyReadMaxInitCap)
-	return body, err
-}
-
-// ReadRequestBodyWithMaxPrealloc reads and decompresses the request body using
-// maxInitCap as the upper bound on ContentLength-guided buffer preallocation,
-// reporting whether transport decompression ran. Nonpositive maxInitCap values
-// fall back to the one-MiB public default.
-//
-// Authenticated gateway routes pass a larger bounded hint for multi-megabyte
-// JSON uploads while public routes keep the conservative default. Header
-// cleanup, sixty-four-MiB decompression truncation, and error semantics match
-// ReadRequestBodyWithPrealloc.
-func ReadRequestBodyWithMaxPrealloc(req *http.Request, maxInitCap int) ([]byte, bool, error) {
 	if req == nil || req.Body == nil {
-		return nil, false, nil
-	}
-	if maxInitCap <= 0 {
-		maxInitCap = requestBodyReadMaxInitCap
-	}
-	if maxInitCap < requestBodyReadInitCap {
-		maxInitCap = requestBodyReadInitCap
+		return nil, nil
 	}
 
-	// Treat ContentLength as an allocation hint within caller-supplied initial bounds.
+	// Treat ContentLength as an allocation hint within fixed initial bounds.
 	// Large declared lengths grow storage only as io.Copy actually consumes bytes.
 	capHint := requestBodyReadInitCap
 	if req.ContentLength > 0 {
 		switch {
 		case req.ContentLength < int64(requestBodyReadInitCap):
 			capHint = requestBodyReadInitCap
-		case req.ContentLength > int64(maxInitCap):
-			capHint = maxInitCap
+		case req.ContentLength > int64(requestBodyReadMaxInitCap):
+			capHint = requestBodyReadMaxInitCap
 		default:
 			capHint = int(req.ContentLength)
 		}
@@ -94,18 +74,18 @@ func ReadRequestBodyWithMaxPrealloc(req *http.Request, maxInitCap int) ([]byte, 
 
 	buf := bytes.NewBuffer(make([]byte, 0, capHint))
 	if _, err := io.Copy(buf, req.Body); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	raw := buf.Bytes()
 
 	enc := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Encoding")))
 	if enc == "" || enc == "identity" {
-		return raw, false, nil
+		return raw, nil
 	}
 
 	decoded, err := decompressRequestBody(enc, raw)
 	if err != nil {
-		return nil, true, fmt.Errorf("decode Content-Encoding %q: %w", enc, err)
+		return nil, fmt.Errorf("decode Content-Encoding %q: %w", enc, err)
 	}
 
 	// Metadata now describes returned decoded bytes. Clear the transmitted
@@ -114,7 +94,7 @@ func ReadRequestBodyWithMaxPrealloc(req *http.Request, maxInitCap int) ([]byte, 
 	req.Header.Del("Content-Length")
 	req.ContentLength = int64(len(decoded))
 
-	return decoded, true, nil
+	return decoded, nil
 }
 
 // decompressRequestBody decodes buffered bytes in the named supported compression format.

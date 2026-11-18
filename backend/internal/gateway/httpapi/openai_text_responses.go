@@ -18,7 +18,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
-	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
@@ -148,14 +147,14 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 	body = h.prompt.ApplyUserPromptReplacementToBody(c.Request.Context(), body, "openai_responses")
 	sessionHashBody := body
 
-	// Extract fields needed for validation using a borrowed view and cloned short string.
-	modelResult := wirejson.ParseView(body).Get("model")
+	// Extract fields needed for validation.
+	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
 		recordIngressValidate()
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
-	reqModel := strings.Clone(modelResult.String())
+	reqModel := modelResult.String()
 	apiKey, err = resolveClientGroupForRequest(c, h.backend, apiKey, protocol.ProtocolOpenAIResponses)
 	if err != nil {
 		recordIngressValidate()
@@ -170,39 +169,22 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 	} else if changed {
 		body = cappedBody
 	}
-	// Repair automation and delegation bootstrap call outputs in a single pass when
-	// the HTTP backend supports combined screening; session identity retains the pre-repair bytes.
 	bootstrapStart := time.Now()
-	if combined, hasCombined := h.backend.(interface {
-		NormalizeBootstraps([]byte) ([]byte, bool, bool)
-	}); hasCombined {
-		normalizedBody, automationChanged, delegationChanged := combined.NormalizeBootstraps(body)
-		if automationChanged || delegationChanged {
-			body = normalizedBody
-		}
-		if automationChanged {
-			reqLog.Info("openai.codex_automation_bootstrap_normalized",
-				zap.String("normalization", "call_output_to_user_message"),
-			)
-		}
-		if delegationChanged {
-			reqLog.Info("openai.codex_delegation_bootstrap_normalized",
-				zap.String("normalization", "call_output_to_user_message"),
-			)
-		}
-	} else {
-		if normalizedBody, changed := h.backend.NormalizeBootstrap(body, false); changed {
-			body = normalizedBody
-			reqLog.Info("openai.codex_automation_bootstrap_normalized",
-				zap.String("normalization", "call_output_to_user_message"),
-			)
-		}
-		if normalizedBody, changed := h.backend.NormalizeBootstrap(body, true); changed {
-			body = normalizedBody
-			reqLog.Info("openai.codex_delegation_bootstrap_normalized",
-				zap.String("normalization", "call_output_to_user_message"),
-			)
-		}
+	// Automation bootstrap repair can replace an unsupported call-output shape
+	// with user input; session identity continues to use the view saved before this repair.
+	if normalizedBody, changed := h.backend.NormalizeBootstrap(body, false); changed {
+		body = normalizedBody
+		reqLog.Info("openai.codex_automation_bootstrap_normalized",
+			zap.String("normalization", "call_output_to_user_message"),
+		)
+	}
+	// Delegation bootstrap has its own input repair. Adopt its changed bytes
+	// for forwarding while the saved session view keeps identity before bootstrap normalization.
+	if normalizedBody, changed := h.backend.NormalizeBootstrap(body, true); changed {
+		body = normalizedBody
+		reqLog.Info("openai.codex_delegation_bootstrap_normalized",
+			zap.String("normalization", "call_output_to_user_message"),
+		)
 	}
 	bootstrapElapsed = time.Since(bootstrapStart)
 	timing.ObserveSubstage(c.Request.Context(), "bootstrap_ms", bootstrapElapsed)
@@ -219,7 +201,7 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
-	previousResponseID := strings.Clone(strings.TrimSpace(wirejson.ParseView(body).Get("previous_response_id").String()))
+	previousResponseID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
 	if previousResponseID != "" {
 		previousResponseIDKind := h.backend.PreviousKind(previousResponseID)
 		reqLog = reqLog.With(

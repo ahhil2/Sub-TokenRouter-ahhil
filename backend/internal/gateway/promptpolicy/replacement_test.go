@@ -130,8 +130,8 @@ func TestApplyUserPromptReplacementMessages_OnlyUserText(t *testing.T) {
 
 // TestApplyUserPromptReplacementMessages_MultiHitPreservesLiteralAngleBrackets
 // applies default environment replacements across multiple user messages in one
-// payload. All user blocks update in a single pass while retaining literal XML
-// angle brackets without HTML Unicode escaping.
+// payload. Every matching user block changes while literal XML angle brackets
+// remain intact without HTML Unicode escaping.
 func TestApplyUserPromptReplacementMessages_MultiHitPreservesLiteralAngleBrackets(t *testing.T) {
 	cfg := DefaultUserPromptReplacementConfig()
 	compiled, err := compileUserPromptReplacementConfig(cfg, time.Minute)

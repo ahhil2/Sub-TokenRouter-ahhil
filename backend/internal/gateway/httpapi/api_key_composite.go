@@ -438,13 +438,13 @@ func ReadAndRestoreRequestBody(request *http.Request) ([]byte, error) {
 	decodeRequest := request.Clone(request.Context())
 	decodeRequest.Body = io.NopCloser(bytes.NewReader(rawBody))
 	decodeRequest.ContentLength = int64(len(rawBody))
-	decodedBody, compressed, err := httpx.ReadRequestBodyWithMaxPrealloc(decodeRequest, gatewayRequestBodyMaxInitCap)
+	decodedBody, err := httpx.ReadRequestBodyWithPrealloc(decodeRequest)
 	if err != nil {
 		return nil, err
 	}
 	// Record decompression before clearing Content-Encoding so a later handler
 	// reread of restored bytes retains request_compressed=1 and elapsed decompression time.
-	timing.ObserveBodyDecode(request.Context(), int64(len(decodedBody)), compressed, time.Since(startedAt))
+	timing.ObserveBodyDecode(request.Context(), int64(len(decodedBody)), true, time.Since(startedAt))
 	request.Header.Del("Content-Encoding")
 	SetRequestBody(request, decodedBody)
 	return decodedBody, nil

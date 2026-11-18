@@ -99,7 +99,7 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 	case openaiexecution.DispatchAnthropic:
 		return s.Text.NativeResponses(ctx, c, provider, body, reqModel)
 	case openaiexecution.DispatchPassthrough:
-		return s.Text.passthroughWithPreludeState(ctx, c, provider, originalBody, canonicalImageIntentBody, reqModel, prepared.ImageIntentInvalidated, prepared.ReasoningEffort, reqStream, startTime, prepared.SanitizedToolSchemasPlatform, prepared.SanitizedReasoningReplay, prepared.SanitizedInputItemIDs, tlsRouterMatch)
+		return s.Text.Passthrough(ctx, c, provider, originalBody, canonicalImageIntentBody, reqModel, prepared.ImageIntentInvalidated, prepared.ReasoningEffort, reqStream, startTime, tlsRouterMatch)
 	}
 
 	nativePrepRecorded := false

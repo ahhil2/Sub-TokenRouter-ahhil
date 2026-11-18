@@ -395,11 +395,8 @@ func (h *MessagesHandler) Messages(c *gin.Context) {
 		return
 	}
 
-	// Group features such as web search emulation read this ID; publish parsedReq
-	// on Gin context so downstream native Messages execution clones in O(1) when
-	// body bytes remain unchanged.
+	// Group features such as web search emulation read this ID.
 	parsedReq.GroupID = apiKey.GroupID
-	c.Set("parsed_request", parsedReq)
 
 	sessionStart := time.Now()
 	parsedReq.SessionContext = &requeststate.SessionContext{
