@@ -2,6 +2,8 @@
 import Icon from '@/components/icons/Icon.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { getConfiguredTablePageSizeOptions } from '@/utils/tablePreferences'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import IpGeoBatchToolbar from '@/components/common/IpGeoBatchToolbar.vue'
@@ -63,7 +65,14 @@ const loading = ref(false)
 const rows = ref<OpsErrorLog[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(10)
+// pageSizeOptions matches the error-table choices within both error endpoints'
+// five-hundred-row maximum, keeping a restored size representable by the selector.
+const pageSizeOptions = computed(() =>
+  getConfiguredTablePageSizeOptions().filter((size) => size <= 500),
+)
+// pageSize restores the browser preference up to the largest supported choice;
+// opening this dialog leaves the saved preference available to other lists.
+const pageSize = ref(Math.min(getPersistedPageSize(), Math.max(...pageSizeOptions.value)))
 
 // Local filters separate free text from request identity; requestId remains
 // editable until searchRequests copies it into appliedRequestId.
@@ -250,15 +259,17 @@ function resetFilters() {
   fetchErrorLogs()
 }
 
-// Opening from ordinary navigation resets filters and pagination; returning from a
-// single error skips that reset through resumeState.
+// Opening from ordinary navigation restores the saved size and resets filters
+// and page one; returning from a single error skips that reset through resumeState.
 watch(
   () => props.show,
   (open) => {
     if (!open) return
     if (props.resumeState) return
     page.value = 1
-    pageSize.value = 10
+    // Error endpoints clamp returned pages; use a supported selectable size so
+    // the frontend computes offsets from the same row limit.
+    pageSize.value = Math.min(getPersistedPageSize(), Math.max(...pageSizeOptions.value))
     resetFilters()
   },
 )

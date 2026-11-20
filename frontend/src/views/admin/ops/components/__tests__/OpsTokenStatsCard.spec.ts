@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import OpsTokenStatsCard from '../OpsTokenStatsCard.vue'
@@ -6,7 +6,8 @@ import OpsTokenStatsCard from '../OpsTokenStatsCard.vue'
 // OpsTokenStatsCard.spec.ts checks token-statistics filters, ranking and
 // pagination, and retrieval presentation with mocked API results. Selector
 // doubles emit the public model events while the real component builds requests,
-// updates pages, and renders empty or failed responses.
+// updates pages, and renders empty or failed responses. Remounting verifies that
+// page-size selections reach browser storage and govern later requests.
 
 // mockGetTokenStats captures mode and filter parameters while each scenario
 // controls response rows, pagination totals, or retrieval failures.
@@ -90,6 +91,84 @@ const sampleResponse = {
 describe('OpsTokenStatsCard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
+    delete window.__APP_CONFIG__
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+    delete window.__APP_CONFIG__
+  })
+
+  // Another table saves two hundred rows, exceeding this statistics endpoint's
+  // limit. Pagination must request one hundred and exclude unsupported choices
+  // while retaining the saved preference until the user selects another size.
+  it('bounds an oversized saved preference to the statistics API limit', async () => {
+    window.__APP_CONFIG__ = { table_page_size_options: [10, 20, 50, 100, 200] } as any
+    localStorage.setItem('table-page-size', '200')
+    mockGetTokenStats.mockResolvedValue(sampleResponse)
+    const wrapper = mount(OpsTokenStatsCard, {
+      global: { stubs: { Select: SelectStub, EmptyState: EmptyStateStub } },
+    })
+    await flushPromises()
+    wrapper.findAllComponents(SelectStub)[2].vm.$emit('update:modelValue', 'pagination')
+    await flushPromises()
+
+    const sizeSelect = wrapper.findAllComponents(SelectStub)[3]
+    expect(sizeSelect.props('modelValue')).toBe(100)
+    expect(sizeSelect.props('options')).toEqual(
+      [10, 20, 30, 50, 100].map((size) => ({ value: size, label: String(size) })),
+    )
+    expect(mockGetTokenStats).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, page_size: 100 }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    expect(localStorage.getItem('table-page-size')).toBe('200')
+    sizeSelect.vm.$emit('update:modelValue', 200)
+    await flushPromises()
+    expect(localStorage.getItem('table-page-size')).toBe('100')
+    expect(sizeSelect.props('modelValue')).toBe(100)
+    wrapper.unmount()
+  })
+
+  // The custom page-size control selects thirty rows under an older configured
+  // option list. Remounting must request that saved size and continue offering
+  // every standard choice.
+  it('restores the selected page size after remounting', async () => {
+    window.__APP_CONFIG__ = {
+      table_default_page_size: 20,
+      table_page_size_options: [10, 20, 50],
+    } as any
+    mockGetTokenStats.mockResolvedValue(sampleResponse)
+    const mountOptions = {
+      global: { stubs: { Select: SelectStub, EmptyState: EmptyStateStub } },
+    }
+    const wrapper = mount(OpsTokenStatsCard, mountOptions)
+    await flushPromises()
+    wrapper.findAllComponents(SelectStub)[2].vm.$emit('update:modelValue', 'pagination')
+    await flushPromises()
+    const sizeSelect = wrapper.findAllComponents(SelectStub)[3]
+    expect(sizeSelect.props('options')).toEqual(
+      [10, 20, 30, 50, 100].map((size) => ({ value: size, label: String(size) })),
+    )
+    sizeSelect.vm.$emit('update:modelValue', 30)
+    await flushPromises()
+    expect(mockGetTokenStats).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, page_size: 30 }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    wrapper.unmount()
+
+    const reopened = mount(OpsTokenStatsCard, mountOptions)
+    await flushPromises()
+    reopened.findAllComponents(SelectStub)[2].vm.$emit('update:modelValue', 'pagination')
+    await flushPromises()
+    expect(reopened.findAllComponents(SelectStub)[3].props('modelValue')).toBe(30)
+    expect(mockGetTokenStats).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, page_size: 30 }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    reopened.unmount()
   })
 
   // The card starts with platform and group constraints and then changes its
@@ -120,6 +199,7 @@ describe('OpsTokenStatsCard', () => {
         group_id: 7,
         top_n: 20,
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
 
     const selects = wrapper.findAllComponents(SelectStub)
@@ -132,6 +212,7 @@ describe('OpsTokenStatsCard', () => {
         platform: 'anthropic',
         group_id: 7,
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
   })
 
@@ -167,6 +248,7 @@ describe('OpsTokenStatsCard', () => {
         page: 1,
         page_size: 20,
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
 
     const buttons = wrapper.findAll('button')
@@ -179,6 +261,7 @@ describe('OpsTokenStatsCard', () => {
         page: 2,
         page_size: 20,
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
 
     selects = wrapper.findAllComponents(SelectStub)
@@ -192,6 +275,7 @@ describe('OpsTokenStatsCard', () => {
       expect.objectContaining({
         top_n: 50,
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
   })
 
@@ -234,7 +318,10 @@ describe('OpsTokenStatsCard', () => {
 
     await wrapper.setProps({ groupIdFilter: 8 })
     await flushPromises()
-    expect(mockGetTokenStats).toHaveBeenLastCalledWith(expect.objectContaining({ group_id: 8 }))
+    expect(mockGetTokenStats).toHaveBeenLastCalledWith(
+      expect.objectContaining({ group_id: 8 }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
   })
 
   // The statistics endpoint returns no items and zero matches. After loading
@@ -296,6 +383,7 @@ describe('OpsTokenStatsCard', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('加载失败')
+    expect(wrapper.find('.empty-state').exists()).toBe(false)
   })
 
   // The card completes its initial request and the user clicks its refresh
@@ -318,5 +406,145 @@ describe('OpsTokenStatsCard', () => {
     await flushPromises()
 
     expect(mockGetTokenStats).toHaveBeenCalledTimes(2)
+  })
+
+  // A successful response is followed by a failed refresh with identical
+  // controls. Keep its model visible and mark the retained data as stale so
+  // users can distinguish it from a fresh observation.
+  it('retains the last successful statistics when refreshing fails', async () => {
+    mockGetTokenStats.mockResolvedValueOnce(sampleResponse)
+    const wrapper = mount(OpsTokenStatsCard, {
+      global: { stubs: { Select: SelectStub, EmptyState: EmptyStateStub } },
+    })
+    await flushPromises()
+    mockGetTokenStats.mockRejectedValueOnce(new Error('请求超时'))
+    await wrapper.get('[data-test="token-stats-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('claude-sonnet-4')
+    expect(wrapper.get('[role="alert"]').text()).toContain(
+      'admin.ops.tokenStats.refreshFailedStale',
+    )
+    expect(wrapper.get('[role="alert"]').text()).toContain('请求超时')
+
+    // A retry still displays the previous observation until it succeeds, so its
+    // stale warning stays visible throughout the pending request.
+    let resolveRetry!: (value: typeof sampleResponse) => void
+    mockGetTokenStats.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRetry = resolve
+        }),
+    )
+    await wrapper.get('[data-test="token-stats-refresh"]').trigger('click')
+    expect(wrapper.get('[role="alert"]').text()).toContain(
+      'admin.ops.tokenStats.refreshFailedStale',
+    )
+    expect(wrapper.text()).toContain('claude-sonnet-4')
+    resolveRetry(sampleResponse)
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  // A new group fails after the previous group loaded successfully. Its failure
+  // must not leave the previous group's model visible under the new controls.
+  it('clears previous statistics when a changed filter fails', async () => {
+    mockGetTokenStats.mockResolvedValueOnce(sampleResponse)
+    const wrapper = mount(OpsTokenStatsCard, {
+      props: { groupIdFilter: 7 },
+      global: { stubs: { Select: SelectStub, EmptyState: EmptyStateStub } },
+    })
+    await flushPromises()
+    mockGetTokenStats.mockRejectedValueOnce(new Error('请求超时'))
+    await wrapper.setProps({ groupIdFilter: 8 })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('claude-sonnet-4')
+    expect(wrapper.text()).not.toContain('admin.ops.tokenStats.refreshFailedStale')
+    expect(wrapper.get('[role="alert"]').text()).toContain('请求超时')
+    wrapper.unmount()
+  })
+
+  // The first request resolves after a different filter has already completed.
+  // Abort the superseded request and ignore its late result, even if the adapter
+  // does not honor cancellation.
+  it('ignores late results from superseded filters', async () => {
+    let resolveFirst!: (value: typeof sampleResponse) => void
+    mockGetTokenStats.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve
+        }),
+    )
+    const wrapper = mount(OpsTokenStatsCard, {
+      props: { groupIdFilter: 7 },
+      global: { stubs: { Select: SelectStub, EmptyState: EmptyStateStub } },
+    })
+    const firstSignal = mockGetTokenStats.mock.calls[0][1].signal as AbortSignal
+    mockGetTokenStats.mockResolvedValueOnce({
+      ...sampleResponse,
+      items: [{ ...sampleResponse.items[0], model: 'current-model' }],
+    })
+    await wrapper.setProps({ groupIdFilter: 8 })
+    await flushPromises()
+    expect(firstSignal.aborted).toBe(true)
+    expect(wrapper.text()).toContain('current-model')
+    resolveFirst(sampleResponse)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('current-model')
+    expect(wrapper.text()).not.toContain('claude-sonnet-4')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  // Removing the card interrupts an outstanding request. Cancellation must
+  // reach its AbortSignal and a late rejection must not emit a retrieval error.
+  it('cancels the active request when the card unmounts', async () => {
+    let rejectRequest!: (reason: Error) => void
+    mockGetTokenStats.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectRequest = reject
+        }),
+    )
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const wrapper = mount(OpsTokenStatsCard, {
+      global: { stubs: { Select: SelectStub, EmptyState: EmptyStateStub } },
+    })
+    const signal = mockGetTokenStats.mock.calls[0][1].signal as AbortSignal
+    wrapper.unmount()
+    expect(signal.aborted).toBe(true)
+    rejectRequest(new Error('cancelled after unmount'))
+    await flushPromises()
+
+    expect(errorLog).not.toHaveBeenCalled()
+    errorLog.mockRestore()
+  })
+
+  // While page two is selected, the result count shrinks to one page. The card
+  // requests the corrected page exactly once and displays its returned rows.
+  it('requests the last valid page once when the total shrinks', async () => {
+    mockGetTokenStats.mockResolvedValue(sampleResponse)
+    const wrapper = mount(OpsTokenStatsCard, {
+      global: { stubs: { Select: SelectStub, EmptyState: EmptyStateStub } },
+    })
+    await flushPromises()
+    wrapper.findAllComponents(SelectStub)[2].vm.$emit('update:modelValue', 'pagination')
+    await flushPromises()
+    await wrapper.findAll('button')[1].trigger('click')
+    await flushPromises()
+    expect(mockGetTokenStats.mock.calls.at(-1)?.[0].page).toBe(2)
+
+    mockGetTokenStats.mockResolvedValue({ ...sampleResponse, total: 10 })
+    mockGetTokenStats.mockClear()
+    await wrapper.get('[data-test="token-stats-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect(mockGetTokenStats.mock.calls.map(([params]) => params.page)).toEqual([2, 1])
+    expect(wrapper.text()).toContain('claude-sonnet-4')
+    expect(wrapper.text()).toContain('第 1/1 页')
+    wrapper.unmount()
   })
 })

@@ -478,6 +478,40 @@ describe('user UsageView', () => {
     expect(showError).not.toHaveBeenCalled()
   })
 
+  // A page reload restores either a standard size or a larger administrator preference.
+  // User error requests and their pager must agree on a supported length capped at one hundred.
+  it.each([
+    { savedSize: 30, expectedSize: 30 },
+    { savedSize: 1000, expectedSize: 100 },
+  ])(
+    'restores saved error page size $savedSize within the user API limit',
+    async ({ savedSize, expectedSize }) => {
+      window.__APP_CONFIG__ = { table_page_size_options: [200, 1000] } as any
+      localStorage.setItem('table-page-size', String(savedSize))
+      publicSettings.allow_user_view_error_requests = true
+      try {
+        const wrapper = mountUsageView()
+        await flushPromises()
+        await wrapper
+          .findAll('button')
+          .find((button) => button.text() === 'usage.tabs.errors')!
+          .trigger('click')
+        await flushPromises()
+
+        expect(listMyErrorRequests).toHaveBeenLastCalledWith(
+          expect.objectContaining({ page: 1, page_size: expectedSize }),
+        )
+        expect(wrapper.findComponent({ name: 'UserErrorRequestsTable' }).props('pageSize')).toBe(
+          expectedSize,
+        )
+        wrapper.unmount()
+      } finally {
+        localStorage.removeItem('table-page-size')
+        delete window.__APP_CONFIG__
+      }
+    },
+  )
+
   // Error visibility is enabled but the error tab remains unopened. The test protects
   // deferring its API request until the user selects the error view.
   it('defers enabled error queries until the errors tab is opened', async () => {

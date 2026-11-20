@@ -53,7 +53,11 @@ Pagination component with page numbers, navigation, and page size selector.
 - `total: number` - Total number of items
 - `page: number` - Current page (1-indexed)
 - `pageSize: number` - Items per page
-- `pageSizeOptions?: number[]` - Available page size options (default: [10, 20, 50, 100])
+- `pageSizeOptions?: number[]` - Table-specific choices for endpoint limits. Defaults include 10, 20, 30, 50, 100 plus configured additions.
+
+Page-size changes save the shared browser preference before emitting the event.
+Initialize the parent list with `getPersistedPageSize()` before requesting data so
+the selected size survives navigation and reloads.
 
 **Events:**
 

@@ -168,8 +168,8 @@ interface Props {
   total: number // Total matching record count.
   page: number // Current one-based page number.
   pageSize: number // Current records per page.
-  // Declared caller page-size options; the current selector derives its choices from
-  // shared configuration plus the active size and does not read this prop.
+  // pageSizeOptions restricts this table's choices when its endpoint has a page-size
+  // limit. Omitted options use standard sizes plus configured additions.
   pageSizeOptions?: number[]
   showPageSizeSelector?: boolean // Page-size selector visibility flag.
   showJump?: boolean // Numeric page-jump visibility flag.
@@ -207,10 +207,12 @@ const toItem = computed(() => {
   return to > props.total ? props.total : to
 })
 
+// pageSizeSelectOptions combines this table's allowed choices with its active
+// size so the selector can display fixed-size tables and configured defaults.
 const pageSizeSelectOptions = computed(() => {
-  const options = Array.from(
-    new Set([...getConfiguredTablePageSizeOptions(), normalizeTablePageSize(props.pageSize)]),
-  ).sort((a, b) => a - b)
+  const options = Array.from(new Set([...props.pageSizeOptions, props.pageSize])).sort(
+    (a, b) => a - b,
+  )
 
   return options.map((size) => ({
     value: size,

@@ -11,6 +11,7 @@
 - [设置表单](#settings_form)：新增或调整分页设置弹窗、整页设置、设置项行和批量编辑项时读取。
 - [通用图标](#通用图标)：选择图标、调整悬停动画、迁移内联 SVG 时读取。
 - [断点](#断点)、[加载反馈](#loading_feedback)、[动画与时长](#动画与时长)、[表格密度](#表格密度)：调整响应式布局和交互时读取。
+- [每页条数](#table_pagination)：调整分页选项、浏览器选择记忆或列表接口上限时读取。
 - [行列表编辑器](#rule_list_editor)：新增或修改逐条添加的映射、规则列表时读取。
 - [深色配色](#dark_colors)、[主题切换入口](#主题切换入口)、[图表主题](#图表主题)、[字体和字号](#typography)：调整颜色、主题入口、字体和文字时读取。
 - [合法例外](#合法例外)、[校验](#校验)：确认局部例外和验证命令时读取。
@@ -323,6 +324,16 @@ Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`
 全站只有一套密度：表头 `px-4 py-2 text-xs font-medium tracking-wider`，数据单元格 `px-4 py-3 text-sm`。`.table` 组件类、`TablePageLayout` 的深度样式和 `DataTable` 三处要保持一致。
 
 分页表格的表体和 `Pagination` 共用一个 `rounded-surface` 外框，外框用 `overflow-hidden` 裁出底部圆角。分页放在表体的滚动区域之外，两者之间直接相接，没有 `space-y-*` 或外边距；固定高度的表格用 flex 分配表体高度，分页不收缩。`TablePageLayout` 已经包含这个结构；独立卡片和弹窗也按这个约定，嵌入 `UsageTable` 时传 `flat`，表格只保留外框这一层边框。分页上下留白各 4px，浅色底 `gray-50/80`，深色底 `dark-900`，控件高 28px；窄屏显示上一页、下一页和当前页数。
+
+<a id="table_pagination"></a>
+
+### 每页条数
+
+可选择每页条数的列表提供 10、20、30、50、100，系统配置中的其他合法条数作为附加选项。`tablePreferences.ts` 统一生成选项并校验选中值。受接口上限约束的列表在恢复值和选项中应用同一个上限，通用分页器通过 `pageSizeOptions` 接收过滤后的选项：批量图片、用户错误记录、风控记录、推广记录、运维 Token 统计和请求明细最多 100，审计和运维系统日志最多 200，管理员错误明细最多 500。恢复受限列表时保留浏览器中的原选择，其他列表仍可使用该值。
+
+用户选择保存在当前站点的浏览器 `localStorage`，键为 `table-page-size`，各列表共用。页面和弹窗在首次请求前通过 `getPersistedPageSize()` 恢复选择，刷新、重新打开和筛选重置时保留每页条数。`Pagination` 在通知父组件前保存选择；使用独立选择框的列表调用 `setPersistedPageSize()`。没有有效记录或浏览器拒绝读取时，使用系统默认条数；写入失败时，本次列表仍可切换条数。
+
+### 单元格对齐
 
 移动端卡片里，`DataTable` 的每一行左边是 `text-xs` 标签，右边是单元格内容，两边用 `items-baseline` 按首行文字对齐。单元格的首个元素是图标、头像或色条时，flex 容器会拿这个元素的底边当基线，标签就会偏下。这类单元格给第一行文字加 `self-baseline`，参考 `GroupBadge` 的分组名和 `UsageTable` 的 Token、延迟列。徽章组件也照这样处理，例如 `PlatformBadge`、`CapacityBadge`。文字是裸文本节点时，先包一层 `<span>`。
 

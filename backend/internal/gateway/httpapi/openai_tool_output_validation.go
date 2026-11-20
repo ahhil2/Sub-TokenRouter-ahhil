@@ -8,6 +8,7 @@ import (
 	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
@@ -24,14 +25,20 @@ import (
 // covering every call ID. Missing IDs and missing references produce distinct
 // diagnostic reasons and HTTP 400 messages, so callers can identify which
 // association information the request lacks.
-// Validation leaves the supplied body intact for subsequent execution.
+// Missing-ID warnings include bounded structural observations and a bootstrap
+// recheck of the rejected body. Diagnostic values use fixed labels and counts
+// so request text and identifiers remain outside the log. Validation leaves
+// the supplied body intact for subsequent execution.
 
 // ValidateOpenAIFunctionCallOutput reports whether HTTP tool outputs pass its
 // call-context checks. Requests without function_call_output pass immediately.
 // A nonblank previous_response_id or explicit tool-call context also passes;
 // remaining client outputs need call IDs and matching item_reference entries.
 // Hosted tool search results do not require a client reply identifier, while
-// invalid client outputs are logged and written as HTTP 400.
+// invalid client outputs are logged and written as HTTP 400. Structural
+// diagnostics are built only for missing-ID warnings accepted by the logger.
+//
+// @project-doc docs/interfaces/openai_upstream.md#openai_tool_identity
 func ValidateOpenAIFunctionCallOutput(c *gin.Context, body []byte, reqLog *zap.Logger) bool {
 	if !gjson.GetBytes(body, `input.#(type=="function_call_output")`).Exists() {
 		return true
@@ -51,9 +58,14 @@ func ValidateOpenAIFunctionCallOutput(c *gin.Context, body []byte, reqLog *zap.L
 	}
 
 	if validation.HasFunctionCallOutputMissingCallID {
-		reqLog.Warn("openai.request_validation_failed",
-			zap.String("reason", "function_call_output_missing_call_id"),
-		)
+		// Inspect structure only for an emitted failure warning; successful requests
+		// and disabled warnings do not incur the diagnostic parsing or bootstrap checks.
+		if entry := reqLog.Check(zap.WarnLevel, "openai.request_validation_failed"); entry != nil {
+			entry.Write(
+				zap.String("reason", "function_call_output_missing_call_id"),
+				zap.Any("tool_output_diagnostic", requeststate.DescribeOpenAIToolOutputFailure(body)),
+			)
+		}
 		DefaultOpenAIErrorOutput().WriteError(c, http.StatusBadRequest, "invalid_request_error", "Client tool outputs require a non-empty call_id")
 		return false
 	}

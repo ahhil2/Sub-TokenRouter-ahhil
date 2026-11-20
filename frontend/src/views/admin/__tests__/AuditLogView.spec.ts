@@ -27,7 +27,10 @@ function page() {
     global: {
       stubs: {
         AppLayout: { template: '<main><slot /></main>' },
-        TablePageLayout: { template: '<div><slot name="filters"/><slot name="table"/></div>' },
+        TablePageLayout: {
+          template:
+            '<div><slot name="filters"/><slot name="table"/><slot name="pagination"/></div>',
+        },
         FilterDropdown: { template: '<div><slot /></div>' },
         FilterField: { template: '<div><slot /></div>' },
         Select: {
@@ -56,6 +59,35 @@ describe('audit route filters', () => {
     route = reactive({ query: { q: 'tr_mcp_first', auth_method: 'mcp_token' } })
     api.list.mockResolvedValue({ items: [], total: 0 })
   })
+
+  // A saved global size can exceed the audit endpoint maximum after visiting another list.
+  // Restored requests and the pager must use the largest supported option while keeping thirty valid.
+  it.each([
+    { savedSize: 30, expectedSize: 30 },
+    { savedSize: 1000, expectedSize: 200 },
+  ])(
+    'restores saved audit page size $savedSize within the API limit',
+    async ({ savedSize, expectedSize }) => {
+      window.__APP_CONFIG__ = { table_page_size_options: [200, 1000] } as any
+      localStorage.setItem('table-page-size', String(savedSize))
+      api.list.mockResolvedValue({ items: [], total: 1001 })
+      try {
+        const wrapper = page()
+        await flushPromises()
+        expect(api.list).toHaveBeenLastCalledWith(
+          expect.objectContaining({ page: 1, page_size: expectedSize }),
+          expect.any(AbortSignal),
+        )
+        const pager = wrapper.findComponent({ name: 'Pagination' })
+        expect(pager.props('pageSize')).toBe(expectedSize)
+        expect(pager.props('pageSizeOptions')).toEqual([10, 20, 30, 50, 100, 200])
+        wrapper.unmount()
+      } finally {
+        localStorage.removeItem('table-page-size')
+        delete window.__APP_CONFIG__
+      }
+    },
+  )
 
   // A token link supplies both a prefix and MCP authentication filter. Controls
   // must show those values, then follow another link without remounting the page.

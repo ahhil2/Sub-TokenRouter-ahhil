@@ -220,6 +220,7 @@
           :total="total"
           :page="page"
           :page-size="pageSize"
+          :page-size-options="pageSizeOptions"
           @update:page="onPageChange"
           @update:pageSize="onPageSizeChange"
         />
@@ -442,6 +443,8 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/table/DataTable.vue'
 import type { Column } from '@/components/common/table/types'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { getConfiguredTablePageSizeOptions } from '@/utils/tablePreferences'
 import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
 import FilterDropdown from '@/components/common/FilterDropdown.vue'
@@ -474,7 +477,12 @@ const { loading, run: runLatest } = useLatestRequest()
 const logs = ref<AuditLog[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(20)
+// pageSizeOptions limits configured choices to the audit API maximum, keeping
+// requested lengths consistent with the rows returned by the server.
+const pageSizeOptions = getConfiguredTablePageSizeOptions().filter((size) => size <= 200)
+// pageSize restores the browser choice within the available audit lengths before
+// the first query, so larger preferences from other lists remain valid here.
+const pageSize = ref(Math.min(getPersistedPageSize(), Math.max(...pageSizeOptions)))
 
 // Text filters remain editable between requests; empty strings are omitted when
 // building endpoint query parameters.

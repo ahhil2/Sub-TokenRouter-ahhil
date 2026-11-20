@@ -471,6 +471,7 @@ import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import type { PaymentOrder } from '@/api/payment.types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -532,9 +533,9 @@ const activeFilterCount = computed(
     [orderFilters.status, orderFilters.payment_type, orderFilters.order_type].filter(Boolean)
       .length,
 )
-// orderPagination stores current page, page size, and server total; filter resets and size
-// changes return to page one.
-const orderPagination = reactive({ page: 1, page_size: 20, total: 0 })
+// orderPagination starts with the saved browser page size and stores the server total.
+// Filter resets and size changes return the administrator order list to page one.
+const orderPagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
 // selectedOrder identifies the row used by detail and refund dialogs and may be replaced
 // by a detailed API response.
 const selectedOrder = ref<PaymentOrder | null>(null)

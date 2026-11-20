@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import axios from 'axios'
 import { useMediaQuery } from '@vueuse/core'
 import { TABLE_DESKTOP_MEDIA_QUERY } from '@/constants/layout'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import Skeleton from '@/components/common/Skeleton.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { opsAPI, type OpsTokenStatsResponse, type OpsTokenStatsTimeRange } from '@/api/admin/ops'
 import { formatNumber } from '@/utils/format'
+import { getPersistedPageSize, setPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { getConfiguredTablePageSizeOptions, normalizeTablePageSize } from '@/utils/tablePreferences'
 
 // OpsTokenStatsCard.vue queries token statistics with independent time, ranking,
 // and pagination controls under dashboard platform and group filters. Top-N mode
@@ -18,8 +22,10 @@ import { formatNumber } from '@/utils/format'
 // Filter changes in pagination mode reset page one before the watcher requests
 // data, preventing the reset itself from starting a second request. A response
 // whose reduced total leaves the page out of range triggers a fetch of the last
-// valid page. Request failures clear the result and expose an inline error for
-// retry.
+// valid page. Each request owns an abort controller and a parameter key so late
+// responses cannot replace a newer selection. Refresh failures retain results
+// for the same parameters with an inline warning; changing parameters clears
+// those results before loading. Unmounting cancels the current request.
 
 // Props supplies execution-platform and group constraints plus selectable group
 // identities.
@@ -71,13 +77,20 @@ const loading = ref(false)
 const errorMessage = ref('')
 const response = ref<OpsTokenStatsResponse | null>(null)
 
+// Request ownership guards completion and loading state after selection changes
+// or unmounting; the response key identifies which controls produced visible data.
+let requestController: AbortController | null = null
+let responseQueryKey = ''
+
 // Query controls choose the statistics window and either a top-N limit or
 // one-based page parameters.
 const timeRange = ref<OpsTokenStatsTimeRange>('30d')
 const viewMode = ref<ViewMode>('topn')
 const topN = ref<number>(20)
 const page = ref<number>(1)
-const pageSize = ref<number>(20)
+// pageSize restores the saved choice within the token-statistics API limit,
+// which rejects requests containing more than one hundred models per page.
+const pageSize = ref<number>(Math.min(getPersistedPageSize(), 100))
 
 // Derived pagination values use an empty response as zero rows and keep at least
 // one selectable page.
@@ -119,12 +132,26 @@ const topNOptions = computed(() => [
   { value: 100, label: 'Top 100' },
 ])
 
-const pageSizeOptions = computed(() => [
-  { value: 10, label: '10' },
-  { value: 20, label: '20' },
-  { value: 50, label: '50' },
-  { value: 100, label: '100' },
-])
+// pageSizeOptions includes shared choices accepted by the token-statistics API,
+// whose maximum request size is one hundred models per page.
+const pageSizeOptions = computed(() =>
+  getConfiguredTablePageSizeOptions()
+    .filter((size) => size <= 100)
+    .map((size) => ({ value: size, label: String(size) })),
+)
+
+// handlePageSizeChange saves a supported page length and updates the query control.
+// Null and boolean values are ignored; the query watcher resets the page before
+// loading statistics for the selected length.
+function handlePageSizeChange(value: string | number | boolean | null) {
+  if (value === null || typeof value === 'boolean') return
+  // The statistics endpoint rejects page lengths above its one-hundred-model limit.
+  const size = Math.min(normalizeTablePageSize(Number(value)), 100)
+  // Save before updating the reactive control so a later mounted list observes
+  // the choice even while this card's request is still pending.
+  setPersistedPageSize(size)
+  pageSize.value = size
+}
 
 // formatRate formats finite rate observations with two decimal places. Missing
 // or nonfinite values return a dash so unavailable measurements do not appear as
@@ -177,35 +204,73 @@ function buildParams() {
   return params
 }
 
-// loadData retrieves statistics and clears the previous inline error before
-// requesting. In pagination mode, a reduced total can move the current page
-// beyond the new maximum.
+// loadData retrieves the selected statistics and retains successful data during
+// refreshes with identical parameters. Changing parameters clears those results
+// immediately, and a failed refresh exposes a warning beside any retained data.
 //
-// That condition moves the page to the final available page and performs another
-// read with the corrected parameters. Failures clear the response and expose an
-// inline message, and loading resets in finally. There is no response-generation
-// guard, so overlapping invocations can publish in completion order.
+// Every invocation cancels its predecessor and owns its completion state. The
+// parameter comparison also rejects a response that arrives before a changed
+// control's watcher runs. A reduced page count changes the page and leaves its
+// watcher to issue the corrected request, preventing overlapping duplicate reads.
 async function loadData() {
-  loading.value = true
-  errorMessage.value = ''
-  try {
-    response.value = await opsAPI.getTokenStats(buildParams())
-    // A reduced result count can invalidate the current page; move to the final
-    // valid page before requesting its rows again.
-    if (viewMode.value === 'pagination' && page.value > totalPages.value) {
-      page.value = totalPages.value
-      response.value = await opsAPI.getTokenStats(buildParams())
-    }
-  } catch (err: any) {
-    // Clear the response on failure so the inline error replaces statistics from
-    // an earlier query and the next load can retry the selection.
-    console.error('[OpsTokenStatsCard] Failed to load data', err)
+  // Superseded requests consume database time and may finish after the new
+  // selection, so revoke their ownership before starting replacement work.
+  requestController?.abort()
+  const controller = new AbortController()
+  requestController = controller
+  const params = buildParams()
+  const queryKey = JSON.stringify(params)
+  if (responseQueryKey !== queryKey) {
     response.value = null
+    responseQueryKey = ''
+    errorMessage.value = ''
+  }
+  loading.value = true
+  try {
+    const result = await opsAPI.getTokenStats(params, { signal: controller.signal })
+    if (requestController !== controller || JSON.stringify(buildParams()) !== queryKey) return
+    // A reduced result count can invalidate the current page; move to the final
+    // valid page and let the watcher request it once with the corrected offset.
+    const lastPage = Math.max(1, Math.ceil(result.total / pageSize.value))
+    if (viewMode.value === 'pagination' && page.value > lastPage) {
+      response.value = null
+      responseQueryKey = ''
+      page.value = lastPage
+      return
+    }
+    response.value = result
+    responseQueryKey = queryKey
+    errorMessage.value = ''
+  } catch (err: any) {
+    // Filter replacement and teardown intentionally cancel requests; their
+    // rejections must neither erase current data nor produce a failure warning.
+    if (
+      requestController !== controller ||
+      JSON.stringify(buildParams()) !== queryKey ||
+      controller.signal.aborted ||
+      axios.isCancel(err) ||
+      err?.code === 'ERR_CANCELED'
+    )
+      return
+    console.error('[OpsTokenStatsCard] Failed to load data', err)
     errorMessage.value = err?.message || t('admin.ops.tokenStats.failedToLoad')
   } finally {
-    loading.value = false
+    // An older request can settle after its replacement starts; only the owner
+    // may clear loading so controls reflect the request still in flight.
+    if (requestController === controller) {
+      loading.value = false
+      requestController = null
+    }
   }
 }
+
+// Teardown revokes completion ownership before aborting so queued responses
+// cannot publish data or an error into this unmounted card instance.
+onBeforeUnmount(() => {
+  const controller = requestController
+  requestController = null
+  controller?.abort()
+})
 
 // Watch query controls together so filter-driven page resets can finish before the
 // next request uses its page and mode parameters.
@@ -284,7 +349,11 @@ function onNextPage() {
         </div>
         <template v-else>
           <div class="w-24">
-            <Select v-model="pageSize" :options="pageSizeOptions" />
+            <Select
+              :model-value="pageSize"
+              :options="pageSizeOptions"
+              @update:model-value="handlePageSizeChange"
+            />
           </div>
           <button
             class="btn btn-secondary btn-sm"
@@ -320,22 +389,26 @@ function onNextPage() {
 
     <div
       v-if="errorMessage"
+      role="alert"
       class="mb-4 rounded-control bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-900/20 dark:text-red-400"
     >
+      <p v-if="response">{{ t('admin.ops.tokenStats.refreshFailedStale') }}</p>
       {{ errorMessage }}
     </div>
 
-    <div v-if="loading" class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
-      {{ t('admin.ops.loadingText') }}
+    <div v-if="loading && !response" role="status" aria-busy="true" class="space-y-3">
+      <span class="sr-only">{{ t('admin.ops.loadingText') }}</span>
+      <Skeleton class="h-8 w-full" />
+      <Skeleton class="h-24 w-full" />
     </div>
 
     <EmptyState
-      v-else-if="items.length === 0"
+      v-else-if="items.length === 0 && !errorMessage"
       :title="t('common.noData')"
       :description="t('admin.ops.tokenStats.empty')"
     />
 
-    <div v-else class="space-y-3">
+    <div v-else-if="items.length > 0" class="space-y-3">
       <div class="overflow-hidden rounded-surface border border-gray-200 dark:border-dark-700">
         <div class="max-h-panel overflow-auto">
           <div v-if="!isDesktopViewport" class="divide-y divide-gray-100 dark:divide-dark-800">

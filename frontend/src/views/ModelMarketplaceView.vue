@@ -391,6 +391,7 @@ import ModelAttributeDetails from '@/components/marketplace/ModelAttributeDetail
 import ModelPricingPanel from '@/components/marketplace/ModelPricingPanel.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import Pagination from '@/components/common/Pagination.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import Select from '@/components/common/Select.vue'
@@ -659,10 +660,10 @@ const matchingModelCount = computed(() =>
   filteredGroups.value.reduce((total, group) => total + group.models.length, 0),
 )
 
-// marketplacePage and marketplacePageSize bound rendered model cards across group
-// boundaries; filtering resets the page so a narrower result starts with visible models.
+// marketplacePage and marketplacePageSize bound rendered model cards across groups using
+// the saved browser size. Filtering resets the page to show the first matching models.
 const marketplacePage = ref(1)
-const marketplacePageSize = ref(20)
+const marketplacePageSize = ref(getPersistedPageSize())
 const pagedGroups = computed<VisibleMarketplaceGroup[]>(() => {
   let skip = (marketplacePage.value - 1) * marketplacePageSize.value
   let remaining = marketplacePageSize.value

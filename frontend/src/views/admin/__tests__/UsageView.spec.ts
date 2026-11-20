@@ -1414,6 +1414,38 @@ describe('admin UsageView errors tab filter forwarding', () => {
     vi.useRealTimers()
   })
 
+  // An administrator arrives with a saved size from another table that allows more rows.
+  // Error queries must use an available option within the Ops limit and retain standard choices.
+  it.each([
+    { savedSize: 30, expectedSize: 30 },
+    { savedSize: 1000, expectedSize: 200 },
+  ])(
+    'restores saved error page size $savedSize within available Ops choices',
+    async ({ savedSize, expectedSize }) => {
+      window.__APP_CONFIG__ = { table_page_size_options: [200, 1000] } as any
+      const storage = vi
+        .spyOn(window.localStorage, 'getItem')
+        .mockImplementation((key) => (key === 'table-page-size' ? String(savedSize) : null))
+      try {
+        const wrapper = mountRouteFilteredUsageView()
+        vi.advanceTimersByTime(120)
+        await flushPromises()
+        await wrapper.findAll('[data-testid="usage-detail-tab"]')[1].trigger('click')
+        await flushPromises()
+        expect(listErrorLogs).toHaveBeenLastCalledWith(
+          expect.objectContaining({ page: 1, page_size: expectedSize }),
+        )
+        expect(wrapper.findComponent({ name: 'OpsErrorLogTable' }).props('pageSize')).toBe(
+          expectedSize,
+        )
+        wrapper.unmount()
+      } finally {
+        storage.mockRestore()
+        delete window.__APP_CONFIG__
+      }
+    },
+  )
+
   // Calendar and rolling shortcuts remain ordered beside the date control. Custom
   // minute ranges reach usage, chart, and error requests with matching endpoints.
   it('preserves a minute range in usage, charts and error requests', async () => {

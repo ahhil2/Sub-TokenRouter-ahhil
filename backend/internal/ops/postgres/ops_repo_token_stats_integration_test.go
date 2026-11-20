@@ -14,7 +14,8 @@ import (
 
 // TestGetTokenStatsMigratedUsageSchema queries text and media observations in
 // the fully migrated usage table. It protects query compatibility, text-only
-// speed averages, complete request totals, and pagination through empty pages.
+// speed averages, captured TTFT modes, nullable samples, complete request totals,
+// and pagination through empty pages. Unused malformed offsets must stay uncast.
 func TestGetTokenStatsMigratedUsageSchema(t *testing.T) {
 	ctx := t.Context()
 	start := time.Date(2043, 2, 3, 10, 0, 0, 0, time.UTC)
@@ -68,27 +69,62 @@ FROM (VALUES
   video_count, billing_mode, request_type, streaming, complete)`, userID, keyID, providerID, start)
 	require.NoError(t, err)
 
+	// Each timing edge case shares a model so the response verifies independent
+	// TPS and TTFT sample populations, including zero latency and per-row rounding.
+	_, err = integrationDB.ExecContext(ctx, `
+INSERT INTO usage_logs (
+  user_id, billing_user_id, api_key_id, provider_id, request_id, platform,
+  model, output_tokens, request_type, stream, duration_ms, timings, created_at
+)
+SELECT $1, $1, $2, $3, 'token-stats-timing-' || sample, 'openai', 'timing-model',
+  output_tokens, 2, true, 1000, timings::jsonb, $4::timestamptz
+FROM (VALUES
+  ('zero-event', 333, '{"upstream_stream":true,"upstream_complete":true,"usage_complete":true,"ttft_mode":"first_event","values":{"upstream_started_ms":100,"upstream_finished_ms":1100,"upstream_first_event_ms":100,"upstream_first_output_ms":"unused"}}'),
+  ('output-mode', 10, '{"upstream_stream":true,"upstream_complete":true,"usage_complete":true,"ttft_mode":"first_output","values":{"upstream_started_ms":100,"upstream_finished_ms":400,"upstream_first_event_ms":"unused","upstream_first_output_ms":300}}'),
+  ('missing-timing', 20, NULL),
+  ('non-object-offsets', 30, '{"values":[]}'),
+  ('inverted-offsets', 50, '{"upstream_stream":true,"upstream_complete":true,"usage_complete":true,"values":{"upstream_started_ms":100,"upstream_finished_ms":99,"upstream_first_output_ms":99}}'),
+  ('missing-start', 40, '{"upstream_stream":true,"upstream_complete":true,"usage_complete":true,"values":{"upstream_finished_ms":1100,"upstream_first_output_ms":200}}'),
+  ('incomplete-usage', 60, '{"upstream_stream":true,"upstream_complete":true,"usage_complete":false,"values":{"upstream_started_ms":100,"upstream_finished_ms":"unused","upstream_first_output_ms":150}}'),
+  ('buffered-output', 100, '{"upstream_stream":false,"upstream_complete":true,"usage_complete":true,"values":{"upstream_started_ms":100,"upstream_finished_ms":433,"upstream_first_output_ms":"unused"}}')
+) AS samples(sample, output_tokens, timings)`, userID, keyID, providerID, start)
+	require.NoError(t, err)
+
 	repo := NewOpsRepository(integrationDB)
 	filter := &ops.OpsTokenStatsFilter{StartTime: start, EndTime: end, Platform: "openai", TopN: 5}
 	result, err := repo.GetTokenStats(ctx, filter)
 	require.NoError(t, err)
-	require.EqualValues(t, 2, result.Total)
-	require.Len(t, result.Items, 2)
+	require.EqualValues(t, 3, result.Total)
+	require.Len(t, result.Items, 3)
 	require.Equal(t, "text-model", result.Items[0].Model)
 	require.EqualValues(t, 9, result.Items[0].RequestCount)
 	require.EqualValues(t, 3800, result.Items[0].TotalOutputTokens)
 	require.NotNil(t, result.Items[0].AvgTokensPerSec)
 	require.Equal(t, float64(150), *result.Items[0].AvgTokensPerSec)
-	require.Nil(t, result.Items[1].AvgTokensPerSec)
+	require.NotNil(t, result.Items[0].AvgTTFTMs)
+	require.Equal(t, float64(100), *result.Items[0].AvgTTFTMs)
+	require.EqualValues(t, 8, result.Items[0].RequestsWithFirstToken)
+
+	timingStats := result.Items[1]
+	require.Equal(t, "timing-model", timingStats.Model)
+	require.EqualValues(t, 8, timingStats.RequestCount)
+	require.EqualValues(t, 643, timingStats.TotalOutputTokens)
+	require.EqualValues(t, 1000, timingStats.AvgDurationMs)
+	require.NotNil(t, timingStats.AvgTokensPerSec)
+	require.Equal(t, 222.2, *timingStats.AvgTokensPerSec)
+	require.NotNil(t, timingStats.AvgTTFTMs)
+	require.Equal(t, 83.33, *timingStats.AvgTTFTMs)
+	require.EqualValues(t, 3, timingStats.RequestsWithFirstToken)
+	require.Nil(t, result.Items[2].AvgTokensPerSec)
 
 	filter.TopN = 0
 	filter.PageSize = 1
-	for page := 1; page <= 3; page++ {
+	for page := 1; page <= 4; page++ {
 		filter.Page = page
 		result, err := repo.GetTokenStats(ctx, filter)
 		require.NoError(t, err)
-		require.EqualValues(t, 2, result.Total)
-		if page == 3 {
+		require.EqualValues(t, 3, result.Total)
+		if page == 4 {
 			require.Empty(t, result.Items)
 		} else {
 			require.Len(t, result.Items, 1)

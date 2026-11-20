@@ -448,7 +448,9 @@ const usages = ref<PromoCodeUsage[]>([])
 const usagesLoading = ref(false)
 const currentViewingCode = ref<PromoCode | null>(null)
 const usagesPage = ref(1)
-const usagesPageSize = ref(20)
+// usagesPageSize restores the browser preference independently of the main code list
+// so reopening the page retains the selected usage-history row count.
+const usagesPageSize = ref(getPersistedPageSize())
 const usagesTotal = ref(0)
 
 // Creation values use empty optional strings and zero maximum uses, while the edit

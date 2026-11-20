@@ -1141,6 +1141,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize, setPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { getConfiguredTablePageSizeOptions } from '@/utils/tablePreferences'
 import { useAppStore } from '@/stores/app'
 import { keysAPI } from '@/api'
 import {
@@ -1258,10 +1259,14 @@ const responseMimeTypeOptions: SelectOption[] = [
   { value: 'image/jpeg', label: 'JPEG' },
   { value: 'image/webp', label: 'WebP' },
 ]
-const batchPageSizeOptions: SelectOption[] = [20, 50, 100].map((size) => ({
-  value: size,
-  label: String(size),
-}))
+// batchPageSizeOptions uses the shared table choices within the batch job endpoint
+// limit, so every visible choice can be requested and restored on this page.
+const batchPageSizeOptions: SelectOption[] = getConfiguredTablePageSizeOptions()
+  .filter((size) => size <= 100)
+  .map((size) => ({
+    value: size,
+    label: String(size),
+  }))
 
 // Shared app, clipboard, balance, and translation services supply page
 // notifications, localized display values, and browser copy operations.

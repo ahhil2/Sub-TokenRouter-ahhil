@@ -258,7 +258,7 @@ func usageTTFTSQL(alias string) string {
 	}
 	start := "(" + column + "->'values'->>'upstream_started_ms')::bigint"
 	end := "(" + column + "->'values'->>(CASE WHEN " + column + "->>'ttft_mode'='first_event' THEN 'upstream_first_event_ms' ELSE 'upstream_first_output_ms' END))::bigint"
-	return "(CASE WHEN " + column + "->>'upstream_stream'='true' AND " + end + ">=" + start + " THEN " + end + "-" + start + " END)"
+	return usageTTFTWithOffsetsSQL(column+"->>'upstream_stream'", start, end)
 }
 
 // usageTPSSQL derives the nullable average output rate for persisted usage rows,
@@ -281,9 +281,28 @@ func usageTPSSQL(alias string) string {
 	}
 	column := prefix + "timings"
 	elapsed := "((" + column + "->'values'->>'upstream_finished_ms')::bigint-(" + column + "->'values'->>'upstream_started_ms')::bigint)"
+	complete := column + "->>'upstream_complete'='true' AND " + column + "->>'usage_complete'='true'"
+	return usageTPSWithElapsedSQL(alias, complete, elapsed)
+}
+
+// usageTTFTWithOffsetsSQL derives nullable latency from SQL scalar expressions.
+// Callers supply code-owned expressions for the captured stream flag and ordered
+// millisecond offsets, whether read directly from JSON or decoded once per row.
+func usageTTFTWithOffsetsSQL(stream, start, end string) string {
+	return "(CASE WHEN " + stream + "='true' AND " + end + ">=" + start + " THEN " + end + "-" + start + " END)"
+}
+
+// usageTPSWithElapsedSQL applies persisted text-usage eligibility to decoded
+// completion and duration expressions. All fragments come from repository code;
+// elapsed is upstream execution milliseconds and complete tests final usage and
+// successful upstream completion. A qualifying rate is rounded to one decimal.
+func usageTPSWithElapsedSQL(alias, complete, elapsed string) string {
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
 	// Use decimal seconds and one-place rounding to match the usage API's rate.
-	return "(CASE WHEN " + column + "->>'upstream_complete'='true' AND " +
-		column + "->>'usage_complete'='true' AND " + prefix + "output_tokens>0 AND " +
+	return "(CASE WHEN " + complete + " AND " + prefix + "output_tokens>0 AND " +
 		"COALESCE(" + prefix + "image_count,0)<=0 AND COALESCE(" + prefix + "image_output_tokens,0)<=0 AND " +
 		"COALESCE(" + prefix + "video_count,0)<=0 AND COALESCE(" + prefix + "billing_mode,'') NOT IN ('image','video') AND " +
 		"COALESCE(" + prefix + "request_type,0)<>5 AND " +

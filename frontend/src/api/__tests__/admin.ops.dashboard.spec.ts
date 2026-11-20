@@ -13,7 +13,7 @@ vi.mock('@/api/client', () => ({
   buildGatewayUrl: vi.fn(),
 }))
 
-import { getLatencyHistogram, getTokenStats } from '@/api/admin/ops'
+import { getLatencyHistogram, getRealtimeTrafficSummary, getTokenStats } from '@/api/admin/ops'
 
 /**
  * admin.ops.dashboard.spec.ts checks operations dashboard request serialization.
@@ -66,6 +66,19 @@ describe('admin ops dashboard API', () => {
         top_n: 20,
       },
       signal: undefined,
+    })
+  })
+
+  // A realtime consumer owns cancellation while querying a specific platform and
+  // group. The API wrapper must forward the same signal alongside those filters so
+  // changing the view can stop its pending transport request.
+  it('forwards realtime filters and the caller cancellation signal', async () => {
+    const controller = new AbortController()
+    await getRealtimeTrafficSummary('5min', 'anthropic', 7, { signal: controller.signal })
+
+    expect(get).toHaveBeenCalledWith('/admin/ops/realtime-traffic', {
+      params: { window: '5min', platform: 'anthropic', group_id: 7 },
+      signal: controller.signal,
     })
   })
 })

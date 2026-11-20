@@ -84,6 +84,10 @@ export default {
     upstreamExcl429529: 'Upstream (excl 429/529)',
     failedToLoadData: 'Failed to load ops data.',
     failedToLoadOverview: 'Failed to load overview',
+    overviewUnavailable: 'Overview measurements are unavailable.',
+    overviewRefreshFailedStale:
+      'Refresh failed. Showing the last successfully loaded data for these filters.',
+    lastSuccessfulUpdate: 'Last successful update: {time}',
     failedToLoadThroughputTrend: 'Failed to load throughput trend',
     failedToLoadSwitchTrend: 'Failed to load avg provider switches trend',
     failedToLoadLatencyHistogram: 'Failed to load request duration histogram',
@@ -132,6 +136,7 @@ export default {
       pageInfo: 'Page {page}/{total}',
       totalModels: 'Total models: {total}',
       failedToLoad: 'Failed to load token request stats',
+      refreshFailedStale: 'Refresh failed. Showing the last successfully loaded data.',
       empty: 'No token request stats for the current filters',
       table: {
         model: 'Model',

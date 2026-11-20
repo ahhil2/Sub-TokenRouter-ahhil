@@ -17,6 +17,7 @@ import (
 // Rows without an estimate still contribute to request and output-token totals.
 // TTFT uses each row's captured event mode and includes measured zero latency.
 //
+// A lateral record extracts upstream offsets once per row before grouping.
 // The grouped statistics CTE supplies both the ranked selection and the model
 // total in one statement. A left join keeps that total available when
 // pagination selects no model, with has_item distinguishing the synthetic row
@@ -62,9 +63,17 @@ func (r *Store) GetTokenStats(ctx context.Context, filter *ops.OpsTokenStatsFilt
 
 	join, where, baseArgs, next := buildUsageWhere(dashboardFilter, dashboardFilter.StartTime, dashboardFilter.EndTime, 1)
 
-	// Shared expressions apply the same duration and captured mode rules as usage
-	// DTOs. SQL averages their eligible samples independently, rounding rate
-	// and TTFT means to two decimals and duration means to whole milliseconds.
+	// Shared expressions apply the same eligibility, duration, and captured mode
+	// rules as usage DTOs. Keep offsets as text until the CASE expressions cast
+	// them, so unused timing values do not introduce conversion failures.
+	ttft := usageTTFTWithOffsetsSQL("ul.timings->>'upstream_stream'", "offsets.upstream_started_ms::bigint",
+		"(CASE WHEN ul.timings->>'ttft_mode'='first_event' THEN offsets.upstream_first_event_ms ELSE offsets.upstream_first_output_ms END)::bigint")
+	tps := usageTPSWithElapsedSQL("ul", "ul.timings->>'upstream_complete'='true' AND ul.timings->>'usage_complete'='true'",
+		"(offsets.upstream_finished_ms::bigint-offsets.upstream_started_ms::bigint)")
+
+	// Decode the values object once without materializing the matched rows or
+	// blocking parallel aggregation. NULL and non-object historical snapshots
+	// produce one record of nullable offsets, preserving their request totals.
 	baseCTE := `
 WITH stats AS (
   SELECT
@@ -72,16 +81,22 @@ WITH stats AS (
     COUNT(*)::bigint AS request_count,
     ROUND(
       AVG(
-        ` + usageTPSSQL("ul") + `
+        ` + tps + `
       )::numeric,
       2
     )::float8 AS avg_tokens_per_sec,
-    ROUND(AVG(` + usageTTFTSQL("ul") + `)::numeric, 2)::float8 AS avg_ttft_ms,
+    ROUND(AVG(` + ttft + `)::numeric, 2)::float8 AS avg_ttft_ms,
     COALESCE(SUM(ul.output_tokens), 0)::bigint AS total_output_tokens,
     COALESCE(ROUND(AVG(ul.duration_ms)::numeric, 0), 0)::bigint AS avg_duration_ms,
-    COUNT(CASE WHEN ` + usageTTFTSQL("ul") + ` IS NOT NULL THEN 1 END)::bigint AS requests_with_first_token
+    COUNT(` + ttft + `)::bigint AS requests_with_first_token
   FROM usage_logs ul
   ` + join + `
+  CROSS JOIN LATERAL jsonb_to_record(
+    CASE WHEN jsonb_typeof(ul.timings->'values')='object' THEN ul.timings->'values' END
+  ) AS offsets(
+    upstream_started_ms text, upstream_finished_ms text,
+    upstream_first_event_ms text, upstream_first_output_ms text
+  )
   ` + where + `
   GROUP BY ul.model
 )

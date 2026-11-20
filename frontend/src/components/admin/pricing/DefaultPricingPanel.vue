@@ -227,6 +227,7 @@ import {
 } from '@/api/admin/pricing'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/table/DataTable.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
 import FilterDropdown from '@/components/common/FilterDropdown.vue'
@@ -262,9 +263,9 @@ const mode = ref('')
 // page, pageSize, and total connect server pagination with the table controls used to browse
 // filtered default prices.
 const page = ref(1)
-// pageSize sets the number of visible rows and participates in the current page calculation for
-// pagination.
-const pageSize = ref(20)
+// pageSize restores the browser preference before the immediate watcher requests catalog
+// rows, keeping the displayed selection and first server query aligned.
+const pageSize = ref(getPersistedPageSize())
 const total = ref(0)
 // loading tracks the current list request so the table can present pending data to
 // administrators.

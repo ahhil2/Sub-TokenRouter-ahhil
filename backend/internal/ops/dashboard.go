@@ -17,10 +17,10 @@ import (
 
 // GetDashboardOverview returns traffic totals with available system and job
 // diagnostics after monitoring, storage, and time validation. It resolves
-// QueryMode and IgnoredStatusCodes in the supplied filter, and retries an
-// automatic-mode error with a shallow raw-mode copy. Optional diagnostic read
-// failures keep the traffic result; repository success requires a nonnil
-// overview and a nonnil sample when the metrics read succeeds.
+// QueryMode and IgnoredStatusCodes in the supplied filter. The repository owns
+// data-source fallback, so a failed repository query is returned directly.
+// Optional diagnostic read failures keep the traffic result; repository success
+// requires a nonnil overview and a nonnil sample when the metrics read succeeds.
 // @project-doc docs/operations/pre_aggregation.md#query_routing_and_fallback
 func (s *OpsService) GetDashboardOverview(ctx context.Context, filter *OpsDashboardFilter) (*OpsDashboardOverview, error) {
 	if err := s.validateDashboardQuery(ctx, filter); err != nil {
@@ -30,13 +30,6 @@ func (s *OpsService) GetDashboardOverview(ctx context.Context, filter *OpsDashbo
 	s.resolveOpsQueryModeWithIgnoredStatusCodes(ctx, filter)
 
 	overview, err := s.opsRepo.GetDashboardOverview(ctx, filter)
-	// An automatic-mode error starts another complete query. The raw copy keeps
-	// the same dimensions and SLA exclusions, and the failed first result is
-	// discarded.
-	if err != nil && ShouldFallbackOpsPreagg(filter, err) {
-		rawFilter := CloneOpsFilterWithMode(filter, OpsQueryModeRaw)
-		overview, err = s.opsRepo.GetDashboardOverview(ctx, rawFilter)
-	}
 	if err != nil {
 		return nil, err
 	}

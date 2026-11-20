@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
+import Skeleton from '@/components/common/Skeleton.vue'
 import FilterDropdown from '@/components/common/FilterDropdown.vue'
 import FilterField from '@/components/common/FilterField.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
@@ -29,9 +30,11 @@ import { formatMemorySizeMB } from '../utils/opsFormatters'
 // suppresses diagnostics when the overview appears idle, and uses fixed
 // diagnostic rules alongside configurable metric badge thresholds. Database and
 // Redis status combines connectivity with pool utilization, giving failed
-// connectivity precedence. Parent refresh state drives realtime requests, and a
-// busy flag suppresses overlapping traffic reads rather than replacing their
-// results by generation.
+// connectivity precedence. Failed overview refreshes retain a visible stale-data
+// notice; an absent snapshot shows a retryable placeholder for unavailable
+// measurements. Parent refresh state drives realtime requests. Query changes
+// cancel previous reads and advance a generation, so late responses cannot
+// replace traffic measurements for the newly selected group or window.
 
 // RealtimeWindow names the short traffic windows supported by the summary
 // endpoint.
@@ -41,6 +44,9 @@ type RealtimeWindow = '1min' | '5min' | '30min' | '1h'
 // refresh presentation state.
 interface Props {
   overview?: OpsDashboardOverview | null // nullable historical dashboard snapshot
+  // overviewError marks a failed refresh for the current filters; an existing
+  // overview remains visible with its last successful collection time.
+  overviewError?: boolean
   // platform filters by the recorded execution platform; an empty value leaves
   // all platforms eligible for display.
   platform: string
@@ -49,7 +55,7 @@ interface Props {
   groupId: number | null
   timeRange: string // selected history range token
   loading: boolean // parent request in progress
-  lastUpdated: Date | null // last core-refresh completion time
+  lastUpdated: Date | null // last successful overview refresh
   // thresholds supplies optional metric limits; missing limits cause the
   // corresponding header badge helper to return normal.
   thresholds?: OpsMetricThresholds | null // metric badge thresholds
@@ -383,84 +389,101 @@ function getThresholdColorClass(level: ThresholdLevel): string {
 const totalRequestsLabel = computed(() => formatNumber(overview.value?.request_count_total ?? 0))
 const totalTokensLabel = computed(() => formatNumber(overview.value?.token_consumed ?? 0))
 
-// Realtime request state stores the short-window result and suppresses
-// concurrent reads through its busy flag until completion.
+// Realtime request state stores short-window measurements and identifies the
+// query whose active request may publish them. Filter changes and unmounting
+// advance the sequence before an older response can update the header.
 const realtimeTrafficSummary = ref<OpsRealtimeTrafficSummary | null>(null)
 const realtimeTrafficLoading = ref(false)
+let realtimeFetchController: AbortController | null = null
+let realtimeFetchSeq = 0
+let realtimeFetchKey: string | null = null
+const realtimeQueryKey = computed(() =>
+  JSON.stringify([realtimeWindow.value, props.platform, props.groupId]),
+)
 
-// makeZeroRealtimeTrafficSummary constructs an empty measurement for the current
-// filters and window. Start and end share the current ISO timestamp, and all
-// traffic values are zero for disabled monitoring.
-function makeZeroRealtimeTrafficSummary(): OpsRealtimeTrafficSummary {
-  const now = new Date().toISOString()
-  return {
-    window: realtimeWindow.value,
-    start_time: now,
-    end_time: now,
-    platform: props.platform,
-    group_id: props.groupId,
-    qps: { current: 0, peak: 0, avg: 0 },
-    tps: { current: 0, peak: 0, avg: 0 },
-  }
-}
-
-// loadRealtimeTrafficSummary queries the current short traffic window unless a
-// read is already busy. Disabled monitoring publishes a zero summary, and a
-// disabled API response updates the local monitoring flag.
+// loadRealtimeTrafficSummary queries the selected short traffic window and
+// execution filters. Repeated requests for the active query share its pending
+// read; a changed query cancels that read and clears its measurements.
 //
-// The response summary replaces the prior snapshot, while retrieval failure
-// clears it and logs the error. The busy guard suppresses requests triggered
-// during an active read; there is no generation comparison when that read
-// completes, so a filter change can precede publication of the older query
-// result.
+// Each response checks both its generation and query before publishing data or
+// monitoring settings. Disabled monitoring and failed current reads leave an
+// unavailable summary, rendered as dashes. Cancellation and superseded requests
+// produce no failure feedback, and only the current generation releases loading
+// state so an older completion cannot enable overlapping refreshes.
 async function loadRealtimeTrafficSummary() {
-  if (realtimeTrafficLoading.value) return
-  if (!adminSettingsStore.opsRealtimeMonitoringEnabled) {
-    realtimeTrafficSummary.value = makeZeroRealtimeTrafficSummary()
+  const queryKey = realtimeQueryKey.value
+  const enabled = adminSettingsStore.opsRealtimeMonitoringEnabled
+  if (enabled && realtimeTrafficLoading.value && realtimeFetchKey === queryKey) return
+
+  // Replacing a query cancels its pending request before assigning a new owner;
+  // sequence checks also reject transports that deliver a response after cancellation.
+  realtimeFetchController?.abort()
+  realtimeFetchSeq += 1
+  const fetchSeq = realtimeFetchSeq
+  if (realtimeFetchKey !== queryKey || !enabled) {
+    realtimeTrafficSummary.value = null
+  }
+  realtimeFetchKey = queryKey
+  if (!enabled) {
+    realtimeFetchController = null
+    realtimeTrafficLoading.value = false
     return
   }
+  const controller = new AbortController()
+  realtimeFetchController = controller
   realtimeTrafficLoading.value = true
   try {
     const res = await opsAPI.getRealtimeTrafficSummary(
       realtimeWindow.value,
       props.platform,
       props.groupId,
+      { signal: controller.signal },
     )
+    if (
+      fetchSeq !== realtimeFetchSeq ||
+      controller.signal.aborted ||
+      queryKey !== realtimeQueryKey.value
+    )
+      return
     if (res && res.enabled === false) {
       adminSettingsStore.setOpsRealtimeMonitoringEnabledLocal(false)
     }
     realtimeTrafficSummary.value = res?.summary ?? null
-  } catch (err) {
-    // Clear the failed realtime snapshot so current-rate defaults and
-    // unavailable peak labels reflect the missing result instead of the previous
-    // window.
+  } catch (err: any) {
+    if (
+      fetchSeq !== realtimeFetchSeq ||
+      controller.signal.aborted ||
+      queryKey !== realtimeQueryKey.value ||
+      err?.code === 'ERR_CANCELED'
+    )
+      return
+    // Failed observations leave rates unavailable so a transport error cannot be
+    // mistaken for measured zero traffic in the current short window.
     console.error('[OpsDashboardHeader] Failed to load realtime traffic summary', err)
     realtimeTrafficSummary.value = null
   } finally {
-    realtimeTrafficLoading.value = false
+    if (fetchSeq === realtimeFetchSeq) {
+      realtimeTrafficLoading.value = false
+      realtimeFetchController = null
+    }
   }
 }
 
 watch(
-  () => [realtimeWindow.value, props.platform, props.groupId] as const,
+  () => [realtimeQueryKey.value, adminSettingsStore.opsRealtimeMonitoringEnabled] as const,
   () => {
     loadRealtimeTrafficSummary()
   },
   { immediate: true },
 )
 
-watch(
-  () => adminSettingsStore.opsRealtimeMonitoringEnabled,
-  (enabled) => {
-    if (!enabled) {
-      // Keep UI stable when realtime monitoring is turned off.
-      realtimeTrafficSummary.value = makeZeroRealtimeTrafficSummary()
-    } else {
-      loadRealtimeTrafficSummary()
-    }
-  },
-  { immediate: true },
-)
+// Unmounting invalidates pending traffic publications before cancellation, so a
+// late response cannot change shared monitoring settings after this header leaves.
+onUnmounted(() => {
+  realtimeFetchSeq += 1
+  realtimeFetchController?.abort()
+  realtimeFetchController = null
+})
 
 // Realtime traffic refresh follows the parent (OpsDashboard) refresh cadence.
 watch(
@@ -475,16 +498,16 @@ watch(
   },
 )
 
-// Realtime display values distinguish numeric current rates, which default to
-// zero, from unavailable peak and average labels, which show a dash.
+// Realtime display values keep measured zero distinct from unavailable current
+// rates, which render the same dash used for missing peaks and averages.
 const displayRealTimeQps = computed(() => {
   const v = realtimeTrafficSummary.value?.qps?.current
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
 })
 
 const displayRealTimeTps = computed(() => {
   const v = realtimeTrafficSummary.value?.tps?.current
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
 })
 
 const realtimeQpsPeakLabel = computed(() => {
@@ -1249,6 +1272,49 @@ function handleToolbarRefresh() {
       </div>
     </div>
 
+    <div
+      v-if="props.overviewError || !overview"
+      data-test="overview-status"
+      :role="props.overviewError ? 'alert' : 'status'"
+      :aria-busy="props.loading"
+      class="flex flex-col items-start justify-center gap-2 rounded-surface p-4 text-sm"
+      :class="
+        overview
+          ? 'bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-200'
+          : 'min-h-48 bg-gray-50 text-gray-600 dark:bg-dark-950 dark:text-gray-300'
+      "
+    >
+      <p v-if="!overview" class="font-semibold">{{ t('admin.ops.overview') }}</p>
+      <div v-if="!overview && props.loading" class="w-full space-y-2">
+        <Skeleton width="40%" height="1rem" />
+        <Skeleton width="70%" height="2rem" />
+      </div>
+      <p>
+        {{
+          props.overviewError
+            ? overview
+              ? t('admin.ops.overviewRefreshFailedStale')
+              : t('admin.ops.failedToLoadOverview')
+            : props.loading
+              ? t('admin.ops.loadingText')
+              : t('admin.ops.overviewUnavailable')
+        }}
+      </p>
+      <p v-if="overview && props.lastUpdated" class="text-xs">
+        {{ t('admin.ops.lastSuccessfulUpdate', { time: props.lastUpdated.toLocaleString() }) }}
+      </p>
+      <button
+        v-if="props.overviewError"
+        data-test="retry-overview"
+        type="button"
+        class="btn btn-secondary btn-sm"
+        :disabled="props.loading"
+        @click="emit('refresh')"
+      >
+        {{ t('common.retry') }}
+      </button>
+    </div>
+
     <div v-if="overview" class="grid grid-cols-1 gap-4 lg:grid-cols-12">
       <!-- Left: Health + Realtime -->
       <div
@@ -1431,11 +1497,12 @@ function handleToolbarRefresh() {
                 <div class="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-2">
                   <div class="flex items-baseline gap-1.5">
                     <span
+                      data-test="realtime-qps"
                       :class="[
                         props.fullscreen ? 'text-4xl' : 'text-xl sm:text-2xl',
                         'font-black text-gray-900 dark:text-white',
                       ]"
-                      >{{ displayRealTimeQps.toFixed(1) }}</span
+                      >{{ displayRealTimeQps?.toFixed(1) ?? '-' }}</span
                     >
                     <span
                       :class="[props.fullscreen ? 'text-sm' : 'text-xs', 'font-bold text-gray-500']"
@@ -1443,11 +1510,12 @@ function handleToolbarRefresh() {
                     >
                   </div>
                   <span
+                    data-test="realtime-tps"
                     :class="[
                       props.fullscreen ? 'text-4xl' : 'text-xl sm:text-2xl',
                       'font-black tabular-nums text-gray-900 dark:text-white',
                     ]"
-                    >{{ displayRealTimeTps.toFixed(1) }}</span
+                    >{{ displayRealTimeTps?.toFixed(1) ?? '-' }}</span
                   >
                 </div>
               </div>

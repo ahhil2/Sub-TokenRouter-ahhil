@@ -7,6 +7,8 @@ import { computed, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { TABLE_DESKTOP_MEDIA_QUERY } from '@/constants/layout'
 import { useI18n } from 'vue-i18n'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { getConfiguredTablePageSizeOptions } from '@/utils/tablePreferences'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import { useAppStore } from '@/stores'
@@ -20,10 +22,10 @@ import { parseTimeRangeMinutes, formatDateTime } from '../utils/opsFormatters'
 // the one-hour relative range.
 //
 // The parent can reopen this dialog with resumeState to retain the current page
-// and search. Fresh openings reset pagination and request identity. Filter and
-// preset changes reset to the first page before fetching, while page changes
-// reuse the current constraints. Retrieval failures clear the displayed records
-// and report the API error through the application store.
+// and search. Fresh openings restore the saved page size and reset request
+// identity. Filter and preset changes reset to the first page before fetching,
+// while page changes reuse the current constraints. Retrieval failures clear
+// the displayed records and report the API error through the application store.
 
 // OpsRequestDetailsPreset describes a dashboard drilldown and optional
 // request-selection constraints.
@@ -94,7 +96,14 @@ const loading = ref(false)
 const items = ref<OpsRequestDetail[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(10)
+// pageSize restores the browser choice within the request-detail API limit,
+// keeping frontend page offsets consistent with its one-hundred-row maximum.
+const pageSize = ref(Math.min(getPersistedPageSize(), 100))
+// pageSizeOptions excludes configured sizes that the request-detail API would
+// truncate, so every displayed choice matches the requested row count.
+const pageSizeOptions = computed(() =>
+  getConfiguredTablePageSizeOptions().filter((size) => size <= 100),
+)
 
 // close asks the parent to hide the request details dialog.
 const close = () => emit('update:modelValue', false)
@@ -186,8 +195,8 @@ const fetchData = async () => {
   }
 }
 
-// A fresh opening resets identity search and pagination, while resumeState
-// preserves the list context captured before single-error navigation.
+// A fresh opening clears search and returns to page one using the saved size;
+// resumeState preserves the list context captured before single-error navigation.
 watch(
   () => props.modelValue,
   (open) => {
@@ -195,7 +204,9 @@ watch(
       if (props.resumeState) return
       requestId.value = ''
       page.value = 1
-      pageSize.value = 10
+      // Restoring a larger shared preference must still respect the request-detail
+      // endpoint limit so pagination offsets match the rows actually returned.
+      pageSize.value = Math.min(getPersistedPageSize(), 100)
       fetchData()
     }
   },
@@ -241,7 +252,8 @@ function handlePageChange(next: number) {
 // reloading. This keeps the next request aligned with the new offset implied by
 // its page size.
 function handlePageSizeChange(next: number) {
-  pageSize.value = next
+  // Match the request-detail endpoint maximum when accepting model events.
+  pageSize.value = Math.min(next, 100)
   page.value = 1
   fetchData()
 }
@@ -468,6 +480,7 @@ const kindBadgeClass = (kind: string) => {
               :total="total"
               :page="page"
               :page-size="pageSize"
+              :page-size-options="pageSizeOptions"
               @update:page="handlePageChange"
               @update:pageSize="handlePageSizeChange"
             />

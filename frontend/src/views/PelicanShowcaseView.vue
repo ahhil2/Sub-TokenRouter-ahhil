@@ -111,8 +111,16 @@ import { pelicanApi, type PelicanCatalogItem, type PelicanResult } from '@/api/p
 
 /**
  * PelicanShowcaseView.vue browses published model drawing results by group, model, and
- * date. The server supplies the displayed drawing prompt, visible cards receive a
- * bounded animation budget, and an expanded result uses the shared document preview.
+ * date. The server supplies the displayed drawing prompt and paginated result metadata.
+ * Visible successful cards share an eight-animation budget with the expanded preview;
+ * opening the dialog reserves one slot, leaving seven gallery animations. Cards outside
+ * the viewport release their slots through visibility events from the shared card.
+ *
+ * List loading and expanded-detail loading have separate abort controllers. Starting
+ * another request cancels the previous request of that kind, and canceled responses
+ * cannot replace the displayed results. Closing the preview cancels its detail request;
+ * unmounting releases both request controllers. Each generated document is rendered
+ * by the shared sandboxed preview component.
  */
 
 const { t } = useI18n()
@@ -153,12 +161,16 @@ const modelOptions = computed(() => [
     ),
   ).map((value) => ({ value, label: value })),
 ])
+/**
+ * activeIDs selects visible successful results in list order for animation.
+ * An open preview reserves one of the eight slots until the dialog closes.
+ */
 const activeIDs = computed(
   () =>
     new Set(
       items.value
         .filter((item) => visible.value.has(item.id) && item.status === 'success')
-        .slice(0, selected.value ? 5 : 6)
+        .slice(0, selected.value ? 7 : 8)
         .map((item) => item.id),
     ),
 )

@@ -10,10 +10,9 @@ import {
 
 /**
  * tablePreferences.spec.ts checks injected table pagination defaults and
- * selectable options independently. Fixtures verify invalid-option removal,
- * upward selection mapping, maximum-option clamping, and built-in fallback
- * lists so valid configured defaults are not silently rewritten to match the
- * option list.
+ * selectable options independently. Fixtures verify that standard choices remain
+ * available under legacy configuration, configured extensions are sanitized, and
+ * selection normalization rounds and clamps against the resulting available sizes.
  */
 
 describe('tablePreferences', () => {
@@ -32,18 +31,18 @@ describe('tablePreferences', () => {
   })
 
   /**
-   * Injected configuration supplies valid default size and selectable options.
-   * Readers must return those configured values rather than replacing them with
-   * the built-in pagination preferences.
+   * Legacy injected configuration supplies a valid default and three selectable sizes.
+   * The reader must keep that default while supplying the complete standard selection
+   * list, including thirty and one hundred rows.
    */
   it('uses configured defaults when app config is valid', () => {
     window.__APP_CONFIG__ = {
       table_default_page_size: 50,
-      table_page_size_options: [20, 50, 100],
+      table_page_size_options: [10, 20, 50],
     } as any
 
     expect(getConfiguredTableDefaultPageSize()).toBe(50)
-    expect(getConfiguredTablePageSizeOptions()).toEqual([20, 50, 100])
+    expect(getConfiguredTablePageSizeOptions()).toEqual([10, 20, 30, 50, 100])
   })
 
   /**
@@ -58,7 +57,7 @@ describe('tablePreferences', () => {
     } as any
 
     expect(getConfiguredTableDefaultPageSize()).toBe(1000)
-    expect(getConfiguredTablePageSizeOptions()).toEqual([20, 50, 100])
+    expect(getConfiguredTablePageSizeOptions()).toEqual([10, 20, 30, 50, 100])
     expect(normalizeTablePageSize(1000)).toBe(100)
     expect(normalizeTablePageSize(35)).toBe(50)
   })
@@ -71,11 +70,11 @@ describe('tablePreferences', () => {
   it('normalizes invalid options without rewriting the configured default itself', () => {
     window.__APP_CONFIG__ = {
       table_default_page_size: 35,
-      table_page_size_options: [1001, 50, 10, 10, 2, 0],
+      table_page_size_options: [1001, 50, 10, 10, 2, 0, 200, 200],
     } as any
 
     expect(getConfiguredTableDefaultPageSize()).toBe(35)
-    expect(getConfiguredTablePageSizeOptions()).toEqual([10, 50])
+    expect(getConfiguredTablePageSizeOptions()).toEqual([10, 20, 30, 50, 100, 200])
     expect(normalizeTablePageSize(undefined)).toBe(50)
   })
 
@@ -91,8 +90,10 @@ describe('tablePreferences', () => {
     } as any
 
     expect(normalizeTablePageSize(20)).toBe(20)
-    expect(normalizeTablePageSize(30)).toBe(50)
-    expect(normalizeTablePageSize(100)).toBe(1000)
+    expect(normalizeTablePageSize(30)).toBe(30)
+    expect(normalizeTablePageSize(35)).toBe(50)
+    expect(normalizeTablePageSize(100)).toBe(100)
+    expect(normalizeTablePageSize(101)).toBe(1000)
     expect(normalizeTablePageSize(1500)).toBe(1000)
     expect(normalizeTablePageSize(undefined)).toBe(20)
   })
@@ -102,11 +103,25 @@ describe('tablePreferences', () => {
    * option reader must retain the built-in selectable values independently of
    * that configured default size.
    */
-  it('keeps built-in selectable defaults at 10, 20, 50, 100', () => {
+  it('keeps built-in selectable defaults at 10, 20, 30, 50, 100', () => {
     window.__APP_CONFIG__ = {
       table_default_page_size: 1000,
     } as any
 
-    expect(getConfiguredTablePageSizeOptions()).toEqual([10, 20, 50, 100])
+    expect(getConfiguredTablePageSizeOptions()).toEqual([10, 20, 30, 50, 100])
   })
+
+  /**
+   * Injected option lists can be empty or contain only values outside supported bounds.
+   * Both cases must leave the standard selections available for rendering and restoring
+   * browser preferences.
+   */
+  it.each([{ options: [] }, { options: [0, 2, 1001] }])(
+    'keeps standard choices for unusable options $options',
+    ({ options }) => {
+      window.__APP_CONFIG__ = { table_page_size_options: options } as any
+
+      expect(getConfiguredTablePageSizeOptions()).toEqual([10, 20, 30, 50, 100])
+    },
+  )
 })

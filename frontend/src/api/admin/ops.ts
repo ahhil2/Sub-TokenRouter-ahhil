@@ -629,11 +629,14 @@ export interface OpsRealtimeTrafficSummaryResponse {
  * getRealtimeTrafficSummary retrieves throughput for the requested observation
  * window. Optional platform and positive numeric group filters narrow the
  * request; missing or invalid group identifiers remain absent from the query.
+ * The optional request signal cancels reads when their owning view changes
+ * filters or unmounts.
  */
 export async function getRealtimeTrafficSummary(
   window: string,
   platform?: string,
   groupId?: number | null,
+  options: OpsRequestOptions = {},
 ): Promise<OpsRealtimeTrafficSummaryResponse> {
   const params: Record<string, any> = { window }
   if (platform) {
@@ -645,7 +648,7 @@ export async function getRealtimeTrafficSummary(
 
   const { data } = await apiClient.get<OpsRealtimeTrafficSummaryResponse>(
     '/admin/ops/realtime-traffic',
-    { params },
+    { params, signal: options.signal },
   )
   return data
 }

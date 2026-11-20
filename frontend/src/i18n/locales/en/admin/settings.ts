@@ -878,11 +878,12 @@ export default {
       tablePreferencesDescription:
         'Configure default pagination behavior for shared table components',
       tableDefaultPageSize: 'Default Rows Per Page',
-      tableDefaultPageSizeHint: 'Must be an integer between 5 and 1000',
+      tableDefaultPageSizeHint:
+        'Enter an integer between 5 and 1000. A saved browser selection takes precedence.',
       tablePageSizeOptions: 'Rows Per Page Options',
-      tablePageSizeOptionsPlaceholder: '10, 20, 50, 100',
+      tablePageSizeOptionsPlaceholder: '10, 20, 30, 50, 100',
       tablePageSizeOptionsHint:
-        'Use commas to separate integers between 5 and 1000; values are deduplicated and sorted on save',
+        'Standard options are 10, 20, 30, 50, 100. Add comma-separated integers from 5 to 1000; values are deduplicated and sorted on save. Each list applies its endpoint limit.',
       usageRankingLimit: 'Usage Ranking Count',
       usageRankingLimitHint:
         'Controls how many users appear on the Usage Ranking page for the selected time range, from 1 to 100',

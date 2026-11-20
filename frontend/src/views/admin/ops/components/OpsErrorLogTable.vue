@@ -212,6 +212,7 @@
         :total="total"
         :page="page"
         :page-size="pageSize"
+        :page-size-options="pageSizeOptions"
         @update:page="emit('update:page', $event)"
         @update:pageSize="emit('update:pageSize', $event)"
       />
@@ -234,6 +235,7 @@ import type { Column } from '@/components/common/table/types'
 import { getSeverityClass, formatDateTime } from '../utils/opsFormatters'
 import { mapErrorCategory } from '@/utils/errorCategory'
 import { mapErrorSortKey, statusCodeBadgeClass } from '@/utils/errorBadges'
+import { getConfiguredTablePageSizeOptions } from '@/utils/tablePreferences'
 
 // OpsErrorLogTable.vue renders error rows with request identities, routing
 // context, status, and diagnostic messages. API keys and providers have separate
@@ -244,6 +246,12 @@ import { mapErrorSortKey, statusCodeBadgeClass } from '@/utils/errorBadges'
 // Translation supplies table labels while API rows and pagination remain
 // controlled by the component owner.
 const { t } = useI18n()
+
+// pageSizeOptions includes configured lengths within the error endpoints'
+// five-hundred-row maximum so selections match their returned page limits.
+const pageSizeOptions = computed(() =>
+  getConfiguredTablePageSizeOptions().filter((size) => size <= 500),
+)
 
 // allColumns orders caller identities before request shape, outcome, timestamps,
 // correlation identifiers, and row actions for investigation.

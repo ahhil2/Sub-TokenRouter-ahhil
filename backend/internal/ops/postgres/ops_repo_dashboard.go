@@ -9,26 +9,30 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
+
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
 // ops_repo_dashboard.go builds dashboard overviews from raw observations or
 // covered hourly aggregates and raw fragments.
 // Dashboard counts and latency samples are separate observations, so a latency
-// query can time out while counts remain usable. Recognized deadline errors
-// produce missing latency values and can replace nonpositive current or peak
-// rates with whole-window estimates; cancellation and other query failures
-// reject the response. Raw statements execute independently and do not provide
-// one shared snapshot.
+// query can time out while counts remain usable. Local deadline expiry,
+// including PostgreSQL query-cancellation errors, produces missing latency
+// values; a timed-out rate query uses whole-window estimates for that rate.
+// Successfully observed rates remain available, including zero. Cancellation of
+// the parent request still rejects the response. Raw statements execute
+// independently and do not provide one shared snapshot.
 //
 // Automatic selection reads covered stable UTC hours with raw fragments around
 // them, then combines counts additively and latency summaries approximately.
 // Duration low percentiles and means use success counts, TTFT summaries
 // use measured sample counts, and high percentiles use maxima. Global-hour
 // coverage relies on aligned rows produced by aggregation; dimension absence
-// can mean no matching traffic. Any automatic-path error retries the complete
-// raw range, while current and peak rates still read raw observations even
-// after successful aggregation.
+// can mean no matching traffic. This repository owns automatic-to-raw
+// fallback and retries the complete range once while the request remains
+// active. Current and peak rates still read raw observations after successful
+// aggregation, and already selected raw queries have no further fallback.
 
 // opsRawLatencyQueryTimeout and opsRawPeakQueryTimeout limit optional expensive
 // subqueries so recognized deadlines can leave counts and estimated rates
@@ -125,10 +129,11 @@ type opsPercentileSegment struct {
 
 // GetDashboardOverview returns a raw or automatic Ops summary for nonzero
 // filter endpoints. Invalid modes select raw; automatic mode tries covered
-// hourly summaries and transparently retries the entire raw range on any error.
-// OpsService validates endpoint ordering and resolves runtime source policy
-// before repository calls. Returned GroupID retains the filter pointer, so
-// callers keep that identity read-only while sharing either summary.
+// hourly summaries and falls back once to the entire raw range when that source
+// is unavailable. Parent cancellation stops fallback and returns the context
+// error. OpsService validates endpoint ordering and resolves runtime source
+// policy before repository calls. Returned GroupID retains the filter pointer,
+// so callers keep that identity read-only while sharing either summary.
 func (r *Store) GetDashboardOverview(ctx context.Context, filter *ops.OpsDashboardFilter) (*ops.OpsDashboardOverview, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil ops repository")
@@ -148,9 +153,12 @@ func (r *Store) GetDashboardOverview(ctx context.Context, filter *ops.OpsDashboa
 	switch mode {
 	case ops.OpsQueryModeAuto:
 		out, err := r.getDashboardOverviewPreaggregated(ctx, filter)
-		// Retry the complete raw range after any automatic-path error, discarding its
-		// incomplete work rather than adding it to the raw result.
+		// Failed aggregate work can fall back to one raw query while the request
+		// remains active. A canceled parent cannot benefit from starting more SQL.
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			return r.getDashboardOverviewRaw(ctx, filter)
 		}
 		return out, err
@@ -164,18 +172,19 @@ func (r *Store) GetDashboardOverview(ctx context.Context, filter *ops.OpsDashboa
 // and nonnil filter. Usage and error counts execute separately, and
 // zero-or-negative window seconds select one second for average-rate division.
 //
-// Latency and peak queries have child budgets. Only errors wrapping
-// context.DeadlineExceeded permit degraded results; cancellation and other
-// errors reject the response. A latency timeout produces absent measurements,
-// and any recognized optional timeout can replace nonpositive current rates
-// with averages and peaks with the greater of current and average, including an
-// actual observed zero. Current uses the minute before end independently of
-// start. Ratios divide by success plus SLA errors and round to four decimals,
-// with zero denominators yielding zero and no upper clamp.
+// Latency and peak queries have child budgets. Local deadline errors and
+// their PostgreSQL cancellation response permit degraded results while the
+// parent remains active; parent cancellation and other errors reject the
+// response. A latency timeout produces absent measurements, and a timed-out
+// rate query can use an estimate: current rates use averages and peaks use the
+// greater of current and average. Successful rates, including zero, remain
+// their observed values even when another measurement times out. Current uses
+// the minute before end independently of start. Ratios divide by success plus
+// SLA errors and round to four decimals, with zero denominators yielding zero
+// and no upper clamp.
 func (r *Store) getDashboardOverviewRaw(ctx context.Context, filter *ops.OpsDashboardFilter) (*ops.OpsDashboardOverview, error) {
 	start := filter.StartTime.UTC()
 	end := filter.EndTime.UTC()
-	degraded := false
 
 	successCount, tokenConsumed, err := r.queryUsageCounts(ctx, filter, start, end)
 	if err != nil {
@@ -189,8 +198,7 @@ func (r *Store) getDashboardOverviewRaw(ctx context.Context, filter *ops.OpsDash
 	duration, ttft, _, err := r.queryUsageLatency(latencyCtx, filter, start, end)
 	cancelLatency()
 	if err != nil {
-		if isQueryTimeoutErr(err) {
-			degraded = true
+		if isQueryTimeoutErr(ctx, latencyCtx, err) {
 			duration = ops.OpsPercentiles{}
 			ttft = ops.OpsPercentiles{}
 		} else {
@@ -218,10 +226,11 @@ func (r *Store) getDashboardOverviewRaw(ctx context.Context, filter *ops.OpsDash
 	errorRate := safeDivideFloat64(float64(errorCountSLA), float64(requestCountSLA))
 	upstreamErrorRate := safeDivideFloat64(float64(upstreamExcl), float64(requestCountSLA))
 
+	currentDegraded := false
 	qpsCurrent, tpsCurrent, err := r.queryCurrentRates(ctx, filter, end)
 	if err != nil {
-		if isQueryTimeoutErr(err) {
-			degraded = true
+		if isQueryTimeoutErr(ctx, ctx, err) {
+			currentDegraded = true
 		} else {
 			return nil, err
 		}
@@ -230,12 +239,13 @@ func (r *Store) getDashboardOverviewRaw(ctx context.Context, filter *ops.OpsDash
 	// Budget the raw peak subquery separately, then cancel that child. Recognized
 	// deadline failure enables estimates while other errors reject the dashboard
 	// response.
+	peakDegraded := false
 	peakCtx, cancelPeak := context.WithTimeout(ctx, opsRawPeakQueryTimeout)
 	qpsPeak, tpsPeak, err := r.queryPeakRates(peakCtx, filter, start, end)
 	cancelPeak()
 	if err != nil {
-		if isQueryTimeoutErr(err) {
-			degraded = true
+		if isQueryTimeoutErr(ctx, peakCtx, err) {
+			peakDegraded = true
 		} else {
 			return nil, err
 		}
@@ -243,22 +253,15 @@ func (r *Store) getDashboardOverviewRaw(ctx context.Context, filter *ops.OpsDash
 
 	qpsAvg := roundTo1DP(float64(requestCountTotal) / windowSeconds)
 	tpsAvg := roundTo1DP(float64(tokenConsumed) / windowSeconds)
-	// A recognized optional-query deadline enables replacements for every
-	// nonpositive current or peak value, even one successfully read as zero, using
-	// window averages.
-	if degraded {
-		if qpsCurrent <= 0 {
-			qpsCurrent = qpsAvg
-		}
-		if tpsCurrent <= 0 {
-			tpsCurrent = tpsAvg
-		}
-		if qpsPeak <= 0 {
-			qpsPeak = roundTo1DP(math.Max(qpsCurrent, qpsAvg))
-		}
-		if tpsPeak <= 0 {
-			tpsPeak = roundTo1DP(math.Max(tpsCurrent, tpsAvg))
-		}
+	// Estimate only the rate whose query exhausted its budget. Another optional
+	// measurement timing out must not replace a successfully observed zero rate.
+	if currentDegraded {
+		qpsCurrent = qpsAvg
+		tpsCurrent = tpsAvg
+	}
+	if peakDegraded {
+		qpsPeak = roundTo1DP(math.Max(qpsCurrent, qpsAvg))
+		tpsPeak = roundTo1DP(math.Max(tpsCurrent, tpsAvg))
 	}
 
 	return &ops.OpsDashboardOverview{
@@ -301,8 +304,9 @@ func (r *Store) getDashboardOverviewRaw(ctx context.Context, filter *ops.OpsDash
 // getDashboardOverviewPreaggregated combines stable full UTC hours with raw
 // head and tail fragments. The stable end is capped at five minutes before the
 // current time and then floored; start is ceiled to the next hour. If no full
-// segment remains, the method directly uses raw. Global coverage failure
-// returns an error for the outer automatic selector to retry raw.
+// segment remains, the method reports unavailable coverage. The outer
+// automatic selector owns the single fallback to raw for that result or another
+// aggregate failure while the parent request remains active.
 //
 // Filtered hourly absence is checked against raw sources; positive existence
 // triggers raw retry, while existence-check errors are ignored and empty
@@ -310,9 +314,9 @@ func (r *Store) getDashboardOverviewRaw(ctx context.Context, filter *ops.OpsDash
 // duration summaries use success weights, and TTFT summaries use
 // measured weights. Weighted medians/90th percentiles are approximations and
 // high percentiles use maxima. Current and peak still query raw; recognized
-// rate timeouts substitute nonpositive values from averages. Saved aggregate
-// classification is used as stored, so OpsService selects raw for custom
-// ignored-status policy.
+// rate timeouts substitute estimates only for the unavailable measurements.
+// Saved aggregate classification is used as stored, so OpsService selects raw
+// for custom ignored-status policy.
 func (r *Store) getDashboardOverviewPreaggregated(ctx context.Context, filter *ops.OpsDashboardFilter) (*ops.OpsDashboardOverview, error) {
 	if filter == nil {
 		return nil, fmt.Errorf("nil filter")
@@ -327,10 +331,10 @@ func (r *Store) getDashboardOverviewPreaggregated(ctx context.Context, filter *o
 	aggFullStart := utcCeilToHour(start)
 	aggFullEnd := utcFloorToHour(aggSafeEnd)
 
-	// Use raw directly when the selected range contains no stable full hour. The
-	// dashboard then applies the raw method's optional-query degradation rules.
+	// Leave source fallback to the outer selector when no stable full hour is
+	// available, so a failed raw query cannot trigger another identical attempt.
 	if !aggFullStart.Before(aggFullEnd) {
-		return r.getDashboardOverviewRaw(ctx, filter)
+		return nil, ops.ErrOpsPreaggregatedNotPopulated
 	}
 	covered, err := r.hasCompleteHourlyMetricsCoverage(ctx, aggFullStart, aggFullEnd)
 	if err != nil {
@@ -421,15 +425,15 @@ func (r *Store) getDashboardOverviewPreaggregated(ctx context.Context, filter *o
 	sla := safeDivideFloat64(float64(successCount), float64(requestCountSLA))
 	errorRate := safeDivideFloat64(float64(errorCountSLA), float64(requestCountSLA))
 	upstreamErrorRate := safeDivideFloat64(float64(upstreamExcl), float64(requestCountSLA))
-	degraded := false
 
 	// Read current from the raw minute before end even when historical counts use
 	// saved hours. This rate observes fresh data independently of the aggregation
 	// segment.
+	currentDegraded := false
 	qpsCurrent, tpsCurrent, err := r.queryCurrentRates(ctx, filter, end)
 	if err != nil {
-		if isQueryTimeoutErr(err) {
-			degraded = true
+		if isQueryTimeoutErr(ctx, ctx, err) {
+			currentDegraded = true
 		} else {
 			return nil, err
 		}
@@ -438,12 +442,13 @@ func (r *Store) getDashboardOverviewPreaggregated(ctx context.Context, filter *o
 	// Budget the raw peak subquery separately, then cancel that child. Recognized
 	// deadline failure enables estimates while other errors reject the dashboard
 	// response.
+	peakDegraded := false
 	peakCtx, cancelPeak := context.WithTimeout(ctx, opsRawPeakQueryTimeout)
 	qpsPeak, tpsPeak, err := r.queryPeakRates(peakCtx, filter, start, end)
 	cancelPeak()
 	if err != nil {
-		if isQueryTimeoutErr(err) {
-			degraded = true
+		if isQueryTimeoutErr(ctx, peakCtx, err) {
+			peakDegraded = true
 		} else {
 			return nil, err
 		}
@@ -451,22 +456,15 @@ func (r *Store) getDashboardOverviewPreaggregated(ctx context.Context, filter *o
 
 	qpsAvg := roundTo1DP(float64(requestCountTotal) / windowSeconds)
 	tpsAvg := roundTo1DP(float64(tokenConsumed) / windowSeconds)
-	// A recognized optional-query deadline enables replacements for every
-	// nonpositive current or peak value, even one successfully read as zero, using
-	// window averages.
-	if degraded {
-		if qpsCurrent <= 0 {
-			qpsCurrent = qpsAvg
-		}
-		if tpsCurrent <= 0 {
-			tpsCurrent = tpsAvg
-		}
-		if qpsPeak <= 0 {
-			qpsPeak = roundTo1DP(math.Max(qpsCurrent, qpsAvg))
-		}
-		if tpsPeak <= 0 {
-			tpsPeak = roundTo1DP(math.Max(tpsCurrent, tpsAvg))
-		}
+	// Estimate only the rate whose query exhausted its budget. Another optional
+	// measurement timing out must not replace a successfully observed zero rate.
+	if currentDegraded {
+		qpsCurrent = qpsAvg
+		tpsCurrent = tpsAvg
+	}
+	if peakDegraded {
+		qpsPeak = roundTo1DP(math.Max(qpsCurrent, qpsAvg))
+		tpsPeak = roundTo1DP(math.Max(tpsCurrent, tpsAvg))
 	}
 
 	return &ops.OpsDashboardOverview{
@@ -866,7 +864,7 @@ func (r *Store) queryRawPartial(ctx context.Context, filter *ops.OpsDashboardFil
 	duration, ttft, ttftSampleCount, err := r.queryUsageLatency(latencyCtx, filter, start, end)
 	cancelLatency()
 	if err != nil {
-		if isQueryTimeoutErr(err) {
+		if isQueryTimeoutErr(ctx, latencyCtx, err) {
 			// A recognized latency deadline discards unavailable measurement values and
 			// their TTFT weight. Counts already read remain usable for this
 			// segment's additive totals.
@@ -1072,27 +1070,37 @@ FROM usage_logs ul
 // preserving absence as nil. Maximum SQL integers narrow unchecked to native
 // int. The returned sample count weights TTFT summaries when combining
 // raw fragments with saved hours; query failure rejects all measurements. The
-// caller owns its cancellation and any optional latency child budget.
+// caller owns its cancellation and any optional latency child budget. A
+// materialized sample set evaluates the timing expression once per row; array
+// percentiles compute each metric's four thresholds in one ordered aggregate.
 func (r *Store) queryUsageLatency(ctx context.Context, filter *ops.OpsDashboardFilter, start, end time.Time) (duration ops.OpsPercentiles, ttft ops.OpsPercentiles, ttftSampleCount int64, err error) {
 	join, where, args, _ := buildUsageWhere(filter, start, end, 1)
+	// Materialize each derived latency once before ordered aggregates consume it.
+	// PostgreSQL can otherwise repeat the JSON timing expression for every
+	// percentile, average, maximum, and sample count across the selected rows.
 	q := `
+WITH samples AS MATERIALIZED (
+  SELECT ul.duration_ms, ` + usageTTFTSQL("ul") + ` AS ttft_ms
+  FROM usage_logs ul
+  ` + join + `
+  ` + where + `
+), summary AS (
+  SELECT
+    percentile_cont(ARRAY[0.50, 0.90, 0.95, 0.99]) WITHIN GROUP (ORDER BY duration_ms) AS duration_percentiles,
+    AVG(duration_ms) AS duration_avg,
+    MAX(duration_ms) AS duration_max,
+    percentile_cont(ARRAY[0.50, 0.90, 0.95, 0.99]) WITHIN GROUP (ORDER BY ttft_ms) AS ttft_percentiles,
+    AVG(ttft_ms) AS ttft_avg,
+    MAX(ttft_ms) AS ttft_max,
+    COUNT(ttft_ms) AS ttft_sample_count
+  FROM samples
+)
 SELECT
-  percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL) AS duration_p50,
-  percentile_cont(0.90) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL) AS duration_p90,
-  percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL) AS duration_p95,
-  percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL) AS duration_p99,
-  AVG(duration_ms) FILTER (WHERE duration_ms IS NOT NULL) AS duration_avg,
-  MAX(duration_ms) AS duration_max,
-  percentile_cont(0.50) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) FILTER (WHERE ` + usageTTFTSQL("") + ` IS NOT NULL) AS ttft_p50,
-  percentile_cont(0.90) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) FILTER (WHERE ` + usageTTFTSQL("") + ` IS NOT NULL) AS ttft_p90,
-  percentile_cont(0.95) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) FILTER (WHERE ` + usageTTFTSQL("") + ` IS NOT NULL) AS ttft_p95,
-  percentile_cont(0.99) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) FILTER (WHERE ` + usageTTFTSQL("") + ` IS NOT NULL) AS ttft_p99,
-  AVG(` + usageTTFTSQL("") + `) FILTER (WHERE ` + usageTTFTSQL("") + ` IS NOT NULL) AS ttft_avg,
-  MAX(` + usageTTFTSQL("") + `) AS ttft_max,
-  COUNT(` + usageTTFTSQL("") + `) AS ttft_sample_count
-FROM usage_logs ul
-` + join + `
-` + where
+  duration_percentiles[1], duration_percentiles[2], duration_percentiles[3], duration_percentiles[4],
+  duration_avg, duration_max,
+  ttft_percentiles[1], ttft_percentiles[2], ttft_percentiles[3], ttft_percentiles[4],
+  ttft_avg, ttft_max, ttft_sample_count
+FROM summary`
 
 	var dP50, dP90, dP95, dP99 sql.NullFloat64
 	var dAvg sql.NullFloat64
@@ -1242,12 +1250,26 @@ FROM combined`
 	return qpsPeak, tpsPeak, nil
 }
 
-// isQueryTimeoutErr reports whether err wraps context.DeadlineExceeded for
-// optional-query degradation. It does not inspect caller context or driver
-// message text; cancellation and unrelated SQL errors therefore remain ordinary
-// failures.
-func isQueryTimeoutErr(err error) bool {
-	return errors.Is(err, context.DeadlineExceeded)
+// isQueryTimeoutErr reports whether an optional query exceeded its local
+// deadline while the parent request remains active. Callers pass the context
+// used by the SQL operation, including after releasing its cancellation handle.
+// Parent cancellation or expiry always prevents degradation.
+//
+// lib/pq returns SQLSTATE 57014 when PostgreSQL acknowledges client cancellation;
+// that error does not wrap context.DeadlineExceeded. Its accompanying child
+// deadline distinguishes a spent query budget from explicit request cancellation
+// or a database administrator canceling a statement. Unrelated SQL errors retain
+// their original failure behavior even if the child deadline has also expired.
+func isQueryTimeoutErr(parentCtx, queryCtx context.Context, err error) bool {
+	if err == nil || parentCtx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var databaseError *pq.Error
+	return errors.Is(queryCtx.Err(), context.DeadlineExceeded) &&
+		errors.As(err, &databaseError) && databaseError.Code == "57014"
 }
 
 // buildUsageWhere returns a half-open raw-usage predicate and ordered arguments

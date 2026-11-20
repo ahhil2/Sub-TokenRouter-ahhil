@@ -285,6 +285,7 @@ import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import { adminUsageAPI } from '@/api/admin/usage'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { getConfiguredTablePageSizeOptions } from '@/utils/tablePreferences'
 import { formatReasoningEffort } from '@/utils/format'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import { calculateUsageTps } from '@/utils/usageTps'
@@ -1401,7 +1402,12 @@ const switchTab = (tab: DetailTab) => {
 const errRows = ref<OpsErrorLog[]>([])
 const errLoading = ref(false)
 const errPage = ref(1)
-const errPageSize = ref(20)
+// errPageSizeOptions matches the error table selector within the Ops API limit,
+// so restoring a larger preference selects an available page length.
+const errPageSizeOptions = getConfiguredTablePageSizeOptions().filter((size) => size <= 500)
+// errPageSize restores the saved browser choice before the first error query, capped
+// to the largest allowed option so frontend and server pagination counts agree.
+const errPageSize = ref(Math.min(getPersistedPageSize(), Math.max(...errPageSizeOptions)))
 const errTotal = ref(0)
 const errSortBy = ref('created_at')
 const errSortOrder = ref<'asc' | 'desc'>('desc')

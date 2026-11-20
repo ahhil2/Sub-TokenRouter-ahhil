@@ -25,7 +25,8 @@ import (
 // decides which items qualify and json.Number retains unrelated numeric
 // spelling during whole-object encoding. Declined requests return the supplied
 // bytes; recognition establishes a supported format, leaving authorization and
-// source trust with the caller.
+// source trust with the caller. Shared context inspection supplies the same
+// ordered rejection reasons to normalization and failure diagnostics.
 
 // NormalizeCodexDelegationBootstrap reclassifies recognized missing-ID
 // delegation output items as user input. It permits other identified historical
@@ -71,46 +72,9 @@ func NormalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]
 	if err := decoder.Decode(&request); err != nil {
 		return body, false
 	}
-	if previousResponseID, exists := request["previous_response_id"]; exists {
-		value, ok := previousResponseID.(string)
-		if !ok || (!allowHistoricalContext && strings.TrimSpace(value) != "") {
-			return body, false
-		}
-	}
-	input, ok := request["input"].([]any)
-	if !ok {
+	input, reason, _ := inspectCodexBootstrapContext(request, isCandidate, allowHistoricalContext)
+	if reason != "ready" {
 		return body, false
-	}
-
-	// Validate surrounding call identities before adopting any conversion.
-	// Delegation can retain identified history, while automation stays in its
-	// bootstrap-only context and declines other call or reference shapes.
-	for _, raw := range input {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		typ := StringField(item, "type")
-		if isCandidate(item) {
-			callIDValue, exists := item["call_id"]
-			callID, isString := callIDValue.(string)
-			if exists && (!isString || strings.TrimSpace(callID) != "") {
-				return body, false
-			}
-			continue
-		}
-		if typ == "item_reference" {
-			if allowHistoricalContext && strings.TrimSpace(StringField(item, "id")) != "" {
-				continue
-			}
-			return body, false
-		}
-		if strings.HasSuffix(typ, "_call") || IsResponsesCallOutputType(typ) {
-			if allowHistoricalContext && strings.TrimSpace(StringField(item, "call_id")) != "" {
-				continue
-			}
-			return body, false
-		}
 	}
 
 	changed := false
@@ -145,6 +109,65 @@ func NormalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]
 		return body, false
 	}
 	return normalized, true
+}
+
+// inspectCodexBootstrapContext checks the context required for bootstrap
+// conversion and reports the first reason that prevents it. Callers supply a
+// decoded request with unique JSON members and a stable, nonnil candidate
+// predicate that leaves items unchanged. Validation examines root fields before
+// input entries, preserving their original array order and stopping at the first
+// blocker. Fixed reasons contain no request values; blockedIndex is -1 for root
+// failures and otherwise identifies the blocking input entry. A ready result
+// returns the input slice without mutation and does not imply that a candidate
+// exists; the normalizer and diagnostic callers determine candidate presence.
+func inspectCodexBootstrapContext(request map[string]any, isCandidate func(map[string]any) bool, allowHistoricalContext bool) (input []any, reason string, blockedIndex int) {
+	if previousResponseID, exists := request["previous_response_id"]; exists {
+		value, ok := previousResponseID.(string)
+		if !ok {
+			return nil, "previous_response_id_type", -1
+		}
+		if !allowHistoricalContext && strings.TrimSpace(value) != "" {
+			return nil, "previous_response_id_nonempty", -1
+		}
+	}
+	input, ok := request["input"].([]any)
+	if !ok {
+		return nil, "input_not_array", -1
+	}
+
+	// Delegation admits identified history, while automation requires bootstrap
+	// context. Inspecting that shared rule also gives diagnostics the same first blocker.
+	for index, raw := range input {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		typ := StringField(item, "type")
+		if isCandidate(item) {
+			callIDValue, exists := item["call_id"]
+			callID, isString := callIDValue.(string)
+			if exists && !isString {
+				return nil, "candidate_call_id_type", index
+			}
+			if exists && strings.TrimSpace(callID) != "" {
+				return nil, "candidate_call_id_nonempty", index
+			}
+			continue
+		}
+		if typ == "item_reference" {
+			if allowHistoricalContext && strings.TrimSpace(StringField(item, "id")) != "" {
+				continue
+			}
+			return nil, "item_reference_disallowed", index
+		}
+		if strings.HasSuffix(typ, "_call") || IsResponsesCallOutputType(typ) {
+			if allowHistoricalContext && strings.TrimSpace(StringField(item, "call_id")) != "" {
+				continue
+			}
+			return nil, "tool_history_disallowed", index
+		}
+	}
+	return input, "ready", -1
 }
 
 // HasUniqueJSONMembers reports whether body contains one complete JSON value

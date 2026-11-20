@@ -1,11 +1,11 @@
 /**
  * tablePreferences.ts normalizes table pagination preferences against optional
- * application configuration. Configured defaults and option lists are
- * validated independently, so a valid default need not itself be one of the
- * selectable options.
+ * application configuration. Every selectable table offers ten, twenty,
+ * thirty, fifty, and one hundred rows; valid configured options extend that
+ * list. Configured defaults are validated independently and may be off-list.
  *
  * Selection normalization maps the requested size upward to the first
- * sufficient configured option, or to the largest option when none is
+ * sufficient available option, or to the largest option when none is
  * sufficient. Invalid selections first use the configured default. If every
  * configured option is invalid, built-in options supply a nonempty set. The
  * helpers do not mutate the injected configuration or shared default list;
@@ -22,7 +22,7 @@ const MIN_TABLE_PAGE_SIZE = 5
 const MAX_TABLE_PAGE_SIZE = 1000
 
 export const DEFAULT_TABLE_PAGE_SIZE = 20
-export const DEFAULT_TABLE_PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
+export const DEFAULT_TABLE_PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100]
 
 /**
  * sanitizePageSize coerces a configured value to a whole size within five
@@ -107,21 +107,14 @@ export const getConfiguredTableDefaultPageSize = (): number => {
 }
 
 /**
- * getConfiguredTablePageSizeOptions returns sanitized configured choices or a
- * copy of built-in choices. Empty and wholly invalid lists both select the
- * fallback, so callers can safely normalize against a nonempty array.
+ * getConfiguredTablePageSizeOptions returns standard choices with valid
+ * configured additions in numeric order. The returned array is independent,
+ * and legacy configuration cannot remove the standard sizes from selectors.
  */
 export const getConfiguredTablePageSizeOptions = (): number[] => {
-  const unique = getSanitizedConfiguredOptions()
-  if (unique.length === 0) {
-    /**
-     * A missing or wholly invalid configured list uses a fresh copy of built-in
-     * options, giving selection normalization a nonempty ordered list.
-     */
-    return [...DEFAULT_TABLE_PAGE_SIZE_OPTIONS]
-  }
-
-  return unique.length > 0 ? unique : [...DEFAULT_TABLE_PAGE_SIZE_OPTIONS]
+  return Array.from(
+    new Set([...DEFAULT_TABLE_PAGE_SIZE_OPTIONS, ...getSanitizedConfiguredOptions()]),
+  ).sort((a, b) => a - b)
 }
 
 /**

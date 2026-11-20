@@ -4,6 +4,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { TABLE_DESKTOP_MEDIA_QUERY } from '@/constants/layout'
 import { useI18n } from 'vue-i18n'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { getConfiguredTablePageSizeOptions } from '@/utils/tablePreferences'
 import {
   opsAPI,
   type OpsRuntimeLogConfig,
@@ -60,7 +62,14 @@ const loading = ref(false)
 const logs = ref<OpsSystemLog[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(20)
+// pageSizeOptions excludes configured sizes above the system-log endpoint
+// maximum, keeping the selected count consistent with returned page offsets.
+const pageSizeOptions = computed(() =>
+  getConfiguredTablePageSizeOptions().filter((size) => size <= 200),
+)
+// pageSize restores the saved preference up to the largest supported option;
+// oversized choices from other lists remain saved for their own consumers.
+const pageSize = ref(Math.min(getPersistedPageSize(), Math.max(...pageSizeOptions.value)))
 
 // health retains the last sink counters so periodic health failures do not erase
 // the observed queue and write statistics.
@@ -486,7 +495,8 @@ const onPageChange = (next: number) => {
 // loading. This prevents an old page offset from carrying into the next
 // differently sized result page.
 const onPageSizeChange = (next: number) => {
-  pageSize.value = next
+  // Bound model events to selectable sizes supported by the log endpoint.
+  pageSize.value = Math.min(next, Math.max(...pageSizeOptions.value))
   page.value = 1
   fetchLogs()
 }
@@ -806,6 +816,7 @@ onMounted(async () => {
         :total="total"
         :page="page"
         :page-size="pageSize"
+        :page-size-options="pageSizeOptions"
         @update:page="onPageChange"
         @update:page-size="onPageSizeChange"
       />

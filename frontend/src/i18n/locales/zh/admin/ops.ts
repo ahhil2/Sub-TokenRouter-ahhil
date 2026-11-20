@@ -83,6 +83,9 @@ export default {
     upstreamExcl429529: '上游（排除429/529）',
     failedToLoadData: '加载运维数据失败',
     failedToLoadOverview: '加载概览数据失败',
+    overviewUnavailable: '概览指标暂时不可用。',
+    overviewRefreshFailedStale: '刷新失败，当前显示这些筛选条件下上次成功加载的数据。',
+    lastSuccessfulUpdate: '上次成功更新：{time}',
     failedToLoadThroughputTrend: '加载吞吐趋势失败',
     failedToLoadSwitchTrend: '加载平均提供商切换趋势失败',
     failedToLoadLatencyHistogram: '加载请求时长分布失败',
@@ -127,6 +130,7 @@ export default {
       pageInfo: '第 {page}/{total} 页',
       totalModels: '模型总数：{total}',
       failedToLoad: '加载 Token 请求统计失败',
+      refreshFailedStale: '刷新失败，当前显示上次成功加载的数据。',
       empty: '当前筛选条件下暂无 Token 请求统计数据',
       table: {
         model: '模型',

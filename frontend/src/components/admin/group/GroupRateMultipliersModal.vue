@@ -309,6 +309,7 @@ import type { GroupRateMultiplierEntry } from '@/api/admin/groups'
 import type { AdminGroup } from '@/api/groups.types'
 import type { AdminUser } from '@/api/admin/users.types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
 
@@ -360,9 +361,9 @@ const newRate = ref<number | null>(null)
 // currentPage and pageSize describe the local draft window displayed by the override table and
 // pagination controls.
 const currentPage = ref(1)
-// pageSize sets the number of visible rows and participates in the current page calculation for
-// pagination.
-const pageSize = ref(10)
+// pageSize restores the browser preference for the local rate multiplier draft, keeping
+// the selected row count when this dialog is mounted again.
+const pageSize = ref(getPersistedPageSize())
 // batchFactor holds a pending positive multiplier for preview and batch application to
 // configured local user rates.
 const batchFactor = ref<number | null>(null)

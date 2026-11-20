@@ -596,10 +596,35 @@ describe('API Client', () => {
       await expect(apiClient.get('/test')).rejects.toEqual(
         expect.objectContaining({
           status: 0,
+          code: 'ERR_NETWORK',
+          reason: 'NETWORK_ERROR',
           message: '网络连接失败，请检查网络后重试。',
+          url: '/test',
         }),
       )
     })
+
+    // Both Axios timeout modes can reject before any HTTP response arrives.
+    // Slow requests must carry a timeout reason and message, distinct from a
+    // failed connection, while retaining the endpoint for diagnosis.
+    it.each(['ECONNABORTED', 'ETIMEDOUT'])(
+      'distinguishes %s timeouts from connection failures',
+      async (code) => {
+        apiClient.defaults.adapter = vi.fn().mockRejectedValue({
+          code,
+          message: 'timeout of 30000ms exceeded',
+          config: { url: '/admin/ops/dashboard/token-stats' },
+        })
+
+        await expect(apiClient.get('/admin/ops/dashboard/token-stats')).rejects.toMatchObject({
+          status: 0,
+          code: 'REQUEST_TIMEOUT',
+          reason: 'REQUEST_TIMEOUT',
+          message: '请求超时，请稍后重试。',
+          url: '/admin/ops/dashboard/token-stats',
+        })
+      },
+    )
   })
 
   /**
@@ -609,16 +634,17 @@ describe('API Client', () => {
   describe('请求取消', () => {
     /**
      * The adapter rejects with an Axios cancellation error. The request remains
-     * rejected through the interceptor; this assertion exercises cancellation
-     * handling without inspecting the error identity.
+     * rejected through the interceptor with the same identity so callers can
+     * suppress intentionally interrupted requests.
      */
     it('取消的请求保持原始取消错误', async () => {
       const source = axios.CancelToken.source()
 
-      const adapter = vi.fn().mockRejectedValue(new axios.Cancel('Operation canceled'))
+      const cancellation = new axios.Cancel('Operation canceled')
+      const adapter = vi.fn().mockRejectedValue(cancellation)
       apiClient.defaults.adapter = adapter
 
-      await expect(apiClient.get('/test', { cancelToken: source.token })).rejects.toBeDefined()
+      await expect(apiClient.get('/test', { cancelToken: source.token })).rejects.toBe(cancellation)
     })
   })
 })

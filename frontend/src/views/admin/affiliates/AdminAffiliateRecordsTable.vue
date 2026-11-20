@@ -134,6 +134,7 @@
           :page="pagination.page"
           :total="pagination.total"
           :page-size="pagination.page_size"
+          :page-size-options="pageSizeOptions"
           @update:page="handlePageChange"
           @update:pageSize="handlePageSizeChange"
         />
@@ -210,6 +211,8 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/table/DataTable.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { getConfiguredTablePageSizeOptions } from '@/utils/tablePreferences'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -269,9 +272,14 @@ const filters = reactive({
 })
 const dateRangeStart = ref('')
 const dateRangeEnd = ref('')
+// pageSizeOptions follows the shared one-hundred-row limit for invitation, rebate,
+// and transfer queries, keeping each record type's pager consistent with its response.
+const pageSizeOptions = getConfiguredTablePageSizeOptions().filter((size) => size <= 100)
 const pagination = reactive({
   page: 1, // requested page number
-  page_size: 20, // requested row count
+  // Saved sizes from larger tables use the largest supported affiliate choice
+  // before the first query, so displayed totals use the actual page capacity.
+  page_size: Math.min(getPersistedPageSize(), Math.max(...pageSizeOptions)), // requested row count
   total: 0, // matching row count
 })
 const overviewDialog = ref(false)

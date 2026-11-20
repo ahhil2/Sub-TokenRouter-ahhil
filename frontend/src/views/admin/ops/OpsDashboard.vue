@@ -18,6 +18,7 @@
       <OpsDashboardHeader
         v-else-if="opsEnabled"
         :overview="overview"
+        :overview-error="overviewError"
         :platform="platform"
         :group-id="groupId"
         :time-range="timeRange"
@@ -231,11 +232,13 @@ import {
 // preferences, and defaults determine the initial histogram boundaries.
 //
 // The core snapshot loads before deferred histogram and error-distribution
-// panels. When a current snapshot request fails, split legacy endpoints provide
-// its constituent measurements. Generation checks prevent superseded responses
-// from publishing panel data or loading state. List-return navigation records
-// the originating dialog and briefly supplies resumeState so returning from a
-// single error can retain filters and pagination.
+// panels. Servers without the snapshot endpoint use split legacy endpoints for
+// its constituent measurements. Refresh failures retain the last successful
+// overview for the same filters and mark it as stale; changing filters clears
+// those measurements before another query starts. Generation checks prevent
+// superseded responses from publishing panel data or loading state. List-return
+// navigation records the originating dialog and briefly supplies resumeState so
+// returning from a single error can retain filters and pagination.
 
 // Route, application stores, and translations provide filter synchronization,
 // monitoring enablement, and request feedback for the dashboard owner.
@@ -261,7 +264,7 @@ const allowedTimeRanges = new Set<TimeRange>(['5m', '30m', '1h', '6h', '24h', 'c
 const loading = ref(true)
 const hasLoadedOnce = ref(false)
 const errorMessage = ref('')
-const lastUpdated = ref<Date | null>(new Date())
+const lastUpdated = ref<Date | null>(null)
 
 // Filter state owns the selected time interval, execution platform, group, and
 // histogram boundaries shared by child panels.
@@ -339,6 +342,9 @@ function handleKeydown(e: KeyboardEvent) {
 // latency has its own controller and sequence for independent bucket edits.
 let dashboardFetchController: AbortController | null = null
 let dashboardFetchSeq = 0
+// dashboardFilterKey identifies the effective query whose measurements may stay
+// visible while a refresh runs; a changed key invalidates all historical panels.
+let dashboardFilterKey: string | null = null
 let latencyFetchController: AbortController | null = null
 let latencyFetchSeq = 0
 
@@ -541,6 +547,9 @@ const syncQueryToRoute = useDebounceFn(async () => {
 // Overview and threshold snapshots supply the header, while each chart retains
 // its own response and refresh flag for independent presentation.
 const overview = ref<OpsDashboardOverview | null>(null)
+// overviewError remains set during retries until a successful overview response
+// replaces the retained data, or new filters invalidate the displayed snapshot.
+const overviewError = ref(false)
 const metricThresholds = ref<OpsMetricThresholds | null>(null)
 
 const throughputTrend = ref<OpsThroughputTrendResponse | null>(null)
@@ -867,25 +876,27 @@ function buildSwitchTrendParams() {
 // generation and signal. Monitoring-disabled calls return before querying, and
 // superseded or canceled requests cannot publish new data or errors.
 //
-// A current request failure clears its panel response and reports the available
-// error message. Callers advance dashboardFetchSeq when replacing a refresh; the
-// captured sequence determines whether completion still belongs to the active
-// dashboard selection. Any panel loading flag is cleared only by that matching
-// generation.
+// A current request failure marks the overview unavailable or stale while
+// retaining measurements already loaded for these filters. Filter changes clear
+// those measurements before this function runs. Successful reads replace the
+// overview and its freshness timestamp together, so the header's last-success
+// label cannot advance when a request fails. Canceled work leaves the current
+// presentation untouched.
 async function refreshOverviewWithCancel(fetchSeq: number, signal: AbortSignal) {
   if (!opsEnabled.value) return
   try {
     const data = await opsAPI.getDashboardOverview(buildApiParams(), { signal })
     // A completed read can belong to an older filter generation; reject it before
     // replacing the overview visible for the current selection.
-    if (fetchSeq !== dashboardFetchSeq) return
+    if (fetchSeq !== dashboardFetchSeq || signal.aborted) return
     overview.value = data
-  } catch (err: any) {
-    // A current failed read clears the overview and reports its error;
-    // obsolete or canceled work leaves displayed measurements untouched.
-    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return
-    overview.value = null
-    appStore.showError(err?.message || t('admin.ops.failedToLoadOverview'))
+    overviewError.value = false
+    lastUpdated.value = new Date()
+  } catch (err) {
+    // A failed refresh retains the matching overview so operators can inspect the
+    // last observation while the header identifies the data as stale.
+    if (fetchSeq !== dashboardFetchSeq || signal.aborted || isCanceledRequest(err)) return
+    overviewError.value = true
   }
 }
 
@@ -954,31 +965,37 @@ async function refreshThroughputTrendWithCancel(fetchSeq: number, signal: AbortS
 // in one request for the current generation. A successful current result
 // publishes those three snapshots together.
 //
-// If the request fails without cancellation or supersession, the legacy
-// endpoints are queried in parallel to populate the same panels independently.
-// Each delegated request checks the shared generation before publication, and
-// the matching generation clears loading flags after the sequence settles.
-// Partial legacy failures can therefore leave different panels populated or
-// cleared according to their own results.
+// Missing or unsupported snapshot routes use the legacy endpoints in parallel.
+// Other failures retain measurements for the active filters and mark the
+// overview stale, keeping a server outage from multiplying into three more
+// dashboard queries. Each response checks the shared generation before
+// publication, and only the matching generation releases loading flags.
 async function refreshCoreSnapshotWithCancel(fetchSeq: number, signal: AbortSignal) {
   if (!opsEnabled.value) return
   loadingTrend.value = true
   loadingErrorTrend.value = true
   try {
     const data = await opsAPI.getDashboardSnapshotV2(buildApiParams(), { signal })
-    if (fetchSeq !== dashboardFetchSeq) return
+    if (fetchSeq !== dashboardFetchSeq || signal.aborted) return
     overview.value = data.overview
+    overviewError.value = false
+    lastUpdated.value = new Date()
     throughputTrend.value = data.throughput_trend
     errorTrend.value = data.error_trend
   } catch (err: any) {
-    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return
-    // Any current non-cancellation failure retries the three panels through split
-    // endpoints, allowing successful panels to remain available when another fails.
-    await Promise.all([
-      refreshOverviewWithCancel(fetchSeq, signal),
-      refreshThroughputTrendWithCancel(fetchSeq, signal),
-      refreshErrorTrendWithCancel(fetchSeq, signal),
-    ])
+    if (fetchSeq !== dashboardFetchSeq || signal.aborted || isCanceledRequest(err)) return
+    const status = err?.status ?? err?.response?.status
+    if (status === 404 || status === 405 || status === 501) {
+      // Unsupported routes can belong to an older server. Query its individual
+      // dashboard endpoints to obtain measurements through the supported API.
+      await Promise.all([
+        refreshOverviewWithCancel(fetchSeq, signal),
+        refreshThroughputTrendWithCancel(fetchSeq, signal),
+        refreshErrorTrendWithCancel(fetchSeq, signal),
+      ])
+    } else {
+      overviewError.value = true
+    }
   } finally {
     if (fetchSeq === dashboardFetchSeq) {
       loadingTrend.value = false
@@ -1117,7 +1134,8 @@ function isOpsDisabledError(err: unknown): boolean {
 
 // fetchData begins a new dashboard generation and cancels the preceding shared
 // request. Core snapshot and fixed-window switch data run together, and only the
-// current generation updates refresh time and child tokens.
+// current generation updates child tokens. Overview success owns its freshness
+// timestamp, and a changed effective query clears previously displayed panels.
 //
 // After core helpers settle, the countdown resets and deferred panels start
 // without blocking the main loading state. Core helpers can handle individual
@@ -1132,18 +1150,35 @@ async function fetchData() {
   abortDashboardFetch()
   dashboardFetchSeq += 1
   const fetchSeq = dashboardFetchSeq
-  dashboardFetchController = new AbortController()
+  const controller = new AbortController()
+  dashboardFetchController = controller
+
+  const nextFilterKey = JSON.stringify(buildApiParams())
+  if (dashboardFilterKey !== nextFilterKey) {
+    // Invalidate observations before querying new filters so pending or failed
+    // reads cannot leave another group's or time window's measurements on screen.
+    dashboardFilterKey = nextFilterKey
+    overview.value = null
+    overviewError.value = false
+    lastUpdated.value = null
+    throughputTrend.value = null
+    switchTrend.value = null
+    errorTrend.value = null
+    errorDistribution.value = null
+    latencyHistogram.value = null
+    abortLatencyFetch()
+    latencyFetchSeq += 1
+    loadingLatency.value = false
+  }
 
   loading.value = true
   errorMessage.value = ''
   try {
     await Promise.all([
-      refreshCoreSnapshotWithCancel(fetchSeq, dashboardFetchController.signal),
-      refreshSwitchTrendWithCancel(fetchSeq, dashboardFetchController.signal),
+      refreshCoreSnapshotWithCancel(fetchSeq, controller.signal),
+      refreshSwitchTrendWithCancel(fetchSeq, controller.signal),
     ])
-    if (fetchSeq !== dashboardFetchSeq) return
-
-    lastUpdated.value = new Date()
+    if (fetchSeq !== dashboardFetchSeq || controller.signal.aborted) return
 
     // Trigger child component refreshes using the same cadence as the header.
     dashboardRefreshToken.value += 1
@@ -1154,8 +1189,10 @@ async function fetchData() {
     }
 
     // Defer non-core visual panels to reduce initial blocking.
-    void refreshDeferredPanels(fetchSeq, dashboardFetchController.signal)
+    void refreshDeferredPanels(fetchSeq, controller.signal)
   } catch (err) {
+    if (fetchSeq !== dashboardFetchSeq || controller.signal.aborted || isCanceledRequest(err))
+      return
     if (!isOpsDisabledError(err)) {
       console.error('[ops] failed to fetch dashboard data', err)
       errorMessage.value = t('admin.ops.failedToLoadData')

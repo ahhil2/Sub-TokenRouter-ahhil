@@ -429,6 +429,7 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/table/DataTable.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -492,10 +493,10 @@ const search = ref(''),
 // activeFilterCount reports selected provider and capability filters on the defaults toolbar,
 // excluding text search and configuration status.
 const activeFilterCount = computed(() => Number(!!provider.value) + Number(!!capability.value))
-// page, pageSize, and total hold the shared pagination state for the currently selected
-// configurations or defaults table.
+// page, pageSize, and total hold pagination for the configurations or defaults table.
+// The initial page size comes from the browser preference before either list loads.
 const page = ref(1),
-  pageSize = ref(20),
+  pageSize = ref(getPersistedPageSize()),
   total = ref(0)
 // The loading flags distinguish list reads, catalog updates, configuration saves, editor
 // visibility, and group-option loading for their respective controls.

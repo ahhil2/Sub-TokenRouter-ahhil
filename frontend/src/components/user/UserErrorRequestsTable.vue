@@ -132,6 +132,7 @@
         v-if="total > 0"
         :page="page"
         :page-size="pageSize"
+        :page-size-options="pageSizeOptions"
         :total="total"
         @update:page="$emit('update:page', $event)"
         @update:pageSize="$emit('update:pageSize', $event)"
@@ -153,6 +154,7 @@ import UserErrorDetailModal from '@/components/user/UserErrorDetailModal.vue'
 import IpGeoCell from '@/components/common/IpGeoCell.vue'
 import IpGeoBatchToolbar from '@/components/common/IpGeoBatchToolbar.vue'
 import { formatDateTime } from '@/utils/format'
+import { getConfiguredTablePageSizeOptions } from '@/utils/tablePreferences'
 import {
   mapErrorSortKey,
   numericRequestTypeKind,
@@ -167,6 +169,12 @@ import type { Column } from '@/components/common/table/types'
 // a detail dialog. The parent owns queries and visible column selection, while this table
 // translates sort keys, publishes page changes, and keeps the selected error identifier for
 // inspection.
+
+// pageSizeOptions retains shared choices supported by the user error endpoint, which
+// caps each response at one hundred rows even when administrator tables allow more.
+const pageSizeOptions = computed(() =>
+  getConfiguredTablePageSizeOptions().filter((size) => size <= 100),
+)
 
 // props supplies parent-owned error records, paging totals, loading progress, and optional
 // column visibility preferences.

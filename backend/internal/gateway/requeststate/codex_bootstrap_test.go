@@ -443,3 +443,143 @@ func TestNormalizeCodexBootstrapsSequentialCompatibility(t *testing.T) {
 	require.False(t, dupDeleg)
 	require.Equal(t, dupKey, dupGot)
 }
+
+// TestInspectCodexBootstrapContextReportsFirstBlocker checks fixed diagnostic
+// reasons against the normalizer's admission decisions. Null fields and hosted
+// search history retain their rejection behavior, and inspection leaves input
+// unchanged while reporting the first blocking position.
+func TestInspectCodexBootstrapContextReportsFirstBlocker(t *testing.T) {
+	delegation := `{"type":"function_call_output","namespace":"codex_app","name":"create_thread","output":` + mustJSON(t, delegationEnvelope) + `}`
+	automation := `{"type":"function_call_output","namespace":"codex_app","name":"automation_update","output":` + mustJSON(t, codexAutomationBootstrap("wiki", "never", automationBootstrapPrompt)) + `}`
+	userMessage := `{"type":"message","role":"user","content":"context"}`
+	hostedSearch := `{"type":"tool_search_output","execution":"server","call_id":null,"tools":[]}`
+	tests := []struct {
+		name       string // diagnostic case label
+		body       string // complete request JSON
+		automation bool   // automation candidate policy
+		reason     string // expected fixed reason
+		index      int    // expected blocking position
+		changed    bool   // expected normalizer conversion
+	}{
+		{
+			name:   "root type wins before invalid input",
+			body:   `{"previous_response_id":null,"input":false}`,
+			reason: "previous_response_id_type",
+			index:  -1,
+		},
+		{
+			name:       "automation previous response is disallowed",
+			body:       `{"previous_response_id":"resp-1","input":[` + automation + `]}`,
+			automation: true,
+			reason:     "previous_response_id_nonempty",
+			index:      -1,
+		},
+		{
+			name:    "delegation previous response is allowed",
+			body:    `{"previous_response_id":"resp-1","input":[` + delegation + `]}`,
+			reason:  "ready",
+			index:   -1,
+			changed: true,
+		},
+		{
+			name:   "input is not an array",
+			body:   `{"input":{}}`,
+			reason: "input_not_array",
+			index:  -1,
+		},
+		{
+			name:   "candidate null call ID",
+			body:   `{"input":[` + userMessage + `,` + strings.TrimSuffix(delegation, "}") + `,"call_id":null}]}`,
+			reason: "candidate_call_id_type",
+			index:  1,
+		},
+		{
+			name:   "candidate identified call",
+			body:   `{"input":[` + strings.TrimSuffix(delegation, "}") + `,"call_id":"call-1"}]}`,
+			reason: "candidate_call_id_nonempty",
+			index:  0,
+		},
+		{
+			name:    "candidate blank call ID",
+			body:    `{"input":[` + strings.TrimSuffix(delegation, "}") + `,"call_id":"  "}]}`,
+			reason:  "ready",
+			index:   -1,
+			changed: true,
+		},
+		{
+			name:   "reference lacks identity",
+			body:   `{"input":[` + delegation + `,{"type":"item_reference","id":" "}]}`,
+			reason: "item_reference_disallowed",
+			index:  1,
+		},
+		{
+			name:       "automation rejects identified reference",
+			body:       `{"input":[` + automation + `,{"type":"item_reference","id":"item-1"}]}`,
+			automation: true,
+			reason:     "item_reference_disallowed",
+			index:      1,
+		},
+		{
+			name:   "hosted search retains context rejection",
+			body:   `{"input":[` + delegation + `,` + hostedSearch + `]}`,
+			reason: "tool_history_disallowed",
+			index:  1,
+		},
+		{
+			name:   "first history blocker wins before candidate",
+			body:   `{"input":[` + userMessage + `,` + hostedSearch + `,` + strings.TrimSuffix(delegation, "}") + `,"call_id":null}]}`,
+			reason: "tool_history_disallowed",
+			index:  1,
+		},
+		{
+			name:       "automation rejects identified tool history",
+			body:       `{"input":[` + automation + `,{"type":"function_call_output","call_id":"call-1","output":"ok"}]}`,
+			automation: true,
+			reason:     "tool_history_disallowed",
+			index:      1,
+		},
+		{
+			name:    "delegation retains identified history",
+			body:    `{"input":[{"type":"function_call_output","call_id":"call-1","output":"ok"},` + delegation + `,{"type":"item_reference","id":"item-1"}]}`,
+			reason:  "ready",
+			index:   -1,
+			changed: true,
+		},
+		{
+			name:   "ready does not imply a bootstrap candidate",
+			body:   `{"input":[` + userMessage + `]}`,
+			reason: "ready",
+			index:  -1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var request map[string]any
+			require.NoError(t, json.Unmarshal([]byte(tt.body), &request))
+			original, err := json.Marshal(request)
+			require.NoError(t, err)
+			candidate := IsCodexDelegationCandidate
+			if tt.automation {
+				candidate = IsCodexAutomationCandidate
+			}
+			input, reason, index := inspectCodexBootstrapContext(request, candidate, !tt.automation)
+			require.Equal(t, tt.reason, reason)
+			require.Equal(t, tt.index, index)
+			if reason == "ready" {
+				require.Equal(t, request["input"], input)
+			} else {
+				require.Nil(t, input)
+			}
+			afterInspection, err := json.Marshal(request)
+			require.NoError(t, err)
+			require.Equal(t, original, afterInspection)
+
+			body := []byte(tt.body)
+			normalized, changed := NormalizeCodexCallOutputBootstrap(body, candidate, !tt.automation)
+			require.Equal(t, tt.changed, changed)
+			if !changed {
+				require.Equal(t, body, normalized)
+			}
+		})
+	}
+}

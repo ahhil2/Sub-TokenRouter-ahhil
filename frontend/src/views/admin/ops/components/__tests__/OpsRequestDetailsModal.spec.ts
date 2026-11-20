@@ -3,11 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 import OpsRequestDetailsModal from '../OpsRequestDetailsModal.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import { formatDateTime } from '../../utils/opsFormatters'
+import { setPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 // OpsRequestDetailsModal.spec.ts checks request-detail query intervals against
 // their displayed labels using a fixed clock. Mounted pagination and prop
 // changes exercise custom bounds, incomplete selections, and relative presets
-// through the real query builder.
+// through the real query builder. Fresh dialog openings and remounts also
+// verify that requests use the saved browser page size.
 
 // listRequestDetails captures query timestamps and pagination while supplying
 // controlled result counts to the mounted request dialog.
@@ -51,12 +53,72 @@ async function openModal(props: Record<string, unknown> = {}) {
 
 describe('请求明细时间窗口', () => {
   beforeEach(() => {
+    localStorage.clear()
+    delete window.__APP_CONFIG__
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(now))
     listRequestDetails.mockReset().mockResolvedValue({ items: [], total: 0 })
   })
 
-  afterEach(() => vi.useRealTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    localStorage.clear()
+    delete window.__APP_CONFIG__
+  })
+
+  // The saved browser preference exceeds the request-detail endpoint's page
+  // limit. Initial and reopened queries must use the supported maximum while
+  // retaining that larger preference for other tables.
+  it('bounds saved sizes to the request-detail API limit', async () => {
+    window.__APP_CONFIG__ = { table_page_size_options: [10, 20, 50, 100, 200] } as any
+    setPersistedPageSize(200)
+    listRequestDetails.mockResolvedValue({
+      items: [{ kind: 'success', created_at: start, request_id: 'test-request' }],
+      total: 300,
+    })
+    const wrapper = await openModal({ timeRange: '1h' })
+    expect(listRequestDetails).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, page_size: 100 }),
+    )
+    expect(wrapper.getComponent(Pagination).props('pageSizeOptions')).toEqual([10, 20, 30, 50, 100])
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    expect(listRequestDetails).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, page_size: 100 }),
+    )
+    expect(localStorage.getItem('table-page-size')).toBe('200')
+    wrapper.unmount()
+  })
+
+  // A saved thirty-row preference is present before the dialog opens. Fresh
+  // openings, changed dashboard filters, and a remounted dialog must all use
+  // that size in their first request.
+  it('restores the saved size on fresh openings and remounts', async () => {
+    setPersistedPageSize(30)
+    const wrapper = await openModal({ timeRange: '1h' })
+    expect(listRequestDetails).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, page_size: 30 }),
+    )
+    await wrapper.setProps({ platform: 'openai' })
+    await flushPromises()
+    expect(listRequestDetails).toHaveBeenLastCalledWith(
+      expect.objectContaining({ platform: 'openai', page_size: 30 }),
+    )
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    expect(listRequestDetails).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, page_size: 30 }),
+    )
+    wrapper.unmount()
+
+    const reopened = await openModal({ timeRange: '1h' })
+    expect(listRequestDetails).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, page_size: 30 }),
+    )
+    reopened.unmount()
+  })
 
   // A complete custom interval opens the request list and survives refresh and
   // pagination. The displayed label and every query must retain the supplied

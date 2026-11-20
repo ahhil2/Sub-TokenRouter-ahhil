@@ -3,33 +3,183 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// TestIsQueryTimeoutErr supplies direct and wrapped deadline and cancellation
-// errors. It protects recognition of deadline expiry alone, which controls
-// optional raw-query degradation in dashboard summaries.
+// ops_repo_dashboard_test.go protects dashboard fallback ownership, optional
+// measurement degradation, cancellation, and aggregate weighting. SQL mocks
+// distinguish attempted queries while context fixtures cover driver error
+// classification without waiting for a wall-clock deadline.
+
+// TestIsQueryTimeoutErr distinguishes local deadlines from parent cancellation
+// and unrelated SQL failures. PostgreSQL cancellation permits degradation only
+// when the optional query's own deadline has expired.
 func TestIsQueryTimeoutErr(t *testing.T) {
-	if !isQueryTimeoutErr(context.DeadlineExceeded) {
-		t.Fatalf("context.DeadlineExceeded should be treated as query timeout")
+	active := t.Context()
+	expired, cancelExpired := context.WithDeadline(active, time.Unix(1, 0))
+	defer cancelExpired()
+	canceled, cancel := context.WithCancel(active)
+	cancel()
+	databaseCancel := &pq.Error{Code: "57014", Message: "canceling statement due to user request"}
+	for _, tc := range []struct {
+		name   string          // error and context combination
+		parent context.Context // owning request lifetime
+		query  context.Context // optional query lifetime
+		err    error           // observed driver failure
+		want   bool            // whether partial results remain usable
+	}{
+		{"nil", active, active, nil, false},
+		{"deadline", active, active, context.DeadlineExceeded, true},
+		{"wrapped_deadline", active, active, fmt.Errorf("wrapped: %w", context.DeadlineExceeded), true},
+		{"pq_local_deadline", active, expired, databaseCancel, true},
+		{"pq_wrapped_local_deadline", active, expired, fmt.Errorf("wrapped: %w", databaseCancel), true},
+		{"pq_external_cancel", active, active, databaseCancel, false},
+		{"pq_child_cancel", active, canceled, databaseCancel, false},
+		{"parent_canceled", canceled, expired, databaseCancel, false},
+		{"parent_expired", expired, expired, context.DeadlineExceeded, false},
+		{"pq_parent_expired", expired, expired, databaseCancel, false},
+		{"canceled", active, canceled, context.Canceled, false},
+		{"wrapped_canceled", active, canceled, fmt.Errorf("wrapped: %w", context.Canceled), false},
+		{"other_sql_error", active, expired, &pq.Error{Code: "42703"}, false},
+		{"other_error", active, expired, errors.New("connection failed"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, isQueryTimeoutErr(tc.parent, tc.query, tc.err))
+		})
 	}
-	if !isQueryTimeoutErr(fmt.Errorf("wrapped: %w", context.DeadlineExceeded)) {
-		t.Fatalf("wrapped context.DeadlineExceeded should be treated as query timeout")
+}
+
+// TestDashboardOverviewAutoAttemptsRawOnce supplies a range without stable full
+// hours and a failing raw read. The original failure must survive without a
+// second attempt replacing it.
+func TestDashboardOverviewAutoAttemptsRawOnce(t *testing.T) {
+	db, mock := newSQLMock(t)
+	start := time.Date(2024, 1, 2, 10, 10, 0, 0, time.UTC)
+	queryErr := errors.New("raw query failed")
+	mock.ExpectQuery("SELECT .* AS success_count").WithArgs(start, start.Add(10*time.Minute)).WillReturnError(queryErr)
+
+	overview, err := NewOpsRepository(db).GetDashboardOverview(t.Context(), &ops.OpsDashboardFilter{
+		StartTime: start, EndTime: start.Add(10 * time.Minute), QueryMode: ops.OpsQueryModeAuto,
+	})
+
+	require.ErrorIs(t, err, queryErr)
+	require.Nil(t, overview)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestDashboardOverviewAutoHonorsParentCancellation prevents fallback when the
+// owning request has ended. No raw database work is expected for an already
+// canceled short-range request.
+func TestDashboardOverviewAutoHonorsParentCancellation(t *testing.T) {
+	db, mock := newSQLMock(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	start := time.Date(2024, 1, 2, 10, 10, 0, 0, time.UTC)
+	overview, err := NewOpsRepository(db).GetDashboardOverview(ctx, &ops.OpsDashboardFilter{
+		StartTime: start, EndTime: start.Add(10 * time.Minute), QueryMode: ops.OpsQueryModeAuto,
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, overview)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestDashboardOverviewOptionalTimeoutKeepsCounts supplies one failed optional
+// metric per request. Counts remain usable, missing latency stays absent, and
+// successfully observed zero rates never become estimates.
+func TestDashboardOverviewOptionalTimeoutKeepsCounts(t *testing.T) {
+	for _, mode := range []ops.OpsQueryMode{ops.OpsQueryModeRaw, ops.OpsQueryModeAuto} {
+		for _, latencyTimeout := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/latency_timeout_%t", mode, latencyTimeout), func(t *testing.T) {
+				db, mock := newSQLMock(t)
+				start := time.Date(2024, 1, 2, 10, 10, 0, 0, time.UTC)
+				end := start.Add(10 * time.Minute)
+				mock.ExpectQuery("SELECT .* AS success_count").WithArgs(start, end).
+					WillReturnRows(sqlmock.NewRows([]string{"count", "tokens"}).AddRow(600, 6000))
+				latency := mock.ExpectQuery("WITH samples AS MATERIALIZED").WithArgs(start, end)
+				if latencyTimeout {
+					latency.WillReturnError(context.DeadlineExceeded)
+				} else {
+					latency.WillReturnRows(sqlmock.NewRows([]string{
+						"d50", "d90", "d95", "d99", "davg", "dmax",
+						"t50", "t90", "t95", "t99", "tavg", "tmax", "samples",
+					}).AddRow(100, 100, 100, 100, 100, 100, 0, 0, 0, 0, 0, 0, 600))
+				}
+				mock.ExpectQuery("SELECT .*FROM ops_error_logs").WillReturnRows(dashboardEmptyErrorCounts())
+				mock.ExpectQuery("SELECT .* AS success_count").WithArgs(end.Add(-time.Minute), end).
+					WillReturnRows(sqlmock.NewRows([]string{"count", "tokens"}).AddRow(0, 0))
+				mock.ExpectQuery("SELECT .*FROM ops_error_logs").WillReturnRows(dashboardEmptyErrorCounts())
+				peak := mock.ExpectQuery("WITH usage_buckets AS").WithArgs(start, end, start, end)
+				if latencyTimeout {
+					peak.WillReturnRows(sqlmock.NewRows([]string{"requests", "tokens"}).AddRow(0, 0))
+				} else {
+					peak.WillReturnError(context.DeadlineExceeded)
+				}
+
+				overview, err := NewOpsRepository(db).GetDashboardOverview(t.Context(), &ops.OpsDashboardFilter{
+					StartTime: start, EndTime: end, QueryMode: mode,
+				})
+				require.NoError(t, err)
+				require.EqualValues(t, 600, overview.RequestCountTotal)
+				require.EqualValues(t, 6000, overview.TokenConsumed)
+				require.Equal(t, float64(1), overview.QPS.Avg)
+				require.Equal(t, float64(10), overview.TPS.Avg)
+				require.Zero(t, overview.QPS.Current)
+				require.Zero(t, overview.TPS.Current)
+				if latencyTimeout {
+					require.Equal(t, ops.OpsPercentiles{}, overview.Duration)
+					require.Equal(t, ops.OpsPercentiles{}, overview.TTFT)
+					require.Zero(t, overview.QPS.Peak)
+					require.Zero(t, overview.TPS.Peak)
+				} else {
+					require.Equal(t, intValuePtr(100), overview.Duration.P50)
+					require.Equal(t, intValuePtr(0), overview.TTFT.P50)
+					require.Equal(t, overview.QPS.Avg, overview.QPS.Peak)
+					require.Equal(t, overview.TPS.Avg, overview.TPS.Peak)
+				}
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
+		}
 	}
-	if isQueryTimeoutErr(context.Canceled) {
-		t.Fatalf("context.Canceled should not be treated as query timeout")
-	}
-	if isQueryTimeoutErr(fmt.Errorf("wrapped: %w", context.Canceled)) {
-		t.Fatalf("wrapped context.Canceled should not be treated as query timeout")
-	}
+}
+
+// dashboardEmptyErrorCounts supplies all six zero-valued error classification
+// counters for independent count queries.
+func dashboardEmptyErrorCounts() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"total", "limited", "sla", "upstream", "429", "529"}).AddRow(0, 0, 0, 0, 0, 0)
+}
+
+// TestDashboardRawFragmentTimeoutKeepsCounts protects automatic-mode tail
+// aggregation after an optional latency deadline. Missing TTFT observations
+// carry zero weight while usage and error totals remain available.
+func TestDashboardRawFragmentTimeoutKeepsCounts(t *testing.T) {
+	db, mock := newSQLMock(t)
+	start := time.Date(2024, 1, 2, 10, 10, 0, 0, time.UTC)
+	end := start.Add(10 * time.Minute)
+	mock.ExpectQuery("SELECT .* AS success_count").WithArgs(start, end).
+		WillReturnRows(sqlmock.NewRows([]string{"count", "tokens"}).AddRow(600, 6000))
+	mock.ExpectQuery("WITH samples AS MATERIALIZED").WithArgs(start, end).
+		WillReturnError(context.DeadlineExceeded)
+	mock.ExpectQuery("SELECT .*FROM ops_error_logs").WillReturnRows(dashboardEmptyErrorCounts())
+
+	partial, err := NewOpsRepository(db).queryRawPartial(t.Context(), &ops.OpsDashboardFilter{}, start, end)
+
+	require.NoError(t, err)
+	require.EqualValues(t, 600, partial.successCount)
+	require.EqualValues(t, 6000, partial.tokenConsumed)
+	require.Zero(t, partial.ttftSampleCount)
+	require.Equal(t, ops.OpsPercentiles{}, partial.duration)
+	require.Equal(t, ops.OpsPercentiles{}, partial.ttft)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 // TestAggregateHourlyRowsWeightsTTFTBySampleCount supplies hours with opposite

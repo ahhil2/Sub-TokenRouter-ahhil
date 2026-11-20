@@ -271,6 +271,7 @@ import type { GroupRPMOverrideEntry } from '@/api/admin/groups'
 import type { AdminGroup } from '@/api/groups.types'
 import type { AdminUser } from '@/api/admin/users.types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
 
@@ -321,9 +322,9 @@ const newRpm = ref<number | null>(null)
 // currentPage and pageSize describe the local draft window displayed by the override table and
 // pagination controls.
 const currentPage = ref(1)
-// pageSize sets the number of visible rows and participates in the current page calculation for
-// pagination.
-const pageSize = ref(10)
+// pageSize restores the browser preference for slicing the editable RPM override rows
+// when this dialog is mounted again.
+const pageSize = ref(getPersistedPageSize())
 
 // searchTimeout owns the pending search debounce timer, which a subsequent input clears before
 // scheduling another query.

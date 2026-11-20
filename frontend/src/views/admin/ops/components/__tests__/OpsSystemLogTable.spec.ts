@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import OpsSystemLogTable from '../OpsSystemLogTable.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
 
@@ -102,10 +103,16 @@ const sinkHealth = {
 describe('OpsSystemLogTable host support', () => {
   // Restore browser and console spies after each case so a failed request does
   // not suppress diagnostics or carry confirmation behavior into later fixtures.
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    localStorage.clear()
+    delete window.__APP_CONFIG__
+  })
 
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
+    delete window.__APP_CONFIG__
     testLanguage = 'en'
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     mockListSystemLogs.mockResolvedValue({
@@ -128,6 +135,31 @@ describe('OpsSystemLogTable host support', () => {
     mockGetRuntimeLogConfig.mockResolvedValue(runtimeConfig)
     mockUpdateRuntimeLogConfig.mockResolvedValue(runtimeConfig)
     mockResetRuntimeLogConfig.mockResolvedValue(runtimeConfig)
+  })
+
+  // Another list stores one thousand rows while configured choices include
+  // sizes above the log endpoint's maximum. Initial requests and displayed
+  // choices must use the largest supported option without rewriting storage.
+  it.each([
+    [[200, 1000], 200],
+    [[1000], 100],
+  ] as const)('bounds saved sizes against supported choices %j', async (options, expected) => {
+    window.__APP_CONFIG__ = { table_page_size_options: options } as any
+    localStorage.setItem('table-page-size', '1000')
+    const wrapper = mount(OpsSystemLogTable, {
+      global: { stubs: { Select: SelectStub, Pagination: true } },
+    })
+    await flushPromises()
+
+    expect(mockListSystemLogs).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, page_size: expected }),
+    )
+    const pagination = wrapper.getComponent(Pagination)
+    expect(pagination.props('pageSize')).toBe(expected)
+    expect(pagination.props('pageSizeOptions')).toContain(expected)
+    expect(pagination.props('pageSizeOptions')).not.toContain(1000)
+    expect(localStorage.getItem('table-page-size')).toBe('1000')
+    wrapper.unmount()
   })
 
   // List, save, and reset requests fail without a server display message.

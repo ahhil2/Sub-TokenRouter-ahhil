@@ -456,7 +456,10 @@ const exporting = ref(false)
 const errorRows = ref<UserErrorRequest[]>([])
 const errorLoading = ref(false)
 const errorPage = ref(1)
-const errorPageSize = ref(20)
+// errorPageSize restores the browser choice within the user error endpoint limit.
+// Larger preferences from administrator tables use one hundred rows so the pager
+// agrees with the number of records returned for each error page.
+const errorPageSize = ref(Math.min(getPersistedPageSize(), 100))
 const errorSortBy = ref('created_at')
 const errorSortOrder = ref<'asc' | 'desc'>('desc')
 const errorTotal = ref(0)

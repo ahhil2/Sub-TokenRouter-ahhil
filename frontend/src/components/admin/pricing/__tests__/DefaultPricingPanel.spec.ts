@@ -1,12 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import DefaultPricingPanel from '../DefaultPricingPanel.vue'
 import { listDefaultPricing, updateDefaultPricing } from '@/api/admin/pricing'
+import Pagination from '@/components/common/Pagination.vue'
+import Select from '@/components/common/Select.vue'
 
-// DefaultPricingPanel.spec.ts checks catalog price dimensions, paging cancellation, filtering,
-// and explicit catalog updates. Mounted components or pure helper calls exercise the real
-// owning implementation, while controlled API and display dependencies expose the observable
-// updates asserted by each scenario.
+// DefaultPricingPanel.spec.ts checks catalog price dimensions, saved pagination,
+// cancellation, filtering, and catalog updates. Mounted components or pure helper
+// calls exercise the owning implementation, while controlled API and display
+// dependencies expose the observable updates asserted by each scenario.
 
 vi.mock('@/api/admin/pricing', () => ({
   listDefaultPricing: vi.fn(),
@@ -38,6 +40,48 @@ const stubs = {
 
 describe('默认价格查询', () => {
   beforeEach(() => vi.resetAllMocks())
+  afterEach(() => {
+    localStorage.removeItem('table-page-size')
+    localStorage.removeItem('table-page-size-source')
+    delete window.__APP_CONFIG__
+  })
+
+  // A reader selects thirty rows while the site default remains fifty. Remounting the
+  // catalog must request thirty rows immediately and show that same selection in its pager.
+  it('restores the selected page size before requesting catalog rows after remount', async () => {
+    window.__APP_CONFIG__ = {
+      table_default_page_size: 50,
+      table_page_size_options: [10, 20, 50],
+    } as any
+    vi.mocked(listDefaultPricing).mockResolvedValue({ total: 100, items: [], last_updated: '' })
+    const options = { global: { stubs: { ...stubs, Pagination: false } } }
+    const wrapper = mount(DefaultPricingPanel, options)
+    await flushPromises()
+    expect(vi.mocked(listDefaultPricing).mock.lastCall?.[0]).toMatchObject({
+      page: 1,
+      page_size: 50,
+    })
+
+    wrapper.findComponent(Pagination).findComponent(Select).vm.$emit('update:modelValue', 30)
+    await flushPromises()
+    expect(vi.mocked(listDefaultPricing).mock.lastCall?.[0]).toMatchObject({
+      page: 1,
+      page_size: 30,
+    })
+    wrapper.unmount()
+    vi.mocked(listDefaultPricing).mockClear()
+
+    const remounted = mount(DefaultPricingPanel, options)
+    await flushPromises()
+    expect(listDefaultPricing).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(listDefaultPricing).mock.lastCall?.[0]).toMatchObject({
+      page: 1,
+      page_size: 30,
+    })
+    expect(remounted.findComponent(Pagination).props('pageSize')).toBe(30)
+    remounted.unmount()
+  })
+
   // Catalog prices include zero and an absent amount. The table distinguishes free pricing from
   // unavailable pricing, and detail rows retain their reported price units.
   it('区分零价和未定价，详情保留价格单位', async () => {

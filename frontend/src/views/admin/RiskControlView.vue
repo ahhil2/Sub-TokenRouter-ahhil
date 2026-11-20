@@ -906,6 +906,7 @@
             :page="pagination.page"
             :total="pagination.total"
             :page-size="pagination.page_size"
+            :page-size-options="pageSizeOptions"
             @update:page="onPageChange"
             @update:pageSize="onPageSizeChange"
           />
@@ -2570,6 +2571,8 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { getConfiguredTablePageSizeOptions } from '@/utils/tablePreferences'
 import Pagination from '@/components/common/Pagination.vue'
 import ModelWhitelistSelector from '@/components/provider/ModelWhitelistSelector.vue'
 import ProxySelector from '@/components/admin/proxy/ProxySelector.vue'
@@ -2734,11 +2737,17 @@ let statusTimer: number | null = null
 // configuration load or save.
 const configForm = reactive(createRiskControlDraft())
 
+// pageSizeOptions follows the one-hundred-row API limit shared by moderation logs
+// and cyber warnings, so both tabs offer only lengths their endpoints return.
+const pageSizeOptions = getConfiguredTablePageSizeOptions().filter((size) => size <= 100)
+
 // Both record tabs use these pagination values; switching tabs resets the page while
 // retaining its selected size.
 const pagination = reactive({
   page: 1, // Current one-based page number.
-  page_size: 20, // Requested rows per page.
+  // Larger saved choices use the endpoint maximum so record counts and page
+  // navigation stay consistent with the server response after reload.
+  page_size: Math.min(getPersistedPageSize(), Math.max(...pageSizeOptions)), // Requested rows per page.
   total: 0, // Matching record total count.
   pages: 1, // Server-reported page count.
 })

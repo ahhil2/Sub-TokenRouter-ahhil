@@ -288,11 +288,20 @@ Responses Lite 由 HTTP 的 `X-OpenAI-Internal-Codex-Responses-Lite: true`，或
 
 OpenAI OAuth 提供商处理 Anthropic 的 `count_tokens` 时，调用 Responses 的 `input_tokens` 端点。缺少 scope、端点不存在，或者上游代理在 API 之前返回 HTML 格式的 `403` 时，网关改用本地的 token 估算并返回成功。这类端点级的失败不会冷却、临时踢出或标错提供商；其他结构化的鉴权和上游错误，按正常的健康策略处理。
 
+<a id="openai_tool_identity"></a>
 ### namespace 和工具 ID
 
 工具结果的关联检查区分客户端执行结果和服务端工具搜索历史。`tool_search_output` 明确带有 `execution: "server"` 时，`call_id` 可以为 null 或省略，不参与客户端调用 ID 的缺失检查和上下文覆盖计算。`execution` 为 `client`、缺省或其他值时，继续校验调用 ID；普通 `function_call_output`、`custom_tool_call_output` 和 `mcp_tool_call_output` 也需要调用关联。WebSocket 续接与跨供应商恢复所用的共享续接信号及上下文覆盖检查也遵循此规则。
 
 HTTP 入口仅在 `input` 包含 `function_call_output` 时执行这项预校验。请求带有非空 `previous_response_id` 或内联工具调用上下文时，由后续上游处理继续验证历史。其余独立客户端工具结果需要非空 `call_id`，以及覆盖各调用 ID 的 `item_reference`。错误响应使用 HTTP 400 和 `invalid_request_error`，分别说明缺失调用 ID 或上下文。服务端工具搜索结果不为其他客户端结果提供调用关联。
+
+仅在缺少 `call_id` 而被预校验拒绝时，`openai.request_validation_failed` 的 WARN 日志附加 `tool_output_diagnostic` 对象，`reason` 为 `function_call_output_missing_call_id`。诊断值限定为固定枚举、布尔、计数和输入索引，提示词、工具参数与结果正文、调用 ID 和响应 ID 的值均不写入其中。诊断用于解释这次 HTTP 400；请求准入仍按上述关联条件判断，兼容转换继续由对应的改写规则处理。
+
+`body_stage=tool_output_validation` 表示诊断读取工具结果校验阶段的正文。对象中的 bootstrap 信息是在失败时，对这份正文按 bootstrap 识别规则重新检查的结果，说明当前正文满足哪些条件、在哪个条件被阻止。前序归一化步骤是否实际执行，以及当时为何跳过，需要结合该步骤的执行证据判断，不能从这次正文复核中还原。
+
+逐项摘要最多保留 32 个工具相关输入项，优先保留缺少调用 ID 的项。工具项总数、缺少调用 ID 的结果数和服务端搜索项数统计整个输入数组，`items_omitted` 记录未进入逐项摘要的工具项数量。分析较长历史时，先查看汇总计数和省略数量，再按摘要中的输入索引定位，不能把这 32 项当作完整的输入历史。
+
+管理员可通过 `GET /api/v1/admin/ops/system-logs`，按时间范围、`request_id` 和 `level=warn` 查询，在返回记录的 `extra.tool_output_diagnostic` 中读取诊断。关键词参数 `q` 可用 `function_call_output_missing_call_id` 或 `tool_output_diagnostic`；进程 JSON 日志也包含该对象。系统日志页面的关键词查询可以找到记录，行详情只展示选定的标量字段，嵌套诊断需要从 API 响应或进程 JSON 日志查看。日志采样、异步写入和留存规则见[可观测性与数据生命周期](../operations/observability_and_data_lifecycle.md#关联与脱敏)。
 
 OpenAI OAuth 和 API Key 的普通 Responses 请求保留 `function_call`、`tool_call`、`custom_tool_call`、`mcp_tool_call` 历史项上的 `namespace`。工具可以在顶层 `tools`、历史的 `additional_tools.tools` 或 `tool_search_output.tools` 中声明，也可以由上游会话保存；本轮省略声明不影响已经执行的调用身份。普通消息等非调用项上残留的这个字段会被清理，转义的 JSON 键名使用同一规则。旧版 Compact 的字段白名单、namespace 清理和 OAuth 工具平铺仍由对应端点规则决定。
 

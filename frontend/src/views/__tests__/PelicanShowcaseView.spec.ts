@@ -35,7 +35,9 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
-const items = Array.from({ length: 8 }, (_, index) => ({
+// Published result fixtures exceed the animation budget so card rendering and
+// active preview selection can be checked independently against the same response.
+const items = Array.from({ length: 10 }, (_, index) => ({
   id: index + 1,
   group_id: 1,
   group_name: '演示分组',
@@ -80,6 +82,8 @@ beforeEach(() => {
 })
 
 describe('pelican gallery', () => {
+  // All ten result cards remain available even when some previews are inactive.
+  // The server prompt stays collapsed and desktop cards retain their four-column layout.
   it('shows the server prompt in a collapsed section and uses a four-column desktop grid', async () => {
     const wrapper = mount(PelicanShowcaseView, { global })
     await flushPromises()
@@ -90,19 +94,21 @@ describe('pelican gallery', () => {
     expect(grid.classes()).toEqual(
       expect.arrayContaining(['grid-cols-1', 'sm:grid-cols-2', 'xl:grid-cols-4']),
     )
-    expect(grid.findAll('article')).toHaveLength(8)
+    expect(grid.findAll('article')).toHaveLength(10)
   })
 
-  it('keeps at most six active animations including an expanded preview', async () => {
+  // Ten visible results exceed the shared animation budget. Opening a preview
+  // reserves one slot, and offscreen cards release their animations as visibility changes.
+  it('keeps at most eight active animations including an expanded preview', async () => {
     const wrapper = mount(PelicanShowcaseView, { global })
     await flushPromises()
     const cards = wrapper.findAllComponents({ name: 'PelicanCard' })
     for (const card of cards) card.vm.$emit('visible', card.props('item').id, true)
     await flushPromises()
-    expect(cards.filter((card) => card.props('active'))).toHaveLength(6)
+    expect(cards.filter((card) => card.props('active'))).toHaveLength(8)
     cards[0].vm.$emit('open', items[0])
     await flushPromises()
-    expect(cards.filter((card) => card.props('active'))).toHaveLength(5)
+    expect(cards.filter((card) => card.props('active'))).toHaveLength(7)
     expect(wrapper.findComponent({ name: 'PelicanPreview' }).exists()).toBe(true)
     cards[0].vm.$emit('visible', 1, false)
     await flushPromises()

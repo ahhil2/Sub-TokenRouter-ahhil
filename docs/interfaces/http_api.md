@@ -353,6 +353,8 @@ app 为所有需要幂等的用户和管理员 HTTP 处理器绑定同一个协�
 
 业务错误由 `ApplicationError` 映射成 HTTP status，可以带 `reason` 和字符串 `metadata`。未知错误按 500 处理，详情脱敏后只记在服务端。分页数据使用 `items`、`total`、`page`、`page_size` 和 `pages`；创建和异步接受分别可以返回 201 和 202。
 
+浏览器共享客户端默认等待 30 秒。未收到 HTTP 响应时，超时使用 `status: 0`、`code/reason: REQUEST_TIMEOUT` 和超时提示；连接失败使用 `reason: NETWORK_ERROR` 并保留传输错误码。两类错误都保留请求路径，用户主动取消的请求保留 Axios 取消类型，页面可据此忽略中断。
+
 错误实体只在 `pkg/apperror` 定义，HTTP 映射和面板 envelope 在 `server/httpx`。使用方直接使用具名的错误类别，code 数值、字段、`errors.Is/As`、cause 和 metadata 的复制方式都保持兼容；自定义状态码按原值映射。
 
 使用记录的性能观测唯一保存在 `usage_logs.timings`。普通用量接口返回由该行派生的 `ttft_ms`、`tps` 和 `ttft_mode`；管理员接口另返回 `detailed_timing`。请求详情按已有请求 ID 批量关联 usage，分别展示每条 usage 的指标，不把这些指标再写回请求摘要，也不从 Ops 日志补值。历史 usage 没有新快照时显示未记录。

@@ -40,8 +40,8 @@ interface TableLoaderOptions<T, P> {
   // initialParams is shallow-copied at construction; nested values remain shared with the
   // supplied object and its owners.
   initialParams?: P // initial shallow-copied filter values
-  // pageSize overrides the configured runtime default for this table instance when it is
-  // supplied, including zero.
+  // pageSize overrides the saved browser preference and configured default for this
+  // table instance when it is supplied, including zero.
   pageSize?: number // initial rows per page
   // debounceMs controls delayed reload dispatch in milliseconds and defaults to
   // SEARCH_DEBOUNCE_MS when omitted from the options.
@@ -50,7 +50,8 @@ interface TableLoaderOptions<T, P> {
 
 // useTableLoader creates rows, filters, pagination, and loading actions for a component.
 // Invoke it during setup so unmount stops future fetching and aborts the current request.
-// Initial filters are shallow-copied and page size defaults to runtime table preferences.
+// Initial filters are shallow-copied and page size restores the browser preference,
+// using the configured default when no supported saved size is available.
 //
 // Each accepted load replaces the controller before awaiting results. The request signal
 // guards result publication, while controller identity guards loading completion. Debounced
@@ -157,8 +158,8 @@ export function useTableLoader<T, P extends Record<string, any>>(
   }
 
   // handlePageSizeChange applies a new page size, resets to page one, and starts loading.
-  // It invokes the compatibility preference setter before loading and returns before the
-  // fetch promise settles.
+  // It saves the browser preference before loading and returns before the fetch promise
+  // settles, allowing later table instances to restore the selected length.
   const handlePageSizeChange = (size: number) => {
     pagination.page_size = size
     pagination.page = 1

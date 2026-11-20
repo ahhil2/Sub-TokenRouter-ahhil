@@ -150,6 +150,7 @@ import { extractI18nErrorMessage } from '@/utils/apiError'
 import type { PaymentOrder } from '@/api/payment.types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -191,9 +192,9 @@ const currentFilter = ref('')
 const cancelTargetId = ref<number | null>(null)
 const refundTarget = ref<PaymentOrder | null>(null)
 const refundReason = ref('')
-// pagination retains the requested page size and backend total for the shared
-// pager; changing page size restarts the table at its first page.
-const pagination = reactive({ page: 1, page_size: 20, total: 0 })
+// pagination restores the browser page-size preference and retains the backend total.
+// Changing the size through the shared pager restarts the order list at page one.
+const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
 
 // statusFilters rebuilds translated status choices without changing their API
 // values; the empty selection omits the status constraint from list requests.

@@ -17,7 +17,8 @@ import { getAPIBaseURL } from './url'
  * session, locale, timezone and timing metadata. Successful envelope responses
  * expose their data payload, while business and HTTP failures become the error
  * objects consumed by views. Cancellation errors retain their Axios identity so
- * callers can suppress interrupted requests.
+ * callers can suppress interrupted requests. Timeouts have a separate reason
+ * and message from connection failures, and transport errors retain their path.
  *
  * A GET that completes after a locale switch is replayed through the request
  * interceptor before its result is delivered. A first unauthorized response can
@@ -332,10 +333,16 @@ apiClient.interceptors.response.use(
       })
     }
 
-    // Network error
+    // Axios rejects both timeouts and connection failures without a response;
+    // distinguish them so slow queries do not tell users their connection failed.
+    const timedOut = error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'
+    const reason = timedOut ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR'
     return Promise.reject({
       status: 0,
-      message: localizedErrorMessage('NETWORK_ERROR', 0),
+      code: timedOut ? reason : error.code || reason,
+      reason,
+      message: localizedErrorMessage(reason, 0),
+      url: String(error.config?.url || ''),
     })
   },
 )
