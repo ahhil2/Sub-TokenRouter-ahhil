@@ -180,6 +180,9 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 	notificationActor, hasNotificationActor := authctx.GetPrincipal(c)
 	notificationsEnabled := hasNotificationActor && notificationActor.CredentialKind == "api_key" && notificationActor.UserID > 0 &&
 		(h.options.CodexClientNotifications || slices.Contains(h.options.CodexClientNotificationUserIDs, notificationActor.UserID))
+	// Carry the selected policy into admission diagnostics so a missing-call-ID
+	// failure can distinguish disabled compatibility from an unsupported event shape.
+	reqLog = reqLog.With(zap.Bool("codex_client_notifications_enabled", notificationsEnabled))
 	if notificationsEnabled {
 		normalizedBody, count, normalizeErr := requeststate.NormalizeCodexClientNotifications(body, h.options.MaxBodyBytes)
 		if normalizeErr != nil {
@@ -201,6 +204,7 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 			)
 		}
 	}
+	reqLog = reqLog.With(zap.Int("codex_client_notifications_converted", notificationCount))
 	// Legacy automation accepts a broader bootstrap format. Selected callers use
 	// the notification rules above so a declined item cannot become user input
 	// after another notification has removed a blocker from the tool history.

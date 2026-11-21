@@ -241,13 +241,18 @@ gateway:
   #
   # 注意：开启后会影响所有客户端的行为（不仅限于 VS Code / Codex CLI），请谨慎开启。
   force_codex_cli: false
-  # Convert the two supported Codex notifications for all authenticated API-key
-  # callers on HTTP Responses, compact, input_tokens and WebSocket Responses.
-  # Changes require a process restart.
+  # Convert exact Codex event names for authenticated API-key callers on HTTP
+  # Responses, compact, input_tokens and WebSocket Responses: codex_app.automation_update,
+  # agent.goal_objective, agent.codex_apps_open_page, and
+  # agent.codex_apps_selected_page_part_1_of_1. Unknown page fragments do not match.
+  # Events require the five string fields type/id/namespace/name/output, with
+  # only optional internal_chat_message_metadata_passthrough; call_id must be absent.
+  # Disabled by default, including after upgrades. Changes require a process restart.
   # Environment form: GATEWAY_CODEX_CLIENT_NOTIFICATIONS=true.
   codex_client_notifications: false
   # Select acting users for a limited rollout when the global switch is false.
   # Accepts positive integer IDs; environment form: GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS=101,102.
+  # The principal identifies the caller; client events remain unverified data.
   # Records become assistant history data and grant no additional permissions.
   # To disable conversion, set the global switch to false and leave this list empty.
   codex_client_notification_user_ids: []

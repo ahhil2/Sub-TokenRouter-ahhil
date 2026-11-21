@@ -53,11 +53,15 @@
 
 网关的静态参数（请求体大小、等待、切换上限和完成执行器参数），由 app 整理成单独的 Options 传给网关，核心代码不接收完整的 Config。HTTP 请求、平台尝试和完成队列使用同一个应用依赖图。用户提示词替换和错误规则，按各自的设置来源和生效时机读取，运行状态分别由 `gateway/promptpolicy` 和 `gateway/errorpolicy` 持有。错误规则的管理写入、回源和发布只在单个服务进程内协调，多个实例之间的一致性靠各自回源。
 
-`gateway.codex_client_notifications` 为全部已认证 API Key 调用者开启 HTTP Responses、压缩与输入计数接口，以及 WebSocket Responses 的客户端通知转换，默认 `false`，环境变量为 `GATEWAY_CODEX_CLIENT_NOTIFICATIONS`。设为 `true` 时，所有用户都使用这项兼容处理；设为 `false` 时，按 `gateway.codex_client_notification_user_ids` 名单选择用户。两个设置都在进程启动时读取，修改后需要重启，每个实例分别读取自己的配置。
+`gateway.codex_client_notifications` 为全部已认证 API Key 调用者开启 HTTP Responses、压缩与输入计数接口，以及 WebSocket Responses 的客户端通知转换，默认 `false`，环境变量为 `GATEWAY_CODEX_CLIENT_NOTIFICATIONS`。设为 `true` 时，所有用户都使用这项兼容处理；设为 `false` 时，按 `gateway.codex_client_notification_user_ids` 名单选择用户。升级程序不会自动启用转换。两个设置都在进程启动时读取，修改后需要重启，每个实例分别读取自己的配置。
+
+Compose 的 `.env` 用于解析编排变量，应用容器通过服务的 `environment` 或 `env_file` 接收配置。仓库的五份 Compose 模板均把这两个通知变量作为可选环境项传入；变量未设置时，由挂载的 YAML 或程序默认值决定。`.env.example` 中的通知变量是注释示例，按需取消注释。已有部署需在自己的 Compose 应用服务中补齐对应环境项；修改 `.env` 或 `environment` 后需重建应用容器，`docker compose restart` 会沿用创建容器时的环境。
 
 用户名单默认 `[]`，YAML 使用正整数列表，环境变量 `GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS` 使用逗号分隔的 ID，例如 `101,102`；空环境变量会清空 YAML 中的名单。零、负数、浮点数、布尔值或超出 int64 范围的项会使启动失败。关闭所有用户的兼容转换需要同时将全局开关设为 `false`、名单设为空，并核对环境变量是否覆盖文件配置。
 
-全局开关和名单均要求 `authctx.GetPrincipal` 返回有效的 API Key 操作者，团队凭据按成员身份判断。缺少这份鉴权记录时不启用转换；付款账户 `AuthSubject.UserID` 与 Key 所有者不参与名单匹配。启用后，Responses 入口把符合限定字段格式的 `codex_app.automation_update` 和 `agent.goal_objective` 完整记录封装为 `role=assistant` 历史消息，标注它是客户端提供的事件数据。通知内容不能增加执行或审批权限，用户授权继续由既有鉴权和权限检查决定。具体转换条件见 [OpenAI 上游](openai_upstream.md)。
+全局开关和名单均要求 `authctx.GetPrincipal` 返回有效的 API Key 操作者，团队凭据按成员身份判断。缺少这份鉴权记录时不启用转换；付款账户 `AuthSubject.UserID` 与 Key 所有者不参与名单匹配。启用后，Responses 入口把符合限定字段格式的 `codex_app.automation_update`、`agent.goal_objective`、`agent.codex_apps_open_page` 和 `agent.codex_apps_selected_page_part_1_of_1` 完整记录封装为 `role=assistant` 历史消息，标注它是客户端提供的事件数据。名称按这四项精确匹配，未知分页或分片名称不按前缀放行。已认证 principal 说明调用者身份，不能证明事件来自可信调度器或页面来源；通知内容不能增加执行或审批权限。具体字段条件和诊断方式见 [OpenAI 上游](openai_upstream.md#openai_tool_identity)。
+
+确认转换生效时，按同一请求检查 `openai.codex_client_notifications_normalized` 日志及其 `notification_count`。HTTP 400 工具结果校验日志还提供 `codex_client_notifications_enabled` 和 `codex_client_notifications_converted`，分别表示本请求的操作者是否被选中、已经转换的项目数。混合历史中的内联调用或 `previous_response_id` 会影响入口校验是否放行，因此混合请求成功或返回 200 不能证明通知转换已启用。
 
 时区的优先级：标准的 `TZ`、兼容的 `TIMEZONE`、配置文件、默认值 `Asia/Shanghai`。`TZ` 非空时覆盖 `TIMEZONE`，容器运行时、应用的本地日统计和 PostgreSQL 连接的时区因此保持一致；无效的 IANA 名称在启动校验时失败。
 

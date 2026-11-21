@@ -634,61 +634,78 @@ func TestOpenAITokensNativeHTTPContracts(t *testing.T) {
 	}
 }
 
-// TestOpenAITokensNotificationRepresentation sends Codex event history through
-// input_tokens.go and the actual token attempt loop. Counting must receive the
-// configured notification representation, and expansion limits stop selection.
+// TestOpenAITokensNotificationRepresentation sends goal and page events through
+// input_tokens.go and the actual token attempt loop. Counting retains complete
+// event data and metadata in the configured representation, while expansion
+// limits stop funding and provider selection.
 func TestOpenAITokensNotificationRepresentation(t *testing.T) {
-	const notice = `{"type":"function_call_output","id":"fco_00000000000000000000000000000001","namespace":"agent","name":"goal_objective","output":"GOAL-counting"}`
-	body := `{"model":"client-model","input":[` + notice + `]}`
-	for _, test := range []struct {
-		name      string  // counting configuration scenario
-		global    bool    // site-wide notification switch
-		users     []int64 // selected authenticated actors
-		principal bool    // trusted authentication context supplied
-		limit     int64   // normalized request size limit
-		converted bool    // expected event representation
-		tooLarge  bool    // expected expansion rejection
+	// Page fixtures combine escaped text with integers beyond float precision,
+	// making lost fields and numeric reencoding visible in complete event comparisons.
+	for _, notice := range []struct {
+		name  string // readable notification kind
+		event string // complete encoded notification data
 	}{
-		{name: "disabled", principal: true},
-		{name: "all users", global: true, principal: true, converted: true},
-		{name: "selected user", users: []int64{7}, principal: true, converted: true},
-		{name: "different user", users: []int64{40}, principal: true},
-		{name: "missing authentication context", global: true},
-		{name: "expanded body limit", global: true, principal: true, limit: int64(len(body)), tooLarge: true},
+		{name: "goal", event: `{"type":"function_call_output","id":"fco_00000000000000000000000000000001","namespace":"agent","name":"goal_objective","output":"GOAL-counting"}`},
+		{name: "open page", event: `{"type":"function_call_output","id":"fco_00000000000000000000000000000002","namespace":"agent","name":"codex_apps_open_page","output":"<page url=\"https://example.invalid/doc?a=1&b=2\">中文页面</page>","internal_chat_message_metadata_passthrough":{"sequence":9007199254740993,"page":{"title":"页面标题","active":true}}}`},
+		{name: "selected page part", event: `{"type":"function_call_output","id":"fco_00000000000000000000000000000003","namespace":"agent","name":"codex_apps_selected_page_part_1_of_1","output":"Selected text: \"引用\"\n<content>& data","internal_chat_message_metadata_passthrough":{"sequence":9007199254740995,"selection":{"start":0,"end":17},"tags":["中文",null]}}`},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			fixture := &tokenExecutionContract{t: t}
-			handler := NewOpenAITokensHandler(OpenAITokenOptions{
-				MaxSwitches: 2, MaxBodyBytes: test.limit,
-				CodexClientNotifications: test.global, CodexClientNotificationUserIDs: test.users,
-			}, OpenAITokenPorts{Execution: fixture, Funding: fixture}, fixture)
-			writer := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(writer)
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/input_tokens", strings.NewReader(body))
-			group := int64(7)
-			c.Set(string(keyhttp.ContextKeyAPIKey), &apikey.APIKey{ID: 9, UserID: 7, GroupID: &group, Group: &routing.Group{
-				ID: group, AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolOpenAIResponses},
-			}})
-			c.Set(authctx.ContextKeyUser, authctx.AuthSubject{UserID: 7})
-			if test.principal {
-				authctx.SetAuthenticatedPrincipal(c, identity.Principal{UserID: 7, CredentialKind: "api_key"})
-			}
-			handler.ResponsesInputTokens(c)
-			if test.tooLarge {
-				require.Equal(t, http.StatusRequestEntityTooLarge, writer.Code)
-				require.Zero(t, fixture.selections)
-				return
-			}
-			require.Equal(t, http.StatusOK, writer.Code)
-			require.JSONEq(t, `{"input_tokens":17}`, writer.Body.String())
-			item := gjson.Get(fixture.countBody, "input.0")
-			if test.converted {
-				require.Equal(t, "assistant", item.Get("role").String())
-				_, enclosed, found := strings.Cut(item.Get("content").String(), "Original event as JSON:\n")
-				require.True(t, found)
-				require.Equal(t, notice, enclosed)
-			} else {
-				require.JSONEq(t, notice, item.Raw)
+		t.Run(notice.name, func(t *testing.T) {
+			body := `{"model":"client-model","input":[` + notice.event + `]}`
+			for _, test := range []struct {
+				name      string  // counting configuration scenario
+				global    bool    // site-wide notification switch
+				users     []int64 // selected authenticated actors
+				principal bool    // trusted authentication context supplied
+				limit     int64   // normalized request size limit
+				converted bool    // expected event representation
+				tooLarge  bool    // expected expansion rejection
+			}{
+				{name: "disabled", principal: true},
+				{name: "all users", global: true, principal: true, converted: true},
+				{name: "selected user", users: []int64{7}, principal: true, converted: true},
+				{name: "different user", users: []int64{40}, principal: true},
+				{name: "missing authentication context", global: true},
+				{name: "expanded body limit", global: true, principal: true, limit: int64(len(body)), tooLarge: true},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					fixture := &tokenExecutionContract{t: t}
+					handler := NewOpenAITokensHandler(OpenAITokenOptions{
+						MaxSwitches: 2, MaxBodyBytes: test.limit,
+						CodexClientNotifications: test.global, CodexClientNotificationUserIDs: test.users,
+					}, OpenAITokenPorts{Execution: fixture, Funding: fixture}, fixture)
+					writer := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(writer)
+					c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/input_tokens", strings.NewReader(body))
+					group := int64(7)
+					c.Set(string(keyhttp.ContextKeyAPIKey), &apikey.APIKey{ID: 9, UserID: 7, GroupID: &group, Group: &routing.Group{
+						ID: group, AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolOpenAIResponses},
+					}})
+					c.Set(authctx.ContextKeyUser, authctx.AuthSubject{UserID: 7})
+					if test.principal {
+						authctx.SetAuthenticatedPrincipal(c, identity.Principal{UserID: 7, CredentialKind: "api_key"})
+					}
+					handler.ResponsesInputTokens(c)
+					if test.tooLarge {
+						require.Equal(t, http.StatusRequestEntityTooLarge, writer.Code)
+						require.Zero(t, fixture.selections)
+						require.Empty(t, fixture.events)
+						require.Empty(t, fixture.countBody)
+						return
+					}
+					require.Equal(t, http.StatusOK, writer.Code)
+					require.JSONEq(t, `{"input_tokens":17}`, writer.Body.String())
+					item := gjson.Get(fixture.countBody, "input.0")
+					if test.converted {
+						require.Equal(t, "message", item.Get("type").String())
+						require.Equal(t, "assistant", item.Get("role").String())
+						require.Equal(t, gjson.String, item.Get("content").Type)
+						_, enclosed, found := strings.Cut(item.Get("content").String(), "Original event as JSON:\n")
+						require.True(t, found)
+						require.Equal(t, notice.event, enclosed)
+					} else {
+						require.Equal(t, notice.event, item.Raw)
+					}
+				})
 			}
 		})
 	}

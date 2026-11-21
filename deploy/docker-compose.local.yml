@@ -1,3 +1,7 @@
+# docker-compose.local.yml runs the application with PostgreSQL and Redis using
+# local persistence directories. Notification settings are optional environment
+# inputs; leaving them unset lets the application use its mounted YAML settings
+# or its disabled compatibility defaults.
 # =============================================================================
 # TokenRouter Docker Compose - Local Directory Version
 # =============================================================================
@@ -173,9 +177,13 @@ services:
       # =======================================================================
       # Gateway 上游、调度与图片配置
       # =======================================================================
-      # Gateway 配置值来自 Compose .env 或当前 Shell。
-      # 未配置时回退到 TokenRouter 后端默认值，保持省略配置时的行为。
+      # Gateway values come from Compose .env or the current shell. Entries
+      # declare defaults or leave the application to read mounted YAML.
       - GATEWAY_FORCE_CODEX_CLI=${GATEWAY_FORCE_CODEX_CLI:-false}
+      # Unset optional entries stay absent from the container environment so
+      # mounted YAML can configure notification conversion and selected users.
+      - GATEWAY_CODEX_CLIENT_NOTIFICATIONS
+      - GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS
       - GATEWAY_OPENAI_COMPACT_MODEL=${GATEWAY_OPENAI_COMPACT_MODEL:-gpt-5.4}
       - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-0}
       - GATEWAY_OPENAI_WS_FORCE_HTTP=${GATEWAY_OPENAI_WS_FORCE_HTTP:-false}

@@ -30,6 +30,10 @@ services:
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: "8080"
       SERVER_MODE: release
+      # Null entries resolve supplied shell or .env values. Unresolved entries
+      # stay absent so mounted YAML can select notification compatibility.
+      GATEWAY_CODEX_CLIENT_NOTIFICATIONS:
+      GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS:
       UPDATE_GITHUB_TOKEN: ${UPDATE_GITHUB_TOKEN:-}
       GOMEMLIMIT: 1536MiB
       PRICING_FALLBACK_FILE: /app/model_supplements.json

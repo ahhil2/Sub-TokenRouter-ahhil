@@ -113,9 +113,10 @@ func TestDescribeOpenAIToolOutputFailure_AmbiguousJSON(t *testing.T) {
 }
 
 // TestDescribeOpenAIToolOutputFailure_BootstrapShapeHistory compares ordinary
-// output, a delegation envelope with unsupported metadata, and a recognized
-// delegation item. Content recognition must explain the mismatch without
-// changing candidate counts, call association, or the supplied request.
+// output, delegation envelopes, and supported or unknown page-event names.
+// Exact page names receive fixed labels while unknown names and private event
+// content stay out of diagnostics. Classification leaves bootstrap candidates,
+// call association, and the supplied request intact.
 func TestDescribeOpenAIToolOutputFailure_BootstrapShapeHistory(t *testing.T) {
 	delegation := `<codex_delegation><source_thread_id>PRIVATE_THREAD</source_thread_id><input>PRIVATE_TASK</input></codex_delegation>`
 	body, err := json.Marshal(map[string]any{
@@ -132,6 +133,23 @@ func TestDescribeOpenAIToolOutputFailure_BootstrapShapeHistory(t *testing.T) {
 				"type": "function_call_output", "namespace": "codex_tui",
 				"name": "send_message_to_thread", "output": delegation,
 			},
+			map[string]any{
+				"type": "function_call_output", "namespace": "agent",
+				"name": "codex_apps_open_page", "output": "PRIVATE_PAGE_CONTENT",
+				"internal_chat_message_metadata_passthrough": map[string]any{"url": "https://PRIVATE_HOST/PRIVATE_PATH"},
+			},
+			map[string]any{
+				"type": "function_call_output", "namespace": "agent",
+				"name": "codex_apps_selected_page_part_1_of_1", "output": "PRIVATE_SELECTION_CONTENT",
+			},
+			map[string]any{
+				"type": "function_call_output", "namespace": "agent",
+				"name": "codex_apps_selected_page_part_1_of_2", "output": "PRIVATE_FRAGMENT_CONTENT",
+			},
+			map[string]any{
+				"type": "function_call_output", "namespace": "agent",
+				"name": "codex_apps_open_page_PRIVATE_SUFFIX", "output": "PRIVATE_UNKNOWN_CONTENT",
+			},
 		},
 	})
 	require.NoError(t, err)
@@ -140,13 +158,14 @@ func TestDescribeOpenAIToolOutputFailure_BootstrapShapeHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, original, body)
 	require.NotContains(t, string(encoded), "PRIVATE_")
-	require.EqualValues(t, 3, gjson.GetBytes(encoded, "input_item_count").Int())
-	require.EqualValues(t, 3, gjson.GetBytes(encoded, "missing_call_id_count").Int())
+	require.NotContains(t, string(encoded), "codex_apps_selected_page_part_1_of_2")
+	require.EqualValues(t, 7, gjson.GetBytes(encoded, "input_item_count").Int())
+	require.EqualValues(t, 7, gjson.GetBytes(encoded, "missing_call_id_count").Int())
 	require.EqualValues(t, 1, gjson.GetBytes(encoded, "bootstrap.delegation.candidate_count").Int())
 	require.Equal(t, "tool_history_disallowed", gjson.GetBytes(encoded, "bootstrap.delegation.result").String())
 	require.EqualValues(t, 0, gjson.GetBytes(encoded, "bootstrap.delegation.blocked_index").Int())
 	items := gjson.GetBytes(encoded, "items").Array()
-	require.Len(t, items, 3)
+	require.Len(t, items, 7)
 	for index, expected := range []struct {
 		candidate string // complete bootstrap classification
 		namespace string // supported namespace classification
@@ -156,6 +175,10 @@ func TestDescribeOpenAIToolOutputFailure_BootstrapShapeHistory(t *testing.T) {
 		{"none", "missing", "missing", "other"},
 		{"none", "other", "other", "delegation"},
 		{"delegation", "codex_tui", "send_message_to_thread", "delegation"},
+		{"none", "agent", "codex_apps_open_page", "other"},
+		{"none", "agent", "codex_apps_selected_page_part_1_of_1", "other"},
+		{"none", "agent", "other", "other"},
+		{"none", "agent", "other", "other"},
 	} {
 		require.EqualValues(t, index, items[index].Get("index").Int())
 		require.Equal(t, expected.candidate, items[index].Get("bootstrap_candidate").String())

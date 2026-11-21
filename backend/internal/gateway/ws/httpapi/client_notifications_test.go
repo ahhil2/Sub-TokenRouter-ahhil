@@ -18,9 +18,10 @@ import (
 )
 
 // client_notifications_test.go checks WebSocket notification authorization,
-// frame boundaries, expansion budgets, and affinity preservation. The tests
-// use the private middleware principal and production session-hash resolver;
-// public payer fields and request headers cannot enable a rollout.
+// exact page-event names, frame boundaries, expansion budgets, and affinity
+// preservation. The tests use the private middleware principal and production
+// session-hash resolver; public payer fields and request headers cannot enable
+// a rollout.
 
 // wsNotificationEvent supplies a complete goal record with opaque metadata for
 // transport admission, byte-budget, and authenticated actor selection fixtures.
@@ -94,6 +95,47 @@ func TestClientNotifications_FrameScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, gjson.GetBytes(body, "input.0").Raw, gjson.GetBytes(got, "input.0").Raw)
 	require.Equal(t, "assistant", gjson.GetBytes(got, "input.1.role").String())
+}
+
+// TestClientNotifications_PageEventScope submits page events without any tool
+// call or continuation context. Exact supported names retain complete metadata;
+// disabled compatibility, other fragments, and call IDs retain the input bytes.
+func TestClientNotifications_PageEventScope(t *testing.T) {
+	for _, tc := range []struct {
+		name      string // request scenario label
+		eventName string // exact client event name
+		namespace string // client event namespace
+		extra     string // optional unexpected event member
+		enabled   bool   // site-wide compatibility setting
+		converted bool   // expected page-event conversion
+	}{
+		{name: "opened page", eventName: "codex_apps_open_page", namespace: "agent", enabled: true, converted: true},
+		{name: "selected page", eventName: "codex_apps_selected_page_part_1_of_1", namespace: "agent", enabled: true, converted: true},
+		{name: "disabled page", eventName: "codex_apps_open_page", namespace: "agent"},
+		{name: "disabled selection", eventName: "codex_apps_selected_page_part_1_of_1", namespace: "agent"},
+		{name: "first of two fragments", eventName: "codex_apps_selected_page_part_1_of_2", namespace: "agent", enabled: true},
+		{name: "second of two fragments", eventName: "codex_apps_selected_page_part_2_of_2", namespace: "agent", enabled: true},
+		{name: "other namespace", eventName: "codex_apps_open_page", namespace: "codex_app", enabled: true},
+		{name: "call identifier", eventName: "codex_apps_open_page", namespace: "agent", extra: `,"call_id":null`, enabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			notice := `{"type":"function_call_output","id":"fco_00000000000000000000000000000000","namespace":"` + tc.namespace + `","name":"` + tc.eventName + `","output":"Selected page text <article>中文</article>","internal_chat_message_metadata_passthrough":{"sequence":9007199254740993,"opaque":{"keep":true}}` + tc.extra + `}`
+			body := []byte(`{"type":"response.create","model":"gpt-6.1-sol","reasoning":{"effort":"xhigh"},"input":[` + notice + `]}`)
+			original := bytes.Clone(body)
+			svc := NewOpenAIWebSocketExecutor(OpenAIWSDependencies{CodexClientNotifications: tc.enabled})
+			got, err := svc.NormalizeClientNotifications(notificationWSContext(&identity.Principal{UserID: 8, CredentialKind: "api_key"}), body, 0)
+			require.NoError(t, err)
+			require.Equal(t, original, body)
+			if !tc.converted {
+				require.Equal(t, original, got)
+				return
+			}
+			require.Equal(t, "assistant", gjson.GetBytes(got, "input.0.role").String())
+			require.Contains(t, gjson.GetBytes(got, "input.0.content").String(), notice)
+			require.Equal(t, "gpt-6.1-sol", gjson.GetBytes(got, "model").String())
+			require.Equal(t, "xhigh", gjson.GetBytes(got, "reasoning.effort").String())
+		})
+	}
 }
 
 // TestClientNotifications_ExpansionLimits verifies that the smallest active

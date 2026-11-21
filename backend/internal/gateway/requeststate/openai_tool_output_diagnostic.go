@@ -235,7 +235,7 @@ func openAIToolDiagnosticBootstrapShape(raw any) map[string]any {
 	output, exists := item["output"]
 	return map[string]any{
 		"namespace":      openAIToolDiagnosticKnownLabel(item, "namespace", "codex_app", "codex_tui", "agent"),
-		"name":           openAIToolDiagnosticKnownLabel(item, "name", "create_thread", "send_message_to_thread", "automation_update", "goal_objective"),
+		"name":           openAIToolDiagnosticKnownLabel(item, "name", "create_thread", "send_message_to_thread", "automation_update", "goal_objective", "codex_apps_open_page", "codex_apps_selected_page_part_1_of_1"),
 		"output_type":    openAIToolDiagnosticValueType(output, exists),
 		"content_format": openAIToolDiagnosticBootstrapContent(output),
 	}

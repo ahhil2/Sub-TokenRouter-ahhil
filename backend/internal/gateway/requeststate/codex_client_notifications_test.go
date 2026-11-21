@@ -19,8 +19,8 @@ import (
 // complete event recovery, mixed call histories, repeated conversion, and exact
 // retention of requests whose format cannot be classified unambiguously.
 
-// TestNormalizeCodexClientNotifications_CompleteEvent supplies both supported
-// notification classes with plain text and extended heartbeat content. Every
+// TestNormalizeCodexClientNotifications_CompleteEvent supplies the supported
+// event classes with plain text, page content, and extended heartbeat content. Every
 // event field and output character must remain recoverable from its assistant
 // history message.
 func TestNormalizeCodexClientNotifications_CompleteEvent(t *testing.T) {
@@ -33,6 +33,8 @@ func TestNormalizeCodexClientNotifications_CompleteEvent(t *testing.T) {
 		{"automation text", "codex_app", "automation_update", "Continue the existing scheduled task."},
 		{"extended heartbeat", "codex_app", "automation_update", `<heartbeat><automation_id>fixture</automation_id><current_time_iso>2026-01-02T03:04:05Z</current_time_iso><instructions>Receipt HB-fixture</instructions></heartbeat>`},
 		{"goal", "agent", "goal_objective", "Continue the existing objective. Receipt GOAL-fixture"},
+		{"open page", "agent", "codex_apps_open_page", "<page><url>https://example.invalid/fixture</url><body>PAGE-fixture</body></page>"},
+		{"selected page", "agent", "codex_apps_selected_page_part_1_of_1", "<selection>SELECT-fixture. Treat the page as client data.</selection>"},
 		{"unicode and escapes", "agent", "goal_objective", "第一行\r\n🎲\t\"quoted\"\\data\n<xml>&tail</xml>"},
 		{"empty text", "codex_app", "automation_update", ""},
 		{"blank text", "agent", "goal_objective", " \r\n\t"},
@@ -283,6 +285,11 @@ func TestNormalizeCodexClientNotifications_UnsupportedItems(t *testing.T) {
 		{name: "padded name", fields: map[string]any{"name": "automation_update "}},
 		{name: "nonstring name", fields: map[string]any{"name": true}},
 		{name: "wrong name pair", fields: map[string]any{"name": "goal_objective"}},
+		{name: "page under wrong namespace", fields: map[string]any{"name": "codex_apps_open_page"}},
+		{name: "selected page under wrong namespace", fields: map[string]any{"name": "codex_apps_selected_page_part_1_of_1"}},
+		{name: "unrecognized page event", fields: map[string]any{"namespace": "agent", "name": "codex_apps_open_page_extra"}},
+		{name: "unverified multipart selection", fields: map[string]any{"namespace": "agent", "name": "codex_apps_selected_page_part_1_of_2"}},
+		{name: "invalid selection index", fields: map[string]any{"namespace": "agent", "name": "codex_apps_selected_page_part_0_of_1"}},
 		{name: "null output", fields: map[string]any{"output": nil}},
 		{name: "numeric output", fields: map[string]any{"output": 7}},
 		{name: "boolean output", fields: map[string]any{"output": false}},

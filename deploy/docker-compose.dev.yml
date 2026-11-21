@@ -1,3 +1,7 @@
+# docker-compose.dev.yml builds the application from local source and provides
+# PostgreSQL and Redis for development. Notification environment settings use
+# the production templates' optional inputs, allowing local YAML to select
+# compatibility when those variables are absent.
 # =============================================================================
 # TokenRouter Docker Compose - Local Development Build
 # =============================================================================
@@ -92,9 +96,13 @@ services:
       - HTTPS_PROXY=${TOKENROUTER_DEV_HTTPS_PROXY:-${SUB2API_DEV_HTTPS_PROXY:-http://host.docker.internal:7897}}
       - ALL_PROXY=${TOKENROUTER_DEV_ALL_PROXY:-${SUB2API_DEV_ALL_PROXY:-socks5://host.docker.internal:7897}}
       - NO_PROXY=${TOKENROUTER_DEV_NO_PROXY:-${SUB2API_DEV_NO_PROXY:-127.0.0.1,localhost,::1,postgres,redis,tokenrouter,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local}}
-      # Gateway 配置值来自 Compose .env 或当前 Shell。
-      # 未配置时回退到 TokenRouter 后端默认值，保持省略配置时的行为。
+      # Gateway values come from Compose .env or the current shell. Entries
+      # declare defaults or leave the application to read mounted YAML.
       - GATEWAY_FORCE_CODEX_CLI=${GATEWAY_FORCE_CODEX_CLI:-false}
+      # Unset optional entries stay absent from the container environment so
+      # mounted YAML can configure notification conversion and selected users.
+      - GATEWAY_CODEX_CLIENT_NOTIFICATIONS
+      - GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS
       - GATEWAY_OPENAI_COMPACT_MODEL=${GATEWAY_OPENAI_COMPACT_MODEL:-gpt-5.4}
       - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-0}
       - GATEWAY_OPENAI_WS_FORCE_HTTP=${GATEWAY_OPENAI_WS_FORCE_HTTP:-false}

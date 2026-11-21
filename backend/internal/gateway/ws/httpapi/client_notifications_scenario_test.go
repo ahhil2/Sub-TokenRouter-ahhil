@@ -30,129 +30,165 @@ import (
 // upstreams capture both initial notifications and subsequent response.create
 // frames; no external provider or model invocation is used.
 
-// TestClientNotifications_ConsecutiveTransportTurns verifies both supported
-// event classes before upstream serialization in every WS execution mode.
-// A second frame omits model and continues the first response, while ordinary
-// paired tool history and complete notification metadata remain available.
+// TestClientNotifications_ConsecutiveTransportTurns verifies automation, goal,
+// and page events before upstream serialization in every WS execution mode.
+// Page events each start a session without tool-call history, and a second
+// frame omits model while continuing the first response. Ordinary paired tool
+// history and complete notification metadata remain available in mixed turns.
 func TestClientNotifications_ConsecutiveTransportTurns(t *testing.T) {
-	for _, scenario := range []string{"pooled", "per_session", "http_bridge", "pooled_oauth", "per_session_oauth"} {
-		t.Run(scenario, func(t *testing.T) {
-			mode := strings.TrimSuffix(scenario, "_oauth")
-			options := passthroughLifecycleConfig()
-			options.WS.ReadTimeoutSeconds = 3
-			options.WS.IngressInterTurnIdleTimeoutSeconds = 3
-			options.Output.OpenAIFirstOutputTimeoutSeconds = 3
-			options.Pool.MaxConnsPerProvider = 1
-			options.Pool.MaxIdlePerProvider = 1
-			options.Pool.QueueLimitPerConn = 8
-			provider := passthroughLifecycleProvider()
-			provider.Record.Extra = map[string]any{"responses_websockets_v2_enabled": true}
-			if strings.HasSuffix(scenario, "_oauth") {
-				provider.Record.Type = capability.ProviderTypeOAuth
-				provider.Record.Credentials = map[string]any{"access_token": "oauth-token"}
-			}
-			completion := []string{
-				`{"type":"response.completed","response":{"id":"resp_notification_1","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`,
-				`{"type":"response.completed","response":{"id":"resp_notification_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`,
-			}
-			upstreamHTTP := &auxiliaryHTTPRecorder{}
-			upstreamWS := &openAIWSCaptureConn{events: [][]byte{[]byte(completion[0]), []byte(completion[1])}}
-			dedicated := newStagedPassthroughConn()
-			inputs := wsFixtureInputs{options: options, transport: upstreamHTTP, cache: &testkit.StickyCache{}, corrector: openai.NewCodexToolCorrector()}
-			switch mode {
-			case "pooled":
-				pool := newOpenAIWSConnPool(options)
-				pool.SetClientDialerForTest(&openAIWSCaptureDialer{conn: upstreamWS})
-				inputs.pool = pool
-			case "per_session":
-				provider.Record.Extra = map[string]any{"responses_ws_connection_mode": "per_session"}
-				inputs.dialer = &stagedPassthroughDialer{conn: dedicated}
-			case "http_bridge":
-				provider.Record.Extra = map[string]any{"openai_apikey_responses_websockets_v2_mode": "http_bridge"}
-				for _, event := range completion {
-					upstreamHTTP.responses = append(upstreamHTTP.responses, &http.Response{
-						StatusCode: http.StatusOK,
-						Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-						Body:       io.NopCloser(strings.NewReader("data: " + event + "\n\ndata: [DONE]\n\n")),
-					})
+	for _, notices := range []struct {
+		name   string // notification sequence scenario
+		first  string // complete initial event record
+		second string // complete continuation event record
+		mixed  bool   // initial frame includes ordinary paired tool history
+	}{
+		{
+			name:   "automation and goal",
+			first:  strings.ReplaceAll(strings.ReplaceAll(wsNotificationEvent, `"agent"`, `"codex_app"`), `"goal_objective"`, `"automation_update"`),
+			second: wsNotificationEvent,
+			mixed:  true,
+		},
+		{
+			name:   "opened page then selection",
+			first:  strings.Replace(wsNotificationEvent, "goal_objective", "codex_apps_open_page", 1),
+			second: strings.Replace(wsNotificationEvent, "goal_objective", "codex_apps_selected_page_part_1_of_1", 1),
+		},
+		{
+			name:   "selection then opened page",
+			first:  strings.Replace(wsNotificationEvent, "goal_objective", "codex_apps_selected_page_part_1_of_1", 1),
+			second: strings.Replace(wsNotificationEvent, "goal_objective", "codex_apps_open_page", 1),
+		},
+	} {
+		for _, scenario := range []string{"pooled", "per_session", "http_bridge", "pooled_oauth", "per_session_oauth"} {
+			t.Run(notices.name+"/"+scenario, func(t *testing.T) {
+				mode := strings.TrimSuffix(scenario, "_oauth")
+				options := passthroughLifecycleConfig()
+				options.WS.ReadTimeoutSeconds = 3
+				options.WS.IngressInterTurnIdleTimeoutSeconds = 3
+				options.Output.OpenAIFirstOutputTimeoutSeconds = 3
+				options.Pool.MaxConnsPerProvider = 1
+				options.Pool.MaxIdlePerProvider = 1
+				options.Pool.QueueLimitPerConn = 8
+				provider := passthroughLifecycleProvider()
+				provider.Record.Extra = map[string]any{"responses_websockets_v2_enabled": true}
+				if strings.HasSuffix(scenario, "_oauth") {
+					provider.Record.Type = capability.ProviderTypeOAuth
+					provider.Record.Credentials = map[string]any{"access_token": "oauth-token"}
 				}
-			}
-			svc := newWSFixture(inputs)
-			svc.CodexClientNotifications = true
-			controlCtx, cancelControl := context.WithCancel(context.Background())
-			defer cancelControl()
-			server, serverErr := startPassthroughLifecycleServerWithHooks(t, controlCtx, svc, provider, func(c *gin.Context) *gatewayws.OpenAIIngressHooks {
-				authctx.SetAuthenticatedPrincipal(c, identity.Principal{UserID: 8, CredentialKind: "api_key"})
-				return nil
-			})
-			defer server.Close()
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
-			cancel()
-			require.NoError(t, err)
-			defer func() { _ = client.CloseNow() }()
-
-			automation := strings.ReplaceAll(strings.ReplaceAll(wsNotificationEvent, `"agent"`, `"codex_app"`), `"goal_objective"`, `"automation_update"`)
-			frames := []string{
-				`{"type":"response.create","model":"gpt-5.1","input":[{"role":"user","content":"Continue the task"},` + automation + `,{"type":"function_call","id":"fc_real","call_id":"call_real","name":"fixture_tool","arguments":"{}"},{"type":"function_call_output","call_id":"call_real","output":"tool-result"}]}`,
-				`{"type":"response.create","previous_response_id":"resp_notification_1","input":[` + wsNotificationEvent + `]}`,
-			}
-			var captured [][]byte
-			for turn, frame := range frames {
+				completion := []string{
+					`{"type":"response.completed","response":{"id":"resp_notification_1","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`,
+					`{"type":"response.completed","response":{"id":"resp_notification_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`,
+				}
+				upstreamHTTP := &auxiliaryHTTPRecorder{}
+				upstreamWS := &openAIWSCaptureConn{events: [][]byte{[]byte(completion[0]), []byte(completion[1])}}
+				dedicated := newStagedPassthroughConn()
+				inputs := wsFixtureInputs{options: options, transport: upstreamHTTP, cache: &testkit.StickyCache{}, corrector: openai.NewCodexToolCorrector()}
+				switch mode {
+				case "pooled":
+					pool := newOpenAIWSConnPool(options)
+					pool.SetClientDialerForTest(&openAIWSCaptureDialer{conn: upstreamWS})
+					inputs.pool = pool
+				case "per_session":
+					provider.Record.Extra = map[string]any{"responses_ws_connection_mode": "per_session"}
+					inputs.dialer = &stagedPassthroughDialer{conn: dedicated}
+				case "http_bridge":
+					provider.Record.Extra = map[string]any{"openai_apikey_responses_websockets_v2_mode": "http_bridge"}
+					for _, event := range completion {
+						upstreamHTTP.responses = append(upstreamHTTP.responses, &http.Response{
+							StatusCode: http.StatusOK,
+							Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+							Body:       io.NopCloser(strings.NewReader("data: " + event + "\n\ndata: [DONE]\n\n")),
+						})
+					}
+				}
+				svc := newWSFixture(inputs)
+				svc.CodexClientNotifications = true
+				controlCtx, cancelControl := context.WithCancel(context.Background())
+				defer cancelControl()
+				server, serverErr := startPassthroughLifecycleServerWithHooks(t, controlCtx, svc, provider, func(c *gin.Context) *gatewayws.OpenAIIngressHooks {
+					authctx.SetAuthenticatedPrincipal(c, identity.Principal{UserID: 8, CredentialKind: "api_key"})
+					return nil
+				})
+				defer server.Close()
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				err = client.Write(ctx, coderws.MessageText, []byte(frame))
+				client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
 				cancel()
 				require.NoError(t, err)
-				if mode == "per_session" {
-					captured = append(captured, requirePassthroughUpstreamWrite(t, dedicated, 3*time.Second))
-					dedicated.Send(completion[turn])
-				}
-				event, readErr := readPassthroughLifecycleFrame(t, client, 3*time.Second)
-				require.NoError(t, readErr)
-				require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
-			}
-			_ = client.Close(coderws.StatusNormalClosure, "done")
-			select {
-			case err := <-serverErr:
-				if err != nil {
-					require.Contains(t, err.Error(), "StatusNormalClosure")
-				}
-			case <-time.After(3 * time.Second):
-				t.Fatal("notification scenario session did not exit")
-			}
+				defer func() { _ = client.CloseNow() }()
 
-			// Inspect shared captures after the handler exits to avoid racing the
-			// scripted transport's request-recording writes.
-			switch mode {
-			case "pooled":
-				for _, request := range upstreamWS.writes {
-					body, marshalErr := json.Marshal(request)
-					require.NoError(t, marshalErr)
-					captured = append(captured, body)
+				firstInput := notices.first
+				firstNoticeIndex := 0
+				if notices.mixed {
+					firstInput = `{"role":"user","content":"Continue the task"},` + notices.first + `,{"type":"function_call","id":"fc_real","call_id":"call_real","name":"fixture_tool","arguments":"{}"},{"type":"function_call_output","call_id":"call_real","output":"tool-result"}`
+					firstNoticeIndex = 1
 				}
-			case "http_bridge":
-				captured = upstreamHTTP.bodies
-			}
-			require.Len(t, captured, 2)
-			require.Equal(t, "assistant", gjson.GetBytes(captured[0], "input.1.role").String())
-			require.Contains(t, gjson.GetBytes(captured[0], "input.1.content").String(), automation)
-			require.Equal(t, "call_real", gjson.GetBytes(captured[0], "input.3.call_id").String())
-			require.Equal(t, "tool-result", gjson.GetBytes(captured[0], "input.3.output").String())
-			secondInput := gjson.GetBytes(captured[1], "input").Array()
-			require.NotEmpty(t, secondInput)
-			lastItem := secondInput[len(secondInput)-1]
-			require.Equal(t, "assistant", lastItem.Get("role").String())
-			require.Contains(t, lastItem.Get("content").String(), wsNotificationEvent)
-			if mode == "http_bridge" {
-				// The existing HTTP bridge reconstructs full history and removes
-				// the WS continuation anchor before issuing its stateless request.
-				require.Len(t, secondInput, 5)
-				require.False(t, gjson.GetBytes(captured[1], "previous_response_id").Exists())
-			} else {
-				require.Equal(t, "resp_notification_1", gjson.GetBytes(captured[1], "previous_response_id").String())
-			}
-			require.Equal(t, "gpt-5.1", gjson.GetBytes(captured[1], "model").String())
-		})
+				frames := []string{
+					`{"type":"response.create","model":"gpt-5.1","input":[` + firstInput + `]}`,
+					`{"type":"response.create","previous_response_id":"resp_notification_1","input":[` + notices.second + `]}`,
+				}
+				var captured [][]byte
+				for turn, frame := range frames {
+					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+					err = client.Write(ctx, coderws.MessageText, []byte(frame))
+					cancel()
+					require.NoError(t, err)
+					if mode == "per_session" {
+						captured = append(captured, requirePassthroughUpstreamWrite(t, dedicated, 3*time.Second))
+						dedicated.Send(completion[turn])
+					}
+					event, readErr := readPassthroughLifecycleFrame(t, client, 3*time.Second)
+					require.NoError(t, readErr)
+					require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
+				}
+				_ = client.Close(coderws.StatusNormalClosure, "done")
+				select {
+				case err := <-serverErr:
+					if err != nil {
+						require.Contains(t, err.Error(), "StatusNormalClosure")
+					}
+				case <-time.After(3 * time.Second):
+					t.Fatal("notification scenario session did not exit")
+				}
+
+				// Inspect shared captures after the handler exits to avoid racing the
+				// scripted transport's request-recording writes.
+				switch mode {
+				case "pooled":
+					for _, request := range upstreamWS.writes {
+						body, marshalErr := json.Marshal(request)
+						require.NoError(t, marshalErr)
+						captured = append(captured, body)
+					}
+				case "http_bridge":
+					captured = upstreamHTTP.bodies
+				}
+				require.Len(t, captured, 2)
+				firstCapturedInput := gjson.GetBytes(captured[0], "input").Array()
+				if notices.mixed {
+					require.Len(t, firstCapturedInput, 4)
+					require.Equal(t, "call_real", firstCapturedInput[3].Get("call_id").String())
+					require.Equal(t, "tool-result", firstCapturedInput[3].Get("output").String())
+				} else {
+					require.Len(t, firstCapturedInput, 1)
+				}
+				require.Equal(t, "assistant", firstCapturedInput[firstNoticeIndex].Get("role").String())
+				require.Contains(t, firstCapturedInput[firstNoticeIndex].Get("content").String(), notices.first)
+				secondInput := gjson.GetBytes(captured[1], "input").Array()
+				require.NotEmpty(t, secondInput)
+				lastItem := secondInput[len(secondInput)-1]
+				require.Equal(t, "assistant", lastItem.Get("role").String())
+				require.Contains(t, lastItem.Get("content").String(), notices.second)
+				if mode == "http_bridge" {
+					// The existing HTTP bridge reconstructs full history and removes
+					// the WS continuation anchor before issuing its stateless request.
+					require.Len(t, secondInput, len(firstCapturedInput)+1)
+					require.False(t, gjson.GetBytes(captured[1], "previous_response_id").Exists())
+				} else {
+					require.Equal(t, "resp_notification_1", gjson.GetBytes(captured[1], "previous_response_id").String())
+				}
+				require.Equal(t, "gpt-5.1", gjson.GetBytes(captured[1], "model").String())
+			})
+		}
 	}
 }
 
