@@ -241,6 +241,16 @@ gateway:
   #
   # 注意：开启后会影响所有客户端的行为（不仅限于 VS Code / Codex CLI），请谨慎开启。
   force_codex_cli: false
+  # Convert the two supported Codex notifications for all authenticated API-key
+  # callers on HTTP Responses, compact, input_tokens and WebSocket Responses.
+  # Changes require a process restart.
+  # Environment form: GATEWAY_CODEX_CLIENT_NOTIFICATIONS=true.
+  codex_client_notifications: false
+  # Select acting users for a limited rollout when the global switch is false.
+  # Accepts positive integer IDs; environment form: GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS=101,102.
+  # Records become assistant history data and grant no additional permissions.
+  # To disable conversion, set the global switch to false and leave this list empty.
+  codex_client_notification_user_ids: []
   # 是否为 Codex /responses 请求自动注入 image_generation 工具与桥接指令。
   #
   # 默认 false：保持纯文本 Codex 请求不被改写；客户端显式提供 image_generation tool 时，

@@ -24,6 +24,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
+	"github.com/TokenFlux/TokenRouter/internal/identity"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
@@ -66,6 +67,7 @@ type tokenExecutionContract struct {
 	t                    *testing.T // owning fixture assertion context
 	events               []string   // ordered token execution phases
 	selections           int        // numbered provider selection count
+	countBody            string     // last forwarded counting payload
 }
 
 // tokenContractTarget identifies one numbered provider for serial
@@ -587,6 +589,7 @@ func (t tokenContractTarget) ForwardCount(_ context.Context, c *gin.Context, bod
 // real input-token attempt loop.
 func (t tokenContractTarget) ForwardInputTokens(_ context.Context, c *gin.Context, body []byte) error {
 	t.f.events = append(t.f.events, "forward")
+	t.f.countBody = string(body)
 	require.Equal(t.f.t, "group-model", gjson.GetBytes(body, "model").String())
 	// Fail the first provider before token output so the real adapter must exclude
 	// it and run its release callback before another target succeeds.
@@ -627,6 +630,66 @@ func TestOpenAITokensNativeHTTPContracts(t *testing.T) {
 			}
 			require.Equal(t, http.StatusOK, writer.Code)
 			require.JSONEq(t, `{"input_tokens":17}`, writer.Body.String())
+		})
+	}
+}
+
+// TestOpenAITokensNotificationRepresentation sends Codex event history through
+// input_tokens.go and the actual token attempt loop. Counting must receive the
+// configured notification representation, and expansion limits stop selection.
+func TestOpenAITokensNotificationRepresentation(t *testing.T) {
+	const notice = `{"type":"function_call_output","id":"fco_00000000000000000000000000000001","namespace":"agent","name":"goal_objective","output":"GOAL-counting"}`
+	body := `{"model":"client-model","input":[` + notice + `]}`
+	for _, test := range []struct {
+		name      string  // counting configuration scenario
+		global    bool    // site-wide notification switch
+		users     []int64 // selected authenticated actors
+		principal bool    // trusted authentication context supplied
+		limit     int64   // normalized request size limit
+		converted bool    // expected event representation
+		tooLarge  bool    // expected expansion rejection
+	}{
+		{name: "disabled", principal: true},
+		{name: "all users", global: true, principal: true, converted: true},
+		{name: "selected user", users: []int64{7}, principal: true, converted: true},
+		{name: "different user", users: []int64{40}, principal: true},
+		{name: "missing authentication context", global: true},
+		{name: "expanded body limit", global: true, principal: true, limit: int64(len(body)), tooLarge: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := &tokenExecutionContract{t: t}
+			handler := NewOpenAITokensHandler(OpenAITokenOptions{
+				MaxSwitches: 2, MaxBodyBytes: test.limit,
+				CodexClientNotifications: test.global, CodexClientNotificationUserIDs: test.users,
+			}, OpenAITokenPorts{Execution: fixture, Funding: fixture}, fixture)
+			writer := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(writer)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/input_tokens", strings.NewReader(body))
+			group := int64(7)
+			c.Set(string(keyhttp.ContextKeyAPIKey), &apikey.APIKey{ID: 9, UserID: 7, GroupID: &group, Group: &routing.Group{
+				ID: group, AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolOpenAIResponses},
+			}})
+			c.Set(authctx.ContextKeyUser, authctx.AuthSubject{UserID: 7})
+			if test.principal {
+				authctx.SetAuthenticatedPrincipal(c, identity.Principal{UserID: 7, CredentialKind: "api_key"})
+			}
+			handler.ResponsesInputTokens(c)
+			if test.tooLarge {
+				require.Equal(t, http.StatusRequestEntityTooLarge, writer.Code)
+				require.Zero(t, fixture.selections)
+				return
+			}
+			require.Equal(t, http.StatusOK, writer.Code)
+			require.JSONEq(t, `{"input_tokens":17}`, writer.Body.String())
+			item := gjson.Get(fixture.countBody, "input.0")
+			if test.converted {
+				require.Equal(t, "assistant", item.Get("role").String())
+				_, enclosed, found := strings.Cut(item.Get("content").String(), "Original event as JSON:\n")
+				require.True(t, found)
+				require.Equal(t, notice, enclosed)
+			} else {
+				require.JSONEq(t, notice, item.Raw)
+			}
 		})
 	}
 }

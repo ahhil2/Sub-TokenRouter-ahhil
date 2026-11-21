@@ -91,9 +91,16 @@ func provideOpenAIEncryptedLineage(state session.OpenAIWSStateStore, choices *se
 // provideOpenAIWebSockets constructs WS execution using shared text requests
 // and output. text and lineage are required; runtime, connections, prompts,
 // selection, image policy, and cache are supplied to the WS executor for its
-// own connection and turn handling.
+// own connection and turn handling. Notification rollout and body limits come
+// from startup configuration; the executor copies the configured actor IDs.
 func provideOpenAIWebSockets(runtime *ws.Runtime, cfg *config.Config, connections *openaiws.OpenAIWSConnections, text *gatewayhttp.OpenAITextExecutor, prompts *promptpolicy.Service, choices *selection.Compatible, lineage *gatewayhttp.OpenAIEncryptedLineage, imagePolicy *gatewayadapter.ResponseImagePolicy, cache session.GatewayCache) *wshttp.OpenAIWebSocketExecutor {
-	return wshttp.NewOpenAIWebSocketExecutor(wshttp.OpenAIWSDependencies{Runtime: runtime, Options: openAIWSExecutionOptions(cfg), Connections: connections, Requests: text.Requests, Output: text.Output, Grok: text.Grok, FastPolicy: text.FastPolicy, Prompts: prompts, Selection: choices, State: lineage.Store, Lineage: lineage, ImageBridge: imagePolicy, Cache: cache})
+	deps := wshttp.OpenAIWSDependencies{Runtime: runtime, Options: openAIWSExecutionOptions(cfg), Connections: connections, Requests: text.Requests, Output: text.Output, Grok: text.Grok, FastPolicy: text.FastPolicy, Prompts: prompts, Selection: choices, State: lineage.Store, Lineage: lineage, ImageBridge: imagePolicy, Cache: cache}
+	if cfg != nil {
+		deps.CodexClientNotifications = cfg.Gateway.CodexClientNotifications
+		deps.CodexClientNotificationUserIDs = cfg.Gateway.CodexClientNotificationUserIDs
+		deps.MaxBodyBytes = cfg.Gateway.MaxBodySize
+	}
+	return wshttp.NewOpenAIWebSocketExecutor(deps)
 }
 
 // provideOpenAIResponses binds Responses execution to the text runtime's

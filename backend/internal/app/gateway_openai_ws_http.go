@@ -45,6 +45,7 @@ func provideResponsesWSHTTP(
 	options := responsesWSOptions(cfg)
 	if source != nil {
 		options.Runtime = source.Runtime
+		options.NormalizeClientNotifications = source.NormalizeClientNotifications
 	}
 	b := responsesWSBindings(source, credentials, funding, keys, common, prompt, blocks, choices, planner, subscriptions)
 	b.Pricing = &admission.ModelPricing{Resolver: prices}

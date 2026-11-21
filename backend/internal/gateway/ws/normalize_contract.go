@@ -141,6 +141,9 @@ type RequestPort interface {
 // HTTP-bridge normalization.
 type NormalizeOptions struct {
 	ProviderID int64 // selected upstream provider identifier
+	// NormalizeClientNotifications converts selected client event records before
+	// provider tool rewriting. Nil leaves existing frame representation unchanged.
+	NormalizeClientNotifications func([]byte) ([]byte, error)
 	// OAuth and ForceHTTPBridge jointly govern reserved tool aliasing: Normalize
 	// invokes AliasTools for OAuth only when HTTP bridge mode is not forced.
 	OAuth           bool // OAuth tool aliasing enabled

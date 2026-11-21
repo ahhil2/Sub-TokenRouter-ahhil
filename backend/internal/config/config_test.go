@@ -19,6 +19,131 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestLoadCodexClientNotifications loads the site-wide switch from YAML and
+// environment input. Defaults keep conversion disabled, and an environment
+// override can enable every caller or turn off a configured global rollout.
+func TestLoadCodexClientNotifications(t *testing.T) {
+	for _, test := range []struct {
+		name       string // configuration scenario name
+		yaml       string // optional YAML boolean
+		env        string // environment override value
+		envPresent bool   // environment override supplied
+		want       bool   // expected global conversion
+		wantError  bool   // invalid configuration rejection
+	}{
+		{name: "default disabled"},
+		{name: "yaml enabled", yaml: "true", want: true},
+		{name: "yaml disabled", yaml: "false"},
+		{name: "environment enabled", env: "true", envPresent: true, want: true},
+		{name: "environment rollout rollback", yaml: "true", env: "false", envPresent: true},
+		{name: "environment overrides yaml", yaml: "false", env: "true", envPresent: true, want: true},
+		{name: "invalid boolean", yaml: "invalid", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			// Remove any inherited rollout override so YAML-only cases exercise
+			// configuration loading independently of the developer's process environment.
+			t.Setenv("GATEWAY_CODEX_CLIENT_NOTIFICATIONS", "")
+			require.NoError(t, os.Unsetenv("GATEWAY_CODEX_CLIENT_NOTIFICATIONS"))
+			if test.envPresent {
+				t.Setenv("GATEWAY_CODEX_CLIENT_NOTIFICATIONS", test.env)
+			}
+			if test.yaml != "" {
+				configFile := filepath.Join(t.TempDir(), "config.yaml")
+				body := "gateway:\n  codex_client_notifications: " + test.yaml + "\n"
+				require.NoError(t, os.WriteFile(configFile, []byte(body), 0o600))
+				t.Setenv("CONFIG_FILE", configFile)
+			}
+			cfg, err := Load()
+			if test.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.want, cfg.Gateway.CodexClientNotifications)
+		})
+	}
+}
+
+// TestLoadCodexClientNotificationUserIDs loads the notification scope from YAML
+// and environment input. It protects disabled defaults, environment precedence,
+// and rejection of values that weak decoding could turn into another user ID.
+func TestLoadCodexClientNotificationUserIDs(t *testing.T) {
+	tests := []struct {
+		name       string  // subtest display name
+		yaml       string  // optional configured YAML list
+		env        string  // supplied environment list
+		envPresent bool    // configure environment presence
+		want       []int64 // expected acting user identifiers
+		wantError  bool    // expect startup validation failure
+	}{
+		{name: "default_disabled"},
+		{name: "yaml_ids", yaml: "[40, 41]", want: []int64{40, 41}},
+		{name: "yaml_empty", yaml: "[]"},
+		{name: "environment_ids", env: "40,41", envPresent: true, want: []int64{40, 41}},
+		{name: "environment_precedence", yaml: "[40]", env: "41", envPresent: true, want: []int64{41}},
+		{name: "empty_environment_disables", yaml: "[40]", envPresent: true},
+		{name: "max_int64", yaml: "[9223372036854775807]", want: []int64{math.MaxInt64}},
+		{name: "zero", yaml: "[0]", wantError: true},
+		{name: "negative", yaml: "[-40]", wantError: true},
+		{name: "fraction", yaml: "[40.5]", wantError: true},
+		{name: "integral_float", yaml: "[40.0]", wantError: true},
+		{name: "boolean", yaml: "[true]", wantError: true},
+		{name: "overflow", yaml: "[9223372036854775808]", wantError: true},
+		{name: "environment_zero", env: "40,0", envPresent: true, wantError: true},
+		{name: "environment_fraction", env: "40.5", envPresent: true, wantError: true},
+		{name: "environment_empty_entry", env: "40,,41", envPresent: true, wantError: true},
+		{name: "environment_invalid", env: "not-a-user", envPresent: true, wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			// Unset the variable after registering cleanup so file-only fixtures
+			// exercise absent input even when the surrounding process configures a list.
+			t.Setenv("GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS", "")
+			require.NoError(t, os.Unsetenv("GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS"))
+			if test.envPresent {
+				t.Setenv("GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS", test.env)
+			}
+			if test.yaml != "" {
+				configFile := filepath.Join(t.TempDir(), "config.yaml")
+				body := "gateway:\n  codex_client_notification_user_ids: " + test.yaml + "\n"
+				require.NoError(t, os.WriteFile(configFile, []byte(body), 0o600))
+				t.Setenv("CONFIG_FILE", configFile)
+			}
+			cfg, err := Load()
+			if test.wantError {
+				require.ErrorContains(t, err, "codex_client_notification_user_ids")
+				return
+			}
+			require.NoError(t, err)
+			if len(test.want) == 0 {
+				require.Empty(t, cfg.Gateway.CodexClientNotificationUserIDs)
+				return
+			}
+			require.Equal(t, test.want, cfg.Gateway.CodexClientNotificationUserIDs)
+		})
+	}
+}
+
+// TestValidateCodexClientNotificationUserIDs changes the decoded allowlist
+// before validation. Programmatically assembled configuration must reject zero
+// and negative IDs while accepting an empty scope and positive int64 values.
+func TestValidateCodexClientNotificationUserIDs(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	for _, userIDs := range [][]int64{nil, {40}, {math.MaxInt64}, {0}, {40, -1}} {
+		cfg.Gateway.CodexClientNotificationUserIDs = userIDs
+		err = cfg.Validate()
+		if len(userIDs) > 0 && userIDs[len(userIDs)-1] <= 0 {
+			require.ErrorContains(t, err, "codex_client_notification_user_ids")
+			continue
+		}
+		require.NoError(t, err)
+	}
+}
+
 // TestLoadDefaultModelsListReadMaxBytes loads configuration with the standard
 // fixture JWT secret. The model-list body limit must equal the named default
 // used for upstream model responses.

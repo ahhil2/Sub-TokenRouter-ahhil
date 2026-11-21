@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
@@ -26,8 +29,8 @@ import (
 // openai_text_responses.go admits Responses requests while retaining canonical
 // session and mapped attempt input.
 // Responses admission keeps canonical session input separate from
-// effort/bootstrap rewrites and group-mapped attempt bytes. Prompt replacement
-// follows Compact normalization, and the resulting bytes are retained for
+// effort, notification and bootstrap rewrites and group-mapped attempt bytes.
+// Prompt replacement follows Compact normalization, and its bytes are retained for
 // affinity and cyber checks so those identities do not change when later
 // forwarding controls are adjusted.
 //
@@ -46,10 +49,10 @@ import (
 // structural JSON validation, letting committed wait output use a protocol
 // terminal on later failure.
 //
-// Prompt-replaced input is retained as SessionHashBody before effort and
-// bootstrap rewrites. The current effective group validates ownership, and its
-// mapped body/model drives explicit image admission while client identity
-// remains available for observations. Image and user resources are held
+// Prompt-replaced input is retained as SessionHashBody before effort,
+// notification and bootstrap rewrites. The current effective group validates
+// ownership, and its mapped body/model drives explicit image admission while
+// client identity remains available for observations. Image and user resources are held
 // through the configured post-wait eligibility call, cyber/session handling
 // and Execute. The selection context receives the acquired lease, and later
 // request-context hints reach execution separately. All acquired cleanup
@@ -74,7 +77,7 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 
 	requestStart := time.Now()
 
-	// Read the key and acting subject set by authentication.
+	// Read the API key and billing subject installed by authentication.
 	apiKey, ok := h.backend.Access(c)
 	if !ok {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
@@ -142,8 +145,8 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
-	// Retain prompt-replaced bytes for identity before effort and bootstrap
-	// edits; affinity and cyber checks later use this view of the admitted client input.
+	// Retain prompt-replaced bytes before effort, notification and bootstrap
+	// edits; affinity and cyber checks later use this view of the admitted input.
 	body = h.prompt.ApplyUserPromptReplacementToBody(c.Request.Context(), body, "openai_responses")
 	sessionHashBody := body
 
@@ -170,13 +173,44 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 		body = cappedBody
 	}
 	bootstrapStart := time.Now()
-	// Automation bootstrap repair can replace an unsupported call-output shape
-	// with user input; session identity continues to use the view saved before this repair.
-	if normalizedBody, changed := h.backend.NormalizeBootstrap(body, false); changed {
-		body = normalizedBody
-		reqLog.Info("openai.codex_automation_bootstrap_normalized",
-			zap.String("normalization", "call_output_to_user_message"),
-		)
+	notificationCount := 0
+	// The private principal identifies the API-key caller; Subject can identify
+	// a different payer. Apply the global switch or actor list before bootstrap
+	// and tool checks so recognized notices remain client-provided history data.
+	notificationActor, hasNotificationActor := authctx.GetPrincipal(c)
+	notificationsEnabled := hasNotificationActor && notificationActor.CredentialKind == "api_key" && notificationActor.UserID > 0 &&
+		(h.options.CodexClientNotifications || slices.Contains(h.options.CodexClientNotificationUserIDs, notificationActor.UserID))
+	if notificationsEnabled {
+		normalizedBody, count, normalizeErr := requeststate.NormalizeCodexClientNotifications(body, h.options.MaxBodyBytes)
+		if normalizeErr != nil {
+			recordIngressValidate()
+			if maxErr, ok := errors.AsType[*protocolopenai.BodyLimitError](normalizeErr); ok {
+				h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", BodyTooLargeMessage(maxErr.Limit))
+			} else {
+				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to normalize client notifications")
+			}
+			return
+		}
+		if count > 0 {
+			body = normalizedBody
+			notificationCount = count
+			reqLog.Info("openai.codex_client_notifications_normalized",
+				zap.String("normalization", "client_notification_to_assistant_message"),
+				zap.Int64("actor_user_id", notificationActor.UserID),
+				zap.Int("notification_count", count),
+			)
+		}
+	}
+	// Legacy automation accepts a broader bootstrap format. Selected callers use
+	// the notification rules above so a declined item cannot become user input
+	// after another notification has removed a blocker from the tool history.
+	if !notificationsEnabled {
+		if normalizedBody, changed := h.backend.NormalizeBootstrap(body, false); changed {
+			body = normalizedBody
+			reqLog.Info("openai.codex_automation_bootstrap_normalized",
+				zap.String("normalization", "call_output_to_user_message"),
+			)
+		}
 	}
 	// Delegation bootstrap has its own input repair. Adopt its changed bytes
 	// for forwarding while the saved session view keeps identity before bootstrap normalization.
@@ -188,6 +222,20 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 	}
 	bootstrapElapsed = time.Since(bootstrapStart)
 	timing.ObserveSubstage(c.Request.Context(), "bootstrap_ms", bootstrapElapsed)
+
+	// Delegation can re-encode enclosed notifications with HTML escapes. Check
+	// its complete result so that additional growth cannot bypass the notification budget.
+	if notificationCount > 0 {
+		notificationLimit := h.options.MaxBodyBytes
+		if notificationLimit <= 0 {
+			notificationLimit = protocolopenai.DefaultMaxNormalizedBodySize
+		}
+		if int64(len(body)) > notificationLimit {
+			recordIngressValidate()
+			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", BodyTooLargeMessage(notificationLimit))
+			return
+		}
+	}
 
 	reqStream, ok := ParseOpenAICompatibleStream(body)
 	if !ok {
@@ -290,7 +338,13 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 
 	h.backend.SeedImageIntent(c, groupMapping.Mapped, forwardImageIntent)
 
-	// Validate function_call_output context before forwarding to prevent upstream 400 errors.
+	// Removing the last function output must not bypass checks for retained
+	// custom, MCP, or client search results. The usual backend check still runs
+	// afterward for its ordinary admission behavior.
+	if notificationCount > 0 && !gjson.GetBytes(body, `input.#(type=="function_call_output")`).Exists() &&
+		!validateOpenAIClientToolOutputContext(c, body, reqLog) {
+		return
+	}
 	if !h.backend.ValidateTools(c, body, reqLog) {
 		return
 	}

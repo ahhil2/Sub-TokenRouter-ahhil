@@ -293,7 +293,7 @@ OpenAI OAuth 提供商处理 Anthropic 的 `count_tokens` 时，调用 Responses
 
 工具结果的关联检查区分客户端执行结果和服务端工具搜索历史。`tool_search_output` 明确带有 `execution: "server"` 时，`call_id` 可以为 null 或省略，不参与客户端调用 ID 的缺失检查和上下文覆盖计算。`execution` 为 `client`、缺省或其他值时，继续校验调用 ID；普通 `function_call_output`、`custom_tool_call_output` 和 `mcp_tool_call_output` 也需要调用关联。WebSocket 续接与跨供应商恢复所用的共享续接信号及上下文覆盖检查也遵循此规则。
 
-HTTP 入口仅在 `input` 包含 `function_call_output` 时执行这项预校验。请求带有非空 `previous_response_id` 或内联工具调用上下文时，由后续上游处理继续验证历史。其余独立客户端工具结果需要非空 `call_id`，以及覆盖各调用 ID 的 `item_reference`。错误响应使用 HTTP 400 和 `invalid_request_error`，分别说明缺失调用 ID 或上下文。服务端工具搜索结果不为其他客户端结果提供调用关联。
+HTTP 入口在 `input` 包含 `function_call_output` 时执行这项预校验。启用客户端通知转换后，也会检查剩余的 custom、MCP 和客户端工具搜索结果，防止最后一条 `function_call_output` 被转换后跳过校验。请求带有非空 `previous_response_id` 或内联工具调用上下文时，由后续上游处理继续验证历史。其余独立客户端工具结果需要非空 `call_id`，以及覆盖各调用 ID 的 `item_reference`。错误响应使用 HTTP 400 和 `invalid_request_error`，分别说明缺失调用 ID 或上下文。服务端工具搜索结果不为其他客户端结果提供调用关联。
 
 仅在缺少 `call_id` 而被预校验拒绝时，`openai.request_validation_failed` 的 WARN 日志附加 `tool_output_diagnostic` 对象，`reason` 为 `function_call_output_missing_call_id`。诊断值限定为固定枚举、布尔、计数和输入索引，提示词、工具参数与结果正文、调用 ID 和响应 ID 的值均不写入其中。诊断用于解释这次 HTTP 400；请求准入仍按上述关联条件判断，兼容转换继续由对应的改写规则处理。
 
@@ -301,7 +301,19 @@ HTTP 入口仅在 `input` 包含 `function_call_output` 时执行这项预校验
 
 逐项摘要最多保留 32 个工具相关输入项，优先保留缺少调用 ID 的项。工具项总数、缺少调用 ID 的结果数和服务端搜索项数统计整个输入数组，`items_omitted` 记录未进入逐项摘要的工具项数量。分析较长历史时，先查看汇总计数和省略数量，再按摘要中的输入索引定位，不能把这 32 项当作完整的输入历史。
 
+每项的 `id_state`、`tool_call_id_state` 与 `call_id_state` 使用相同的存在性和类型分类。字段为非空仅说明请求包含该字段，是否能关联原始调用需要另行核对。`bootstrap_shape` 将工具元数据和输出内容分开检查：`namespace` 识别 `codex_app`、`codex_tui`、`agent`，`name` 识别 `create_thread`、`send_message_to_thread`、`automation_update`、`goal_objective`，其他非空字符串记为 `other`；缺失、null、空串、空白串和错误类型各有分类。`output_type` 记录 JSON 类型，`content_format` 使用现有格式校验器独立识别 `delegation`、`automation` 或 `heartbeat`，其他字符串记为 `other`，非字符串记为 `not_text`。因此，`bootstrap_candidate=none` 时可以区分元数据不匹配和内容未通过格式检查；内容匹配本身不代表请求允许转换。JSON 含重复字段或无法解码时，这四项记为 `not_checked`。
+
 管理员可通过 `GET /api/v1/admin/ops/system-logs`，按时间范围、`request_id` 和 `level=warn` 查询，在返回记录的 `extra.tool_output_diagnostic` 中读取诊断。关键词参数 `q` 可用 `function_call_output_missing_call_id` 或 `tool_output_diagnostic`；进程 JSON 日志也包含该对象。系统日志页面的关键词查询可以找到记录，行详情只展示选定的标量字段，嵌套诊断需要从 API 响应或进程 JSON 日志查看。日志采样、异步写入和留存规则见[可观测性与数据生命周期](../operations/observability_and_data_lifecycle.md#关联与脱敏)。
+
+HTTP Responses（包括 `/responses/compact`、`/responses/input_tokens`）和 WebSocket Responses 通过启动配置 `gateway.codex_client_notifications=true` 为全部已认证 API Key 操作者开启客户端通知兼容。全局开关为 `false` 时，可用 `gateway.codex_client_notification_user_ids` 为部分操作者试用，默认名单为空。名单匹配鉴权上下文中的实际用户，租用或协作 Key 的所有者不参与这项匹配；请求正文和自定义 Header 中的用户编号也不参与。配置加载和重启要求见[配置](configuration.md#configuration_sources)。
+
+启用时，入口在 bootstrap 处理和工具结果校验之前，识别 `codex_app.automation_update` 与 `agent.goal_objective`。项目须包含字符串类型的 `type`、`id`、`namespace`、`name`、`output` 五个字段，`type` 为 `function_call_output`，`id` 匹配 `fco_[a-fA-F0-9-]{32,36}`；还允许携带完整保留的 `internal_chat_message_metadata_passthrough`。出现 `call_id`（包括 null 或空串）、`retain` 等其他字段时，沿用后续校验和处理。命中的完整项目 JSON 被封装为同一输入位置的 `role=assistant` 历史消息，`content` 为字符串，前缀说明这是客户端提供的通知数据，不能作为新指令、工具调用或审批。自动任务的普通文本、带时间和指令的心跳以及目标通知采用相同表示，混合历史中的普通调用和结果继续保留其关联字段。
+
+对启用兼容的操作者，HTTP 入口跳过旧的 automation bootstrap 规则，所有自动任务事件都按上述字段格式判断。带空 `call_id`、额外字段或不符合 ID 格式的旧事件不会再被宽泛的心跳规则转换为用户消息；工具委派 bootstrap 继续按自身规则处理。
+
+HTTP 和 WebSocket 共用同一转换器。WebSocket 处理首轮和后续轮次的 `response.create`，覆盖原生上游、专用透传和 HTTP 桥接；其他控制帧沿用自己的处理。转换前按入口限额检查所有通知转义后的累计大小，HTTP 在工具委派 bootstrap 重编码后再次检查大小，超限返回 413；WebSocket 超限以 1009 关闭连接。HTTP 生成与压缩请求的会话哈希使用转换前的输入；WebSocket 转换保留参与会话哈希的内容。输入计数接口将通知文字计入请求，并使用其经过模型映射的计数正文计算会话哈希。
+
+这项配置选择通知的传输表示。工具名、项目 ID 和名单命中均不能证明事件来自可信调度器，执行权限仍由客户端及应用原有的授权流程决定。完整封装保留通知内容、名称、命名空间和项目身份，便于模型读取，也使后续工具字段清理不会删除通知的元数据。含重复 JSON 字段、无效 UTF-8 或未识别项目的请求继续交给相应校验处理；没有项目需要转换时沿用原始字节。转换日志 `openai.codex_client_notifications_normalized` 记录操作者 ID、数量和固定类型，原始事件内容不写入日志。
 
 OpenAI OAuth 和 API Key 的普通 Responses 请求保留 `function_call`、`tool_call`、`custom_tool_call`、`mcp_tool_call` 历史项上的 `namespace`。工具可以在顶层 `tools`、历史的 `additional_tools.tools` 或 `tool_search_output.tools` 中声明，也可以由上游会话保存；本轮省略声明不影响已经执行的调用身份。普通消息等非调用项上残留的这个字段会被清理，转义的 JSON 键名使用同一规则。旧版 Compact 的字段白名单、namespace 清理和 OAuth 工具平铺仍由对应端点规则决定。
 

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -45,11 +46,11 @@ const (
 
 // OpenAITextOptions carries text HTTP input limits and app assembly settings.
 // App binding applies MaxSwitches to the execution loop, while the handler
-// uses body size, Compact interval and force-client diagnostic values
-// directly.
+// uses body size, Compact interval, notification user IDs and force-client
+// diagnostic values directly. Construction copies the user ID list.
 type OpenAITextOptions struct {
-	// MaxBodyBytes bounds normalized lenient JSON bytes after reading and
-	// decoding. A nonpositive value uses the normalizer's 64 MiB default.
+	// MaxBodyBytes bounds normalized lenient JSON and converted notification
+	// bodies. A nonpositive value uses the normalizers' shared 64 MiB default.
 	MaxBodyBytes int64
 	MaxSwitches  int // assembly provider-switch budget
 	// CompactKeepaliveInterval selects the heartbeat duration for admitted
@@ -58,6 +59,13 @@ type OpenAITextOptions struct {
 	// ForceCodexCLI records startup forced-client policy in Compact diagnostics;
 	// the upstream request builders receive their execution policy separately.
 	ForceCodexCLI bool
+	// CodexClientNotifications selects every authenticated API-key actor for
+	// client notification conversion. False leaves selection to the configured user list.
+	CodexClientNotifications bool
+	// CodexClientNotificationUserIDs selects authenticated acting users for
+	// notification conversion when the global switch is false. Constructors copy
+	// the list; an empty list selects nobody for this compatibility mode.
+	CodexClientNotificationUserIDs []int64
 }
 
 // OpenAISessionInput identifies the distinct session derivation requested by
@@ -307,10 +315,12 @@ type OpenAITextHandler struct {
 }
 
 // NewOpenAITextHandler captures options and supplied admission, prompt and
-// execution bindings. Construction performs no validation or resource
-// acquisition; callers install usable dependencies and any RequestLifetime
-// binding before serving the three text entries.
+// execution bindings, copying the notification user list to isolate later
+// caller edits. Construction performs no validation or resource acquisition;
+// callers install usable dependencies and any RequestLifetime binding before
+// serving the three text entries.
 func NewOpenAITextHandler(options OpenAITextOptions, backend OpenAITextBackend, prompt MessagesPrompt, executor execution.Executor) *OpenAITextHandler {
+	options.CodexClientNotificationUserIDs = slices.Clone(options.CodexClientNotificationUserIDs)
 	return &OpenAITextHandler{executor: executor, options: options, backend: backend, prompt: prompt}
 }
 

@@ -111,6 +111,8 @@ func provideOpenAITokensHTTP(source *gatewayhttp.OpenAIAuxiliary, funding *admis
 	options := gatewayhttp.OpenAITokenOptions{MaxSwitches: 3}
 	if cfg != nil {
 		options.MaxBodyBytes = cfg.Gateway.MaxBodySize
+		options.CodexClientNotifications = cfg.Gateway.CodexClientNotifications
+		options.CodexClientNotificationUserIDs = cfg.Gateway.CodexClientNotificationUserIDs
 		if cfg.Gateway.MaxProviderSwitches > 0 {
 			options.MaxSwitches = cfg.Gateway.MaxProviderSwitches
 		}

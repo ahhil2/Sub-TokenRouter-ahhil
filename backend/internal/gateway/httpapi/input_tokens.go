@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -11,8 +13,10 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	textflow "github.com/TokenFlux/TokenRouter/internal/gateway/text"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
@@ -31,7 +35,9 @@ import (
 // matching the body passed to the count adapter. The handler binds the same
 // route plan in request context before constructing that adapter, so
 // downstream selection can interpret the mapped payload with the group
-// decision that produced it.
+// decision that produced it. Selected API-key actors receive the same enclosed
+// notification records used during generation, so counting includes that text
+// and the normalization budget applies before provider selection.
 
 // InputTokensCall retains requested and routed identity for Responses counting
 // execution.
@@ -100,6 +106,23 @@ func (h *OpenAITokensHandler) ResponsesInputTokens(c *gin.Context) {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
+	}
+	// Count the same event representation sent for generation. Applying the
+	// authenticated rollout policy here includes its text overhead in preflight
+	// and keeps raw call-less records away from upstream token endpoints.
+	actor, hasActor := authctx.GetPrincipal(c)
+	if hasActor && actor.CredentialKind == "api_key" && actor.UserID > 0 &&
+		(h.options.CodexClientNotifications || slices.Contains(h.options.CodexClientNotificationUserIDs, actor.UserID)) {
+		normalized, _, normalizeErr := requeststate.NormalizeCodexClientNotifications(body, h.options.MaxBodyBytes)
+		if normalizeErr != nil {
+			if maxErr, ok := errors.AsType[*openai.BodyLimitError](normalizeErr); ok {
+				h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", BodyTooLargeMessage(maxErr.Limit))
+			} else {
+				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to normalize client notifications")
+			}
+			return
+		}
+		body = normalized
 	}
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || strings.TrimSpace(modelResult.String()) == "" {

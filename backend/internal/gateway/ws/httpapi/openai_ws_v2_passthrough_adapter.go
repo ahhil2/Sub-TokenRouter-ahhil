@@ -126,7 +126,15 @@ func (s *OpenAIWebSocketExecutor) proxyResponsesWebSocketV2Passthrough(
 			return *s.Options
 		}
 		return gatewayws.DefaultParameters()
-	}, Port: port, Hooks: coreHooks, Options: gatewayws.PassthroughOptions{ProviderID: provider.Record.ID, OAuth: provider.View().IsOpenAIOAuth(), WriteTimeout: s.openAIWSWriteTimeout(), IdleTimeout: s.openAIWSPassthroughIdleTimeout(), InterTurnIdleTimeout: s.openAIWSIngressInterTurnIdleTimeout()}}
+	}, Port: port, Hooks: coreHooks, Options: gatewayws.PassthroughOptions{
+		ProviderID: provider.Record.ID, OAuth: provider.View().IsOpenAIOAuth(), WriteTimeout: s.openAIWSWriteTimeout(), IdleTimeout: s.openAIWSPassthroughIdleTimeout(), InterTurnIdleTimeout: s.openAIWSIngressInterTurnIdleTimeout(),
+		NormalizeClientNotifications: func(body []byte) ([]byte, error) {
+			// Dedicated relays retain their executor for the entire connection;
+			// capture fresh limits when admitting each new request frame.
+			current := s.forTurn()
+			return current.NormalizeClientNotifications(c, body, ResolveOpenAIWSClientReadLimitBytes(current.Options))
+		},
+	}}
 	return runtime.Run(ctx, gatewayhttp.WSClientFrames{Conn: clientConn}, firstClientMessage)
 }
 

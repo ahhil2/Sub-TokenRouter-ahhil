@@ -9,6 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
+
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
 // TestValidateOpenAIFunctionCallOutput_HostedSearch replays hosted search beside
@@ -204,6 +207,67 @@ func TestValidateOpenAIFunctionCallOutput_DiagnosticDelegation(t *testing.T) {
 			require.NotContains(t, encoded, "codex_delegation")
 		})
 	}
+}
+
+// TestValidateOpenAIFunctionCallOutput_DiagnosticMixedHistory places three
+// missing-ID outputs at the observed failure positions using synthetic content.
+// Bootstrap inspection must keep the rejection while serialized log metadata
+// distinguishes an unknown wrapper, nontext output, and a recognized candidate.
+func TestValidateOpenAIFunctionCallOutput_DiagnosticMixedHistory(t *testing.T) {
+	input := make([]any, 24)
+	for i := range input {
+		input[i] = map[string]any{"type": "message", "role": "user", "content": "PRIVATE_MESSAGE"}
+	}
+	envelope := `<codex_delegation><source_thread_id>PRIVATE_THREAD</source_thread_id><input>PRIVATE_TASK</input></codex_delegation>`
+	input[13] = map[string]any{
+		"type": "function_call_output", "namespace": "PRIVATE_NAMESPACE", "name": "PRIVATE_TOOL",
+		"id": "PRIVATE_ITEM_ID", "tool_call_id": "PRIVATE_ALTERNATIVE_ID", "output": envelope,
+	}
+	input[16] = map[string]any{
+		"type": "function_call_output", "namespace": "codex_tui", "name": "create_thread",
+		"output": []any{map[string]any{"type": "input_text", "text": "PRIVATE_OUTPUT"}},
+	}
+	input[19] = map[string]any{
+		"type": "function_call_output", "namespace": "codex_tui", "name": "send_message_to_thread", "output": envelope,
+	}
+	body, err := json.Marshal(map[string]any{"input": input})
+	require.NoError(t, err)
+	original := bytes.Clone(body)
+	body, changed := requeststate.NormalizeCodexAutomationBootstrap(body)
+	require.False(t, changed)
+	body, changed = requeststate.NormalizeCodexDelegationBootstrap(body)
+	require.False(t, changed)
+
+	logger, logs := newObservedLogger(t)
+	c, recorder := newGinContextForEndpoint(t, "/v1/responses")
+	require.False(t, ValidateOpenAIFunctionCallOutput(c, body, logger))
+	require.Equal(t, original, body)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Equal(t, "Client tool outputs require a non-empty call_id", gjson.Get(recorder.Body.String(), "error.message").String())
+	require.NotContains(t, recorder.Body.String(), "bootstrap_shape")
+	entries := logs.All()
+	require.Len(t, entries, 1)
+	// The system-log sink applies this recursive redactor before persistence;
+	// keep the new nested classifications readable through that actual shared path.
+	encoded, err := json.Marshal(logredact.RedactMap(entries[0].ContextMap()))
+	require.NoError(t, err)
+	diagnostic := gjson.GetBytes(encoded, "tool_output_diagnostic")
+	require.EqualValues(t, 3, diagnostic.Get("missing_call_id_count").Int())
+	require.EqualValues(t, 0, diagnostic.Get("items_omitted").Int())
+	require.EqualValues(t, 13, diagnostic.Get("bootstrap.delegation.blocked_index").Int())
+	require.Equal(t, "tool_history_disallowed", diagnostic.Get("bootstrap.delegation.result").String())
+	require.Equal(t, "none", diagnostic.Get("items.0.bootstrap_candidate").String())
+	require.Equal(t, "other", diagnostic.Get("items.0.bootstrap_shape.namespace").String())
+	require.Equal(t, "delegation", diagnostic.Get("items.0.bootstrap_shape.content_format").String())
+	require.Equal(t, "nonempty", diagnostic.Get("items.0.id_state").String())
+	require.Equal(t, "nonempty", diagnostic.Get("items.0.tool_call_id_state").String())
+	require.EqualValues(t, 16, diagnostic.Get("items.1.index").Int())
+	require.Equal(t, "array", diagnostic.Get("items.1.bootstrap_shape.output_type").String())
+	require.Equal(t, "not_text", diagnostic.Get("items.1.bootstrap_shape.content_format").String())
+	require.EqualValues(t, 19, diagnostic.Get("items.2.index").Int())
+	require.Equal(t, "delegation", diagnostic.Get("items.2.bootstrap_candidate").String())
+	require.Equal(t, "send_message_to_thread", diagnostic.Get("items.2.bootstrap_shape.name").String())
+	require.NotContains(t, string(encoded), "PRIVATE_")
 }
 
 // TestValidateOpenAIFunctionCallOutput_DiagnosticRedactsRequestValues places

@@ -166,7 +166,12 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 
 	state := &gatewayws.IngressState{TurnState: strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))}
 
-	normalizer := &gatewayws.RequestNormalizer{State: state, Options: gatewayws.NormalizeOptions{ProviderID: provider.Record.ID, OAuth: provider.View().IsOpenAIOAuth(), ForceHTTPBridge: forceHTTPBridge}, Port: &wsRequestAdapter{wsPassthroughAdapter: &wsPassthroughAdapter{service: s, request: c, provider: provider, hooks: hooks}, client: clientConn, isCodex: isCodexCLI}}
+	normalizer := &gatewayws.RequestNormalizer{State: state, Options: gatewayws.NormalizeOptions{
+		ProviderID: provider.Record.ID, OAuth: provider.View().IsOpenAIOAuth(), ForceHTTPBridge: forceHTTPBridge,
+		NormalizeClientNotifications: func(body []byte) ([]byte, error) {
+			return s.NormalizeClientNotifications(c, body, ResolveOpenAIWSClientReadLimitBytes(s.Options))
+		},
+	}, Port: &wsRequestAdapter{wsPassthroughAdapter: &wsPassthroughAdapter{service: s, request: c, provider: provider, hooks: hooks}, client: clientConn, isCodex: isCodexCLI}}
 	parseClientPayload := func(raw []byte, replace bool, turn int) (gatewayws.ClientPayload, error) {
 		// Refresh acquisition and relay settings for this turn. The normalizer keeps
 		// its initially bound service reference, including the blocked-frame write budget.

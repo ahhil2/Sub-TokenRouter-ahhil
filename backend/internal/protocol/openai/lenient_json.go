@@ -20,9 +20,9 @@ const (
 	// jsonUTF8BOMLen is the length used to recognize and remove the UTF-8
 	// byte-order marker before normalized JSON size accounting begins.
 	jsonUTF8BOMLen = 3
-	// maxDecompressedBodySize supplies the normalized-body byte limit when
-	// callers configure a nonpositive bound for the lenient compatibility pass.
-	maxDecompressedBodySize = 64 << 20
+	// DefaultMaxNormalizedBodySize supplies the normalized-body byte limit when
+	// callers configure a nonpositive bound for a JSON compatibility conversion.
+	DefaultMaxNormalizedBodySize = 64 << 20
 )
 
 // BodyLimitError reports a normalized body size limit violation for the HTTP
@@ -47,7 +47,7 @@ func (e *BodyLimitError) Error() string {
 // borrowed result before modifying that underlying storage.
 func NormalizeLenientJSONRequestBody(body []byte, maxNormalizedBytes int64) ([]byte, error) {
 	if maxNormalizedBytes <= 0 {
-		maxNormalizedBytes = maxDecompressedBodySize
+		maxNormalizedBytes = DefaultMaxNormalizedBodySize
 	}
 
 	body = trimUTF8BOM(body)

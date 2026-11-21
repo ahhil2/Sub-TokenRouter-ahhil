@@ -43,7 +43,7 @@
 
 环境变量把点分的键转成大写加下划线，例如 `database.host` 对应 `DATABASE_HOST`，`gateway.max_body_size` 对应 `GATEWAY_MAX_BODY_SIZE`。`setDefaults` 还负责把所有 struct 键注册进 Viper，这样只用环境变量部署时，`Unmarshal` 也能读到这些键；新增字段时，除了 `mapstructure` tag，还要注册默认值，让这个键可以被环境变量设置。
 
-少数变量有单独的绑定或解析：`ENABLE_SERVER_TIMING`，逗号分隔的 `SERVER_TRUSTED_PROXIES` 和 `SECURITY_FORWARDED_CLIENT_IP_HEADERS`，以及有兼容条件的旧 WeChat 变量。
+少数变量有单独的绑定或解析：`ENABLE_SERVER_TIMING`，逗号分隔的 `SERVER_TRUSTED_PROXIES`、`SECURITY_FORWARDED_CLIENT_IP_HEADERS` 和 `GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS`，以及有兼容条件的旧 WeChat 变量。
 
 加载完成后，依次做字符串规范化、枚举回退、派生默认值、读取文件和完整的 `Validate`。安全 header、URL、数值范围、模式组合无效，或缺少必要的 secret 时，启动失败，问题在启动时就会暴露。自动生成的 TOTP key 只适合开发环境，`EncryptionKeyConfigured=false` 时后台不会把 TOTP 当成生产可用的配置。
 
@@ -52,6 +52,12 @@
 ### 网关和时区
 
 网关的静态参数（请求体大小、等待、切换上限和完成执行器参数），由 app 整理成单独的 Options 传给网关，核心代码不接收完整的 Config。HTTP 请求、平台尝试和完成队列使用同一个应用依赖图。用户提示词替换和错误规则，按各自的设置来源和生效时机读取，运行状态分别由 `gateway/promptpolicy` 和 `gateway/errorpolicy` 持有。错误规则的管理写入、回源和发布只在单个服务进程内协调，多个实例之间的一致性靠各自回源。
+
+`gateway.codex_client_notifications` 为全部已认证 API Key 调用者开启 HTTP Responses、压缩与输入计数接口，以及 WebSocket Responses 的客户端通知转换，默认 `false`，环境变量为 `GATEWAY_CODEX_CLIENT_NOTIFICATIONS`。设为 `true` 时，所有用户都使用这项兼容处理；设为 `false` 时，按 `gateway.codex_client_notification_user_ids` 名单选择用户。两个设置都在进程启动时读取，修改后需要重启，每个实例分别读取自己的配置。
+
+用户名单默认 `[]`，YAML 使用正整数列表，环境变量 `GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS` 使用逗号分隔的 ID，例如 `101,102`；空环境变量会清空 YAML 中的名单。零、负数、浮点数、布尔值或超出 int64 范围的项会使启动失败。关闭所有用户的兼容转换需要同时将全局开关设为 `false`、名单设为空，并核对环境变量是否覆盖文件配置。
+
+全局开关和名单均要求 `authctx.GetPrincipal` 返回有效的 API Key 操作者，团队凭据按成员身份判断。缺少这份鉴权记录时不启用转换；付款账户 `AuthSubject.UserID` 与 Key 所有者不参与名单匹配。启用后，Responses 入口把符合限定字段格式的 `codex_app.automation_update` 和 `agent.goal_objective` 完整记录封装为 `role=assistant` 历史消息，标注它是客户端提供的事件数据。通知内容不能增加执行或审批权限，用户授权继续由既有鉴权和权限检查决定。具体转换条件见 [OpenAI 上游](openai_upstream.md)。
 
 时区的优先级：标准的 `TZ`、兼容的 `TIMEZONE`、配置文件、默认值 `Asia/Shanghai`。`TZ` 非空时覆盖 `TIMEZONE`，容器运行时、应用的本地日统计和 PostgreSQL 连接的时区因此保持一致；无效的 IANA 名称在启动校验时失败。
 

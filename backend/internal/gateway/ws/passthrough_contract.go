@@ -234,6 +234,9 @@ type PassthroughPort interface {
 type PassthroughOptions struct {
 	ProviderID int64 // selected upstream provider identifier
 	OAuth      bool  // OAuth tool aliasing enabled
+	// NormalizeClientNotifications converts selected client event records before
+	// first and later turn tool rewriting. Nil retains their wire representation.
+	NormalizeClientNotifications func([]byte) ([]byte, error)
 	// WriteTimeout and IdleTimeout initialize budgets when no parameter reader is
 	// supplied. With Parameters available, accepted-turn write and read budgets
 	// come from captured snapshots; some first-frame and rejection writes still

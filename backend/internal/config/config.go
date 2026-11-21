@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -30,7 +31,8 @@ import (
 // resolves file and environment precedence, and maps selected retired inputs
 // before the values reach module options. Trusted-proxy and forwarded-header
 // lists separately record environment presence so emptiness can replace
-// configured data.
+// configured data. Notification user IDs also retain supplied numeric types
+// during validation so weak decoding cannot select another user's identity.
 //
 // Validation mutates selected values while checking coupled startup
 // requirements, and an error can follow those mutations. Forwarded-IP policy
@@ -827,6 +829,14 @@ type GatewayConfig struct {
 	// ForceCodexCLI treats OpenAI /v1/responses requests as Codex CLI requests.
 	// Use when a gateway removes or rewrites User-Agent; disabled by default.
 	ForceCodexCLI bool `mapstructure:"force_codex_cli"`
+	// CodexClientNotifications enables notification representation compatibility
+	// for every authenticated API-key caller on HTTP and WebSocket Responses.
+	// Changes take effect after restart; false leaves selection to the user list.
+	CodexClientNotifications bool `mapstructure:"codex_client_notifications"`
+	// CodexClientNotificationUserIDs selects authenticated API-key actors for
+	// notification conversion when CodexClientNotifications is false. Empty selects
+	// nobody; startup requires positive IDs, and changes take effect after restart.
+	CodexClientNotificationUserIDs []int64 `mapstructure:"codex_client_notification_user_ids"`
 	// CodexImageGenerationBridgeEnabled injects the image_generation tool and
 	// bridge instructions into Codex
 	// /v1/responses.
@@ -2194,8 +2204,8 @@ func LoadForBootstrap() (*Config, error) {
 //
 // Only a missing searched configuration file permits continued
 // default/environment loading; explicit file access and parsing errors fail. TZ
-// sets the overriding timezone value, while trusted-proxy and forwarding-header
-// environment presence is decoded separately to retain explicit empty lists.
+// sets the overriding timezone value, while trusted-proxy, forwarding-header
+// and notification-user environment presence retains explicit empty lists.
 // Other fields undergo normalization, compatibility choices, and any configured
 // template file read before Validate.
 //
@@ -2256,6 +2266,17 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
 	}
+	// Read the supplied types again because weak integer decoding can truncate
+	// fractions or accept booleans, which could enable conversion for another user.
+	notificationUserIDs := viper.Get("gateway.codex_client_notification_user_ids")
+	if supplied, configured := os.LookupEnv("GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS"); configured {
+		notificationUserIDs = supplied
+	}
+	parsedNotificationUserIDs, err := parseCodexClientNotificationUserIDs(notificationUserIDs)
+	if err != nil {
+		return nil, fmt.Errorf("gateway.codex_client_notification_user_ids: %w", err)
+	}
+	cfg.Gateway.CodexClientNotificationUserIDs = parsedNotificationUserIDs
 	if trustedProxiesEnvConfigured {
 		cfg.Server.TrustedProxies = normalizeStringSlice(strings.Split(trustedProxiesEnv, ","))
 	}
@@ -2403,6 +2424,54 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// parseCodexClientNotificationUserIDs decodes a YAML integer list or
+// comma-separated environment value into positive user IDs. Empty input
+// disables conversion; malformed entries fail the whole list before any
+// decoded identities become available to request handlers.
+//
+// The caller supplies Viper's raw value, with any present environment variable
+// taking precedence. Numeric kinds are checked before parsing decimal text:
+// accepting Viper's weakly decoded integers could truncate a fractional value
+// or convert a boolean into an enabled user's identity.
+func parseCodexClientNotificationUserIDs(raw any) ([]int64, error) {
+	var values []any
+	switch value := raw.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		if value == "" {
+			return nil, nil
+		}
+		for part := range strings.SplitSeq(value, ",") {
+			values = append(values, part)
+		}
+	case []int64:
+		for _, userID := range value {
+			values = append(values, userID)
+		}
+	case []any:
+		values = value
+	default:
+		return nil, fmt.Errorf("must be a list of positive integers")
+	}
+	userIDs := make([]int64, 0, len(values))
+	for index, value := range values {
+		// Retain the supplied numeric kind before parsing text so YAML fractions
+		// and booleans cannot acquire the identity of an integer through coercion.
+		switch value.(type) {
+		case int, int64, uint64, string:
+		default:
+			return nil, fmt.Errorf("entry %d must be a positive integer", index)
+		}
+		userID, err := strconv.ParseInt(fmt.Sprint(value), 10, 64)
+		if err != nil || userID <= 0 {
+			return nil, fmt.Errorf("entry %d must be a positive integer", index)
+		}
+		userIDs = append(userIDs, userID)
+	}
+	return userIDs, nil
 }
 
 // configureConfigSource registers the trimmed CONFIG_FILE path when supplied,
@@ -2836,6 +2905,8 @@ func setDefaults() {
 	viper.SetDefault("gateway.max_provider_switches", 10)
 	viper.SetDefault("gateway.max_provider_switches_gemini", 3)
 	viper.SetDefault("gateway.force_codex_cli", false)
+	viper.SetDefault("gateway.codex_client_notifications", false)
+	viper.SetDefault("gateway.codex_client_notification_user_ids", []int64{})
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	viper.SetDefault("gateway.live.max_session_duration_seconds", 3600)
@@ -3658,6 +3729,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.MaxBodySize <= 0 {
 		return fmt.Errorf("gateway.max_body_size must be positive")
+	}
+	for _, userID := range c.Gateway.CodexClientNotificationUserIDs {
+		if userID <= 0 {
+			return fmt.Errorf("gateway.codex_client_notification_user_ids must contain positive integers")
+		}
 	}
 	if c.Gateway.TextMaxBodySize <= 0 || c.Gateway.TextMaxBodySize > c.Gateway.MaxBodySize {
 		return fmt.Errorf("gateway.text_max_body_size must be positive and no greater than gateway.max_body_size")

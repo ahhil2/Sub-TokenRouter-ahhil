@@ -21,6 +21,6 @@
 //   - reasoning_effort*.go, thinking.go: effort levels, request policies, and thinking state.
 //   - execution_hints.go, health.go, credential_budget.go: hints, health observations, and credential deadlines.
 //   - guardian_affinity.go, gemini_signature.go: parent-session affinity and provider-signature cleanup.
-//   - codex_bootstrap.go, response_tools.go: Codex bootstrap inputs and tool declarations.
+//   - codex_bootstrap.go, codex_client_notifications.go, response_tools.go: bootstrap inputs, opted-in client notices, and tool declarations.
 //   - response_failure.go: one-time consumption of provider failure effects.
 package requeststate

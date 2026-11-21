@@ -39,6 +39,9 @@ import (
 // Runtime, when supplied, replaces connection and first-frame values at upgrade.
 type ResponsesWSOptions struct {
 	ForceCodexCLI bool // configured Codex client preparation
+	// NormalizeClientNotifications converts first-frame event data before entry
+	// evaluates continuation and routing. Nil leaves notification representation unchanged.
+	NormalizeClientNotifications func(*gin.Context, []byte, int64) ([]byte, error)
 	// Runtime is optional; its snapshot overrides MaxIngressConnectionsPerAPIKey,
 	// ReadLimit, and FirstMessageTimeout before capacity acquisition. The static
 	// MaxProviderSwitches value continues into RunEntry independently of Runtime.
@@ -210,6 +213,7 @@ func (h *ResponsesWSHandler) ResponsesWebSocket(c *gin.Context) {
 		_ = wsConn.CloseNow()
 	}()
 	wsConn.SetReadLimit(options.ReadLimit)
+	c.Set(responsesWSReadLimitContextKey, options.ReadLimit)
 
 	firstMessageTimeout := options.FirstMessageTimeout
 	msgType, firstMessage, err := gatewayws.ReadClientMessage(
@@ -244,6 +248,19 @@ func (h *ResponsesWSHandler) ResponsesWebSocket(c *gin.Context) {
 	if !gjson.ValidBytes(firstMessage) {
 		gatewayhttp.CloseResponsesWS(wsConn, coderws.StatusPolicyViolation, "invalid JSON payload")
 		return
+	}
+	if options.NormalizeClientNotifications != nil {
+		// Convert first-frame notifications before entry measures tool context,
+		// so an independent event cannot create a false unresolved-tool dependency.
+		firstMessage, err = options.NormalizeClientNotifications(c, firstMessage, options.ReadLimit)
+		if err != nil {
+			if closeErr, ok := errors.AsType[*gatewayhttp.OpenAIWSClientCloseError](err); ok {
+				gatewayhttp.CloseResponsesWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
+			} else {
+				gatewayhttp.CloseResponsesWS(wsConn, coderws.StatusPolicyViolation, "invalid websocket notification payload")
+			}
+			return
+		}
 	}
 
 	subjectView := gatewayws.EntrySubject{UserID: subject.UserID, Concurrency: subject.Concurrency}

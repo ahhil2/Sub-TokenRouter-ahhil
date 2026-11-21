@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -89,11 +90,14 @@ func provideOpenAITextHTTP(
 // openAITextOptions captures body limits and a default three-switch budget.
 // Positive configured switches replace the default, positive keepalive seconds
 // become a Compact duration, and ForceCodexCLI is copied from startup
-// configuration.
+// configuration. Notification user IDs receive separate storage so later
+// configuration edits cannot change these assembled options.
 func openAITextOptions(cfg *config.Config) gatewayhttp.OpenAITextOptions {
 	options := gatewayhttp.OpenAITextOptions{MaxSwitches: 3}
 	if cfg != nil {
 		options.ForceCodexCLI = cfg.Gateway.ForceCodexCLI
+		options.CodexClientNotifications = cfg.Gateway.CodexClientNotifications
+		options.CodexClientNotificationUserIDs = slices.Clone(cfg.Gateway.CodexClientNotificationUserIDs)
 		options.MaxBodyBytes = cfg.Gateway.MaxBodySize
 		if cfg.Gateway.MaxProviderSwitches > 0 {
 			options.MaxSwitches = cfg.Gateway.MaxProviderSwitches

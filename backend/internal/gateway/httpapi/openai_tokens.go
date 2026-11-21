@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"slices"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -23,6 +24,13 @@ import (
 // auxiliary counting.
 type OpenAITokenOptions struct {
 	MaxBodyBytes int64 // maximum inbound body bytes
+	// CodexClientNotifications selects all authenticated API-key actors for the
+	// same notification representation used by Responses generation and compaction.
+	CodexClientNotifications bool
+	// CodexClientNotificationUserIDs selects actors when the global switch is
+	// false. The constructor copies these IDs so later configuration edits cannot
+	// change the counting policy of an assembled handler.
+	CodexClientNotificationUserIDs []int64
 	// MaxSwitches bounds provider changes in Responses preflight. A
 	// nonpositive allowance still permits the initial selection and its
 	// same-provider retry budget.
@@ -115,8 +123,10 @@ type OpenAITokensHandler struct {
 // NewOpenAITokensHandler binds auxiliary counting budgets, backend operations,
 // and prompt replacement. Dependencies remain shared references supplied by app
 // assembly. The constructor performs no readiness checks; handlers invoke
-// backend dependency validation when required.
+// backend dependency validation when required. Notification user IDs are copied
+// so counting policy remains stable after the caller updates its options.
 func NewOpenAITokensHandler(options OpenAITokenOptions, backend OpenAITokenBackend, prompt MessagesPrompt) *OpenAITokensHandler {
+	options.CodexClientNotificationUserIDs = slices.Clone(options.CodexClientNotificationUserIDs)
 	return &OpenAITokensHandler{options: options, backend: backend, prompt: prompt}
 }
 

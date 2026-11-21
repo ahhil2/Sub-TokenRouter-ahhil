@@ -3,6 +3,7 @@ package requeststate
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -16,6 +17,8 @@ import (
 // Codex bootstrap item, so diagnostics include the existing bootstrap checks
 // alongside field states. They inspect the body at tool validation time; these
 // observations do not reconstruct earlier transformations or upstream events.
+// Bootstrap metadata and output format are classified independently so an
+// unsupported wrapper can be distinguished from unrecognized content.
 //
 // Only failure logging calls this collector. User text, tool arguments, output,
 // identifiers, and arbitrary metadata never become diagnostic values. Samples
@@ -40,6 +43,8 @@ const openAIToolDiagnosticItemLimit = 32
 // do now, not what happened earlier. Samples contain at most thirty-two tool
 // items, prioritizing client results without IDs before other history; their
 // original input indices remain available when that priority changes order.
+// Alternative identifier fields report presence only; their existence does
+// not establish a valid call association or authorize identifier recovery.
 func DescribeOpenAIToolOutputFailure(body []byte) map[string]any {
 	root := gjson.ParseBytes(body)
 	bootstrap, decodedInput := inspectOpenAIDiagnosticBootstrap(body)
@@ -83,15 +88,20 @@ func DescribeOpenAIToolOutputFailure(body []byte) map[string]any {
 				return true
 			}
 			candidate := "not_checked"
+			var decodedItem any
 			if index < len(decodedInput) {
-				candidate = openAIToolDiagnosticBootstrapCandidate(decodedInput[index])
+				decodedItem = decodedInput[index]
+				candidate = openAIToolDiagnosticBootstrapCandidate(decodedItem)
 			}
 			sample := map[string]any{
 				"index":                   index,
 				"type":                    typ,
 				"execution":               execution,
 				"call_id_state":           openAIToolDiagnosticIDState(item.Get("call_id")),
+				"id_state":                openAIToolDiagnosticIDState(item.Get("id")),
+				"tool_call_id_state":      openAIToolDiagnosticIDState(item.Get("tool_call_id")),
 				"bootstrap_candidate":     candidate,
+				"bootstrap_shape":         openAIToolDiagnosticBootstrapShape(decodedItem),
 				"requires_client_call_id": requiresID,
 				"missing_call_id":         missingID,
 			}
@@ -203,6 +213,107 @@ func openAIToolDiagnosticBootstrapCandidate(raw any) string {
 		return "automation"
 	}
 	return "none"
+}
+
+// openAIToolDiagnosticBootstrapShape separates metadata recognition from output
+// format for one sampled input item. Callers supply an item decoded from a
+// unique-member request; unavailable decoding produces not_checked labels.
+//
+// Bootstrap normalization requires supported tool metadata and supported text,
+// so a candidate=none result cannot identify the mismatched part. These
+// independent classifications retain that distinction using fixed values.
+// Recognized content alone neither proves its origin nor permits conversion;
+// the existing candidate and whole-request checks still govern normalization.
+func openAIToolDiagnosticBootstrapShape(raw any) map[string]any {
+	item, ok := raw.(map[string]any)
+	if !ok {
+		return map[string]any{
+			"namespace": "not_checked", "name": "not_checked",
+			"output_type": "not_checked", "content_format": "not_checked",
+		}
+	}
+	output, exists := item["output"]
+	return map[string]any{
+		"namespace":      openAIToolDiagnosticKnownLabel(item, "namespace", "codex_app", "codex_tui", "agent"),
+		"name":           openAIToolDiagnosticKnownLabel(item, "name", "create_thread", "send_message_to_thread", "automation_update", "goal_objective"),
+		"output_type":    openAIToolDiagnosticValueType(output, exists),
+		"content_format": openAIToolDiagnosticBootstrapContent(output),
+	}
+}
+
+// openAIToolDiagnosticKnownLabel classifies one metadata field against fixed
+// allowed spellings. Unknown strings become other, while absent, null, empty,
+// blank, and nonstring fields retain separate states for compatibility diagnosis.
+func openAIToolDiagnosticKnownLabel(item map[string]any, key string, allowed ...string) string {
+	value, exists := item[key]
+	if !exists {
+		return "missing"
+	}
+	if value == nil {
+		return "null"
+	}
+	label, ok := value.(string)
+	if !ok {
+		return "invalid_type"
+	}
+	if slices.Contains(allowed, label) {
+		// Log a detached allowlisted label so queued metadata cannot retain text
+		// from the rejected request, even if its decoder changes string allocation.
+		return strings.Clone(label)
+	}
+	if label == "" {
+		return "empty"
+	}
+	if strings.TrimSpace(label) == "" {
+		return "blank"
+	}
+	return "other"
+}
+
+// openAIToolDiagnosticValueType reports a decoded JSON value's structural type.
+// The presence flag distinguishes an omitted member from explicit null; content
+// and container members are excluded from the returned fixed category.
+func openAIToolDiagnosticValueType(value any, exists bool) string {
+	if !exists {
+		return "missing"
+	}
+	switch value.(type) {
+	case nil:
+		return "null"
+	case string:
+		return "string"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	case json.Number:
+		return "number"
+	case bool:
+		return "boolean"
+	default:
+		return "other"
+	}
+}
+
+// openAIToolDiagnosticBootstrapContent recognizes supported text independently
+// of the item's tool metadata. Nonstring output is not_text; other means the
+// string failed all existing format validators, not that it is ordinary tool
+// output or safe to convert into a user message.
+func openAIToolDiagnosticBootstrapContent(output any) string {
+	text, ok := output.(string)
+	if !ok {
+		return "not_text"
+	}
+	if ValidCodexDelegationEnvelope(text) {
+		return "delegation"
+	}
+	if ValidCodexAutomationBootstrap(text) {
+		return "automation"
+	}
+	if ValidCodexAutomationHeartbeat(text) {
+		return "heartbeat"
+	}
+	return "other"
 }
 
 // openAIToolDiagnosticIDState labels identifier presence and string shape.

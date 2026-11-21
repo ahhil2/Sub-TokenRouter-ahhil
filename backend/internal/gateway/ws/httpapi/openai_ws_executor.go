@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
@@ -41,6 +42,15 @@ type OpenAIWSSelection interface {
 // owns service initialization and connection-resource shutdown. forTurn copies
 // this container while replacing only Options with a value snapshot.
 type OpenAIWSDependencies struct {
+	// CodexClientNotifications selects every authenticated API-key actor for
+	// notification representation compatibility. It does not establish event provenance.
+	CodexClientNotifications bool
+	// CodexClientNotificationUserIDs selects acting users when site-wide
+	// compatibility is disabled. Construction copies the caller-owned slice.
+	CodexClientNotificationUserIDs []int64
+	// MaxBodyBytes bounds notification expansion together with the connection's
+	// positive frame limit, including requests subsequently sent through HTTP.
+	MaxBodyBytes int64
 	// Options supplies static turn settings when Runtime is absent. Adapter
 	// accessors choose their own defaults for a nil pointer or unsupported values.
 	Options *OpenAIWSOptions
@@ -69,10 +79,12 @@ type OpenAIWebSocketExecutor struct {
 	openaiWSSessionPreemptions openAIWSSessionPreemptRegistry
 }
 
-// NewOpenAIWebSocketExecutor retains the supplied service references in a new
-// executor. Construction starts no connection workers or preemption watches;
-// the owner supplies required dependencies before invoking session execution.
+// NewOpenAIWebSocketExecutor retains the supplied service references and copies
+// notification rollout IDs into a new executor. Construction starts no
+// connection workers or preemption watches; the owner supplies required
+// dependencies before invoking session execution.
 func NewOpenAIWebSocketExecutor(deps OpenAIWSDependencies) *OpenAIWebSocketExecutor {
+	deps.CodexClientNotificationUserIDs = slices.Clone(deps.CodexClientNotificationUserIDs)
 	out := &OpenAIWebSocketExecutor{OpenAIWSDependencies: deps}
 
 	return out

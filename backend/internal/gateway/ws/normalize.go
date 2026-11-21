@@ -84,6 +84,15 @@ func (s *RequestNormalizer) Normalize(ctx context.Context, raw []byte, applyUser
 			nil,
 		)
 	}
+	if o.NormalizeClientNotifications != nil {
+		// Notification conversion precedes provider tool rewriting and replay
+		// analysis, while RawForHash continues to refer to the prompt-replaced input.
+		var normalizeErr error
+		normalized, normalizeErr = o.NormalizeClientNotifications(normalized)
+		if normalizeErr != nil {
+			return ClientPayload{}, normalizeErr
+		}
+	}
 	policyRequestModel := strings.TrimSpace(values[1].String())
 	if policyRequestModel == "" {
 		policyRequestModel = s.State.OriginalModel

@@ -15,8 +15,9 @@ import (
 // openai_tool_output_validation.go validates HTTP tool-output context before
 // Responses execution. Tool results need an association with their originating
 // calls, and the protocol helper reports which supporting input is present.
-// Requests containing no function-call output pass through this check, leaving
-// other request validation to the entry handler.
+// The public function-output gate skips requests containing no function-call
+// output. After converting client notices, the entry also invokes the shared
+// check when other supported client result types remain in that history.
 //
 // A nonblank previous response ID or existing tool-call context admits the
 // request before standalone-output checks. Server-executed tool search results
@@ -43,7 +44,14 @@ func ValidateOpenAIFunctionCallOutput(c *gin.Context, body []byte, reqLog *zap.L
 	if !gjson.GetBytes(body, `input.#(type=="function_call_output")`).Exists() {
 		return true
 	}
+	return validateOpenAIClientToolOutputContext(c, body, reqLog)
+}
 
+// validateOpenAIClientToolOutputContext checks client results across supported
+// output types after the caller selects validation. Notification conversion can
+// remove the last function_call_output while leaving custom or MCP results;
+// those remaining results still need the same call-context checks and errors.
+func validateOpenAIClientToolOutputContext(c *gin.Context, body []byte, reqLog *zap.Logger) bool {
 	validation := openai.ValidateFunctionCallOutputContextBytes(body)
 	if !validation.HasFunctionCallOutput {
 		return true

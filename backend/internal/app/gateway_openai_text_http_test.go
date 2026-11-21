@@ -200,6 +200,24 @@ func newEmptyGenericSelectionFixture() *selection.Generic {
 	return selection.NewGeneric(selection.GenericDependencies{}, selection.DefaultOptions())
 }
 
+// TestOpenAITextOptionsCopiesNotificationUsers assembles text options from a
+// configured allowlist, then edits the configuration. Captured options keep
+// their own scope, and absent configuration leaves notification conversion disabled.
+func TestOpenAITextOptionsCopiesNotificationUsers(t *testing.T) {
+	require.Empty(t, openAITextOptions(nil).CodexClientNotificationUserIDs)
+	require.False(t, openAITextOptions(nil).CodexClientNotifications)
+	cfg := &config.Config{}
+	cfg.Gateway.CodexClientNotifications = true
+	cfg.Gateway.CodexClientNotificationUserIDs = []int64{40, 41}
+	options := openAITextOptions(cfg)
+	require.True(t, options.CodexClientNotifications)
+	require.Equal(t, []int64{40, 41}, options.CodexClientNotificationUserIDs)
+	cfg.Gateway.CodexClientNotificationUserIDs[0] = 42
+	require.Equal(t, []int64{40, 41}, options.CodexClientNotificationUserIDs)
+	options.CodexClientNotificationUserIDs[1] = 43
+	require.Equal(t, []int64{42, 41}, cfg.Gateway.CodexClientNotificationUserIDs)
+}
+
 // TestChatCompletionsChecksFinalOutput validates each selected provider target
 // before forwarding. Image-only declarations reject Chat, while a provider
 // mapping to a text target keeps the image-named client alias executable.

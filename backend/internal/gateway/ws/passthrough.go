@@ -59,6 +59,15 @@ import (
 // can replace the provider, while later timeout requires reconnection.
 func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, firstClientMessage []byte) error {
 	p, o, hooks := s.Port, s.Options, s.Hooks
+	if o.NormalizeClientNotifications != nil {
+		// Normalize before any OAuth aliasing can change notification names;
+		// direct executor callers receive the same event handling as HTTP entry.
+		var normalizeErr error
+		firstClientMessage, normalizeErr = o.NormalizeClientNotifications(firstClientMessage)
+		if normalizeErr != nil {
+			return normalizeErr
+		}
+	}
 	var turnParameters atomic.Pointer[Parameters]
 	initial := DefaultParameters()
 	// Truncate static durations to whole-second fallback parameters, dropping
@@ -355,6 +364,15 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				}()
 			}
 			if isResponseCreate {
+				if o.NormalizeClientNotifications != nil {
+					// Later turns use the shared converter before aliases and admission
+					// capture, keeping notification history distinct from paired tool output.
+					var normalizeErr error
+					payload, normalizeErr = o.NormalizeClientNotifications(payload)
+					if normalizeErr != nil {
+						return nil, nil, normalizeErr
+					}
+				}
 				if o.OAuth {
 					aliasedBody, aliasErr := p.AliasTools(payload)
 					if aliasErr != nil {
