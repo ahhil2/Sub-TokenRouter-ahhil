@@ -220,7 +220,7 @@ func TestValidateOpenAIFunctionCallOutput_DiagnosticMixedHistory(t *testing.T) {
 	}
 	envelope := `<codex_delegation><source_thread_id>PRIVATE_THREAD</source_thread_id><input>PRIVATE_TASK</input></codex_delegation>`
 	input[13] = map[string]any{
-		"type": "function_call_output", "namespace": "PRIVATE_NAMESPACE", "name": "PRIVATE_TOOL",
+		"type": "function_call_output", "namespace": "external_agent", "name": "unknown_client_notice",
 		"id": "PRIVATE_ITEM_ID", "tool_call_id": "PRIVATE_ALTERNATIVE_ID", "output": envelope,
 	}
 	input[16] = map[string]any{
@@ -261,6 +261,8 @@ func TestValidateOpenAIFunctionCallOutput_DiagnosticMixedHistory(t *testing.T) {
 	require.Equal(t, "delegation", diagnostic.Get("items.0.bootstrap_shape.content_format").String())
 	require.Equal(t, "nonempty", diagnostic.Get("items.0.id_state").String())
 	require.Equal(t, "nonempty", diagnostic.Get("items.0.tool_call_id_state").String())
+	require.Equal(t, "unknown_client_notice", diagnostic.Get("items.0.item_shape.name").String())
+	require.Equal(t, "external_agent", diagnostic.Get("items.0.item_shape.namespace").String())
 	require.EqualValues(t, 16, diagnostic.Get("items.1.index").Int())
 	require.Equal(t, "array", diagnostic.Get("items.1.bootstrap_shape.output_type").String())
 	require.Equal(t, "not_text", diagnostic.Get("items.1.bootstrap_shape.content_format").String())
@@ -271,11 +273,29 @@ func TestValidateOpenAIFunctionCallOutput_DiagnosticMixedHistory(t *testing.T) {
 }
 
 // TestValidateOpenAIFunctionCallOutput_DiagnosticRedactsRequestValues places
-// secrets in output content, parameters, identifiers, and extensible metadata.
-// Serialized warning fields must contain only fixed classifications for those
-// values, including unknown tool types and execution values.
+// an unknown agent event beside hosted search and an identified tool result.
+// Warnings expose the failed event's name and top-level field types through
+// persistence redaction while result contents and identifiers remain private.
 func TestValidateOpenAIFunctionCallOutput_DiagnosticRedactsRequestValues(t *testing.T) {
-	body := []byte(`{"input":[{"type":"function_call_output","execution":"PRIVATE_EXECUTION","name":"PRIVATE_NAME","namespace":"PRIVATE_NAMESPACE","arguments":"PRIVATE_ARGUMENTS","output":"PRIVATE_OUTPUT"},{"type":"tool_search_output","execution":"server","call_id":null,"tools":[{"type":"function","name":"PRIVATE_TOOL_NAME","parameters":{"description":"PRIVATE_PARAMETERS"}}]},{"type":"PRIVATE_TYPE_call_output","execution":"PRIVATE_OTHER_EXECUTION","call_id":"PRIVATE_CALL_ID","output":{"text":"PRIVATE_NESTED_OUTPUT"}}]}`)
+	body := []byte(`{"input":[
+		{
+			"type":"function_call_output",
+			"id":"PRIVATE_ITEM_ID",
+			"execution":"PRIVATE_EXECUTION",
+			"name":"unrecognized_agent_event",
+			"namespace":"agent",
+			"tool_call_id":"PRIVATE_ALTERNATIVE_ID",
+			"arguments":"PRIVATE_ARGUMENTS",
+			"output":"PRIVATE_OUTPUT",
+			"internal_chat_message_metadata_passthrough":{"metadata_key":"PRIVATE_METADATA","nested":{"text":"PRIVATE_METADATA_NESTED"}},
+			"retry_count":987654321,
+			"retain":false,
+			"status":null,
+			"references":["PRIVATE_REFERENCE"]
+		},
+		{"type":"tool_search_output","execution":"server","call_id":null,"tools":[{"type":"function","name":"PRIVATE_TOOL_NAME","parameters":{"description":"PRIVATE_PARAMETERS"}}]},
+		{"type":"PRIVATE_TYPE_call_output","execution":"PRIVATE_OTHER_EXECUTION","call_id":"PRIVATE_CALL_ID","output":{"text":"PRIVATE_NESTED_OUTPUT"}}
+	]}`)
 	original := bytes.Clone(body)
 	logger, logs := newObservedLogger(t)
 	c, recorder := newGinContextForEndpoint(t, "/v1/responses")
@@ -283,23 +303,73 @@ func TestValidateOpenAIFunctionCallOutput_DiagnosticRedactsRequestValues(t *test
 	require.False(t, ValidateOpenAIFunctionCallOutput(c, body, logger))
 	require.Equal(t, original, body)
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Equal(t, "invalid_request_error", gjson.Get(recorder.Body.String(), "error.type").String())
+	require.Equal(t, "Client tool outputs require a non-empty call_id", gjson.Get(recorder.Body.String(), "error.message").String())
+	require.NotContains(t, recorder.Body.String(), "tool_output_diagnostic")
+	require.NotContains(t, recorder.Body.String(), "item_shape")
+	require.NotContains(t, recorder.Body.String(), "unrecognized_agent_event")
+	require.NotContains(t, recorder.Body.String(), "PRIVATE_")
 	entries := logs.All()
 	require.Len(t, entries, 1)
 	require.Equal(t, "openai.request_validation_failed", entries[0].Message)
-	encodedFields, err := json.Marshal(entries[0].ContextMap())
-	require.NoError(t, err)
-	encoded := string(encodedFields)
-	require.True(t, json.Valid(encodedFields))
-	require.NotContains(t, encoded, "PRIVATE_")
-	diagnostic := gjson.Get(encoded, "tool_output_diagnostic")
-	require.Equal(t, int64(3), diagnostic.Get("input_item_count").Int())
-	require.Equal(t, int64(1), diagnostic.Get("hosted_search_count").Int())
-	require.Equal(t, "other", diagnostic.Get("items.0.execution").String())
-	require.Equal(t, "server", diagnostic.Get("items.1.execution").String())
-	require.False(t, diagnostic.Get("items.1.requires_client_call_id").Bool())
-	require.False(t, diagnostic.Get("items.1.missing_call_id").Bool())
-	require.Equal(t, "other_tool_output", diagnostic.Get("items.2.type").String())
-	require.Equal(t, "other", diagnostic.Get("items.2.execution").String())
+
+	// Persistence uses the shared recursive redactor. Exercise both representations
+	// so event names survive that path while nested request values stay absent.
+	for name, fields := range map[string]map[string]any{
+		"warning":     entries[0].ContextMap(),
+		"persistence": logredact.RedactMap(entries[0].ContextMap()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			encodedFields, err := json.Marshal(fields)
+			require.NoError(t, err)
+			encoded := string(encodedFields)
+			require.True(t, json.Valid(encodedFields))
+			require.NotContains(t, encoded, "PRIVATE_")
+			require.NotContains(t, encoded, "987654321")
+			require.NotContains(t, encoded, "metadata_key")
+			require.NotContains(t, encoded, "nested")
+			diagnostic := gjson.Get(encoded, "tool_output_diagnostic")
+			require.EqualValues(t, 3, diagnostic.Get("input_item_count").Int())
+			require.EqualValues(t, 1, diagnostic.Get("hosted_search_count").Int())
+			require.Equal(t, "other", diagnostic.Get("items.0.execution").String())
+			require.Equal(t, "other", diagnostic.Get("items.0.bootstrap_shape.name").String())
+			require.Equal(t, "agent", diagnostic.Get("items.0.bootstrap_shape.namespace").String())
+			shape := diagnostic.Get("items.0.item_shape")
+			require.Equal(t, "unrecognized_agent_event", shape.Get("name").String())
+			require.Equal(t, "agent", shape.Get("namespace").String())
+			require.False(t, shape.Get("name_truncated").Bool())
+			require.False(t, shape.Get("namespace_truncated").Bool())
+			require.EqualValues(t, 13, shape.Get("field_count").Int())
+			require.Zero(t, shape.Get("fields_omitted").Int())
+			fieldTypes := make(map[string]string)
+			for _, field := range shape.Get("fields").Array() {
+				fieldTypes[field.Get("name").String()] = field.Get("type").String()
+				require.False(t, field.Get("name_truncated").Bool())
+			}
+			require.Equal(t, map[string]string{
+				"type":         "string",
+				"id":           "string",
+				"execution":    "string",
+				"name":         "string",
+				"namespace":    "string",
+				"tool_call_id": "string",
+				"arguments":    "string",
+				"output":       "string",
+				"internal_chat_message_metadata_passthrough": "object",
+				"retry_count": "number",
+				"retain":      "boolean",
+				"status":      "null",
+				"references":  "array",
+			}, fieldTypes)
+			require.Equal(t, "server", diagnostic.Get("items.1.execution").String())
+			require.False(t, diagnostic.Get("items.1.requires_client_call_id").Bool())
+			require.False(t, diagnostic.Get("items.1.missing_call_id").Bool())
+			require.False(t, diagnostic.Get("items.1.item_shape").Exists())
+			require.Equal(t, "other_tool_output", diagnostic.Get("items.2.type").String())
+			require.Equal(t, "other", diagnostic.Get("items.2.execution").String())
+			require.False(t, diagnostic.Get("items.2.item_shape").Exists())
+		})
+	}
 }
 
 // TestValidateOpenAIFunctionCallOutput_DiagnosticScope exercises successful

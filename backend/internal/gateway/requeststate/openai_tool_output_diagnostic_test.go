@@ -4,14 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
 
 // openai_tool_output_diagnostic_test.go verifies that rejected tool histories
-// produce bounded structural observations without exposing their values.
+// produce bounded field descriptions and names while excluding payload values.
 // Fixtures distinguish recognized content from supported metadata, keep
 // ambiguous JSON unclassified, and protect the caller's original request bytes.
 
@@ -60,9 +62,9 @@ func TestDescribeOpenAIToolOutputFailure_BoundedSamples(t *testing.T) {
 				require.Equal(t, "invalid_type", samples[i].Get("tool_call_id_state").String())
 				require.Equal(t, "delegation", samples[i].Get("bootstrap_shape.content_format").String())
 			}
-			// The fixed schema should fit ordinary log records regardless of history
-			// length; this ceiling catches accidental publication of raw request values.
-			require.Less(t, len(encoded), 16*1024)
+			// Each missing-ID sample has a separate bounded field description; the
+			// aggregate budget includes those descriptions and the fixed summary fields.
+			require.Less(t, len(encoded), 16*1024+32*openAIToolDiagnosticShapeBytes)
 			t.Logf("serialized diagnostic: %d bytes for %d samples", len(encoded), len(samples))
 			require.NotContains(t, string(encoded), "PRIVATE_")
 		})
@@ -83,6 +85,7 @@ func TestDescribeOpenAIToolOutputFailure_AmbiguousJSON(t *testing.T) {
 		{"duplicate namespace", `{"input":[{"type":"function_call_output","namespace":"codex_app","namespace":"PRIVATE_NAMESPACE","name":"create_thread","output":"<codex_delegation><source_thread_id>PRIVATE_THREAD</source_thread_id><input>PRIVATE_TASK</input></codex_delegation>"}]}`, "json_members_not_unique_or_invalid"},
 		{"duplicate name", `{"input":[{"type":"function_call_output","namespace":"codex_app","name":"create_thread","name":"PRIVATE_NAME","output":"<codex_delegation><source_thread_id>PRIVATE_THREAD</source_thread_id><input>PRIVATE_TASK</input></codex_delegation>"}]}`, "json_members_not_unique_or_invalid"},
 		{"duplicate output", `{"input":[{"type":"function_call_output","namespace":"codex_app","name":"create_thread","output":"PRIVATE_OUTPUT","out\u0070ut":"<codex_delegation><source_thread_id>PRIVATE_THREAD</source_thread_id><input>PRIVATE_TASK</input></codex_delegation>"}]}`, "json_members_not_unique_or_invalid"},
+		{"invalid UTF-8", "{\"input\":[{\"type\":\"function_call_output\",\"name\":\"PRIVATE_\xff\",\"output\":\"PRIVATE_OUTPUT\"}]}", "json_members_not_unique_or_invalid"},
 		{"truncated", `{"input":[{"type":"function_call_output","output":"PRIVATE_OUTPUT"}`, "json_members_not_unique_or_invalid"},
 		{"array root", `[{"output":"PRIVATE_OUTPUT"}]`, "request_not_object"},
 		{"null root", `null`, "request_not_object"},
@@ -102,6 +105,10 @@ func TestDescribeOpenAIToolOutputFailure_AmbiguousJSON(t *testing.T) {
 				require.Len(t, items, 1)
 			}
 			for _, item := range items {
+				if item.Get("missing_call_id").Bool() {
+					require.Equal(t, "not_checked", item.Get("item_shape.state").String())
+					require.False(t, item.Get("item_shape.name").Exists())
+				}
 				require.Equal(t, "not_checked", item.Get("bootstrap_candidate").String())
 				for _, field := range []string{"namespace", "name", "output_type", "content_format"} {
 					require.Equal(t, "not_checked", item.Get("bootstrap_shape."+field).String())
@@ -114,9 +121,9 @@ func TestDescribeOpenAIToolOutputFailure_AmbiguousJSON(t *testing.T) {
 
 // TestDescribeOpenAIToolOutputFailure_BootstrapShapeHistory compares ordinary
 // output, delegation envelopes, and supported or unknown page-event names.
-// Exact page names receive fixed labels while unknown names and private event
-// content stay out of diagnostics. Classification leaves bootstrap candidates,
-// call association, and the supplied request intact.
+// Known page names receive fixed classifications, and failed samples retain
+// actual unknown names. Event content remains excluded, while classification
+// leaves bootstrap candidates, call association, and the supplied request intact.
 func TestDescribeOpenAIToolOutputFailure_BootstrapShapeHistory(t *testing.T) {
 	delegation := `<codex_delegation><source_thread_id>PRIVATE_THREAD</source_thread_id><input>PRIVATE_TASK</input></codex_delegation>`
 	body, err := json.Marshal(map[string]any{
@@ -126,8 +133,8 @@ func TestDescribeOpenAIToolOutputFailure_BootstrapShapeHistory(t *testing.T) {
 				"id": "PRIVATE_ITEM_ID", "tool_call_id": "PRIVATE_TOOL_CALL_ID",
 			},
 			map[string]any{
-				"type": "function_call_output", "namespace": "PRIVATE_NAMESPACE",
-				"name": "PRIVATE_TOOL", "output": delegation,
+				"type": "function_call_output", "namespace": "unknown_namespace",
+				"name": "unknown_tool", "output": delegation,
 			},
 			map[string]any{
 				"type": "function_call_output", "namespace": "codex_tui",
@@ -148,7 +155,7 @@ func TestDescribeOpenAIToolOutputFailure_BootstrapShapeHistory(t *testing.T) {
 			},
 			map[string]any{
 				"type": "function_call_output", "namespace": "agent",
-				"name": "codex_apps_open_page_PRIVATE_SUFFIX", "output": "PRIVATE_UNKNOWN_CONTENT",
+				"name": "codex_apps_open_page_unknown_suffix", "output": "PRIVATE_UNKNOWN_CONTENT",
 			},
 		},
 	})
@@ -158,7 +165,9 @@ func TestDescribeOpenAIToolOutputFailure_BootstrapShapeHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, original, body)
 	require.NotContains(t, string(encoded), "PRIVATE_")
-	require.NotContains(t, string(encoded), "codex_apps_selected_page_part_1_of_2")
+	require.Equal(t, "unknown_tool", gjson.GetBytes(encoded, "items.1.item_shape.name").String())
+	require.Equal(t, "unknown_namespace", gjson.GetBytes(encoded, "items.1.item_shape.namespace").String())
+	require.Equal(t, "codex_apps_selected_page_part_1_of_2", gjson.GetBytes(encoded, "items.5.item_shape.name").String())
 	require.EqualValues(t, 7, gjson.GetBytes(encoded, "input_item_count").Int())
 	require.EqualValues(t, 7, gjson.GetBytes(encoded, "missing_call_id_count").Int())
 	require.EqualValues(t, 1, gjson.GetBytes(encoded, "bootstrap.delegation.candidate_count").Int())
@@ -195,8 +204,9 @@ func TestDescribeOpenAIToolOutputFailure_BootstrapShapeHistory(t *testing.T) {
 
 // TestDescribeOpenAIToolOutputFailure_MetadataStates varies tool metadata while
 // retaining a valid delegation envelope. Exact known labels and malformed
-// wrappers stay distinguishable, and unsupported labels never become log values
-// or gain bootstrap eligibility through whitespace normalization.
+// wrappers stay distinguishable. Actual string labels appear in failed-item
+// descriptions, while nonstring payloads remain excluded and normalization
+// continues to require an exact supported spelling.
 func TestDescribeOpenAIToolOutputFailure_MetadataStates(t *testing.T) {
 	for _, field := range []string{"namespace", "name"} {
 		t.Run(field, func(t *testing.T) {
@@ -215,7 +225,7 @@ func TestDescribeOpenAIToolOutputFailure_MetadataStates(t *testing.T) {
 				{"empty", "", true, "empty"},
 				{"blank", " \t", true, "blank"},
 				{"padded", " " + known + " ", true, "other"},
-				{"unknown", "PRIVATE_METADATA", true, "other"},
+				{"unknown", "unknown_metadata", true, "other"},
 				{"boolean", true, true, "invalid_type"},
 				{"number", 42, true, "invalid_type"},
 				{"array", []any{"PRIVATE_METADATA"}, true, "invalid_type"},
@@ -237,6 +247,13 @@ func TestDescribeOpenAIToolOutputFailure_MetadataStates(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, original, body)
 					require.NotContains(t, string(encoded), "PRIVATE_")
+					actual := gjson.GetBytes(encoded, "items.0.item_shape."+field)
+					if value, ok := tc.value.(string); ok && tc.present {
+						require.True(t, actual.Exists())
+						require.Equal(t, strings.ReplaceAll(value, "\t", "\uFFFD"), actual.String())
+					} else {
+						require.False(t, actual.Exists())
+					}
 					require.Equal(t, tc.state, gjson.GetBytes(encoded, "items.0.bootstrap_shape."+field).String())
 					require.Equal(t, "delegation", gjson.GetBytes(encoded, "items.0.bootstrap_shape.content_format").String())
 					require.Equal(t, "none", gjson.GetBytes(encoded, "items.0.bootstrap_candidate").String())
@@ -245,6 +262,77 @@ func TestDescribeOpenAIToolOutputFailure_MetadataStates(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDescribeOpenAIToolOutputFailure_FieldLimits supplies oversized field names
+// and many members. Diagnostics retain bounded names and complete omission
+// counts, and JSON escaping cannot exceed the per-item serialized budget.
+func TestDescribeOpenAIToolOutputFailure_FieldLimits(t *testing.T) {
+	for _, label := range []string{"field", strings.Repeat("<", 256)} {
+		t.Run(fmt.Sprintf("label_bytes_%d", len(label)), func(t *testing.T) {
+			item := map[string]any{
+				"type": "function_call_output", "name": "unknown_event", "namespace": "agent",
+				"output": "PRIVATE_OUTPUT",
+			}
+			for i := range 80 {
+				item[fmt.Sprintf("%02d_%s", i, label)] = "PRIVATE_VALUE"
+			}
+			body, err := json.Marshal(map[string]any{"input": []any{item}})
+			require.NoError(t, err)
+			original := bytes.Clone(body)
+			encoded, err := json.Marshal(DescribeOpenAIToolOutputFailure(body))
+			require.NoError(t, err)
+			require.Equal(t, original, body)
+			require.NotContains(t, string(encoded), "PRIVATE_")
+			shape := gjson.GetBytes(encoded, "items.0.item_shape")
+			fields := shape.Get("fields").Array()
+			require.NotEmpty(t, fields)
+			require.LessOrEqual(t, len(fields), openAIToolDiagnosticFieldLimit)
+			require.LessOrEqual(t, len(shape.Raw), openAIToolDiagnosticShapeBytes)
+			require.EqualValues(t, len(item), shape.Get("field_count").Int())
+			require.EqualValues(t, len(item)-len(fields), shape.Get("fields_omitted").Int())
+			require.Equal(t, "unknown_event", shape.Get("name").String())
+			if label == "field" {
+				require.Len(t, fields, openAIToolDiagnosticFieldLimit)
+			} else {
+				require.Less(t, len(fields), openAIToolDiagnosticFieldLimit)
+			}
+			for i, field := range fields {
+				require.Equal(t, "string", field.Get("type").String())
+				require.True(t, strings.HasPrefix(field.Get("name").String(), fmt.Sprintf("%02d_", i)))
+			}
+		})
+	}
+}
+
+// TestDescribeOpenAIToolOutputFailure_LabelLimits exercises Unicode labels and
+// control characters from rejected client items. Stored labels remain valid
+// UTF-8 and report when truncation or sanitization changes the observed text.
+func TestDescribeOpenAIToolOutputFailure_LabelLimits(t *testing.T) {
+	body, err := json.Marshal(map[string]any{"input": []any{map[string]any{
+		"type": "function_call_output", "name": strings.Repeat("界", 100),
+		"namespace": "agent\x00\n", "extra\x00field": false, "output": "PRIVATE_OUTPUT",
+	}}})
+	require.NoError(t, err)
+	diagnostic := DescribeOpenAIToolOutputFailure(body)
+	// Queued metadata must survive reuse of the caller's request buffer.
+	clear(body)
+	encoded, err := json.Marshal(diagnostic)
+	require.NoError(t, err)
+	shape := gjson.GetBytes(encoded, "items.0.item_shape")
+	name := shape.Get("name").String()
+	require.True(t, utf8.ValidString(name))
+	require.Equal(t, strings.Repeat("界", 85), name)
+	require.True(t, shape.Get("name_truncated").Bool())
+	require.Equal(t, "agent\uFFFD\uFFFD", shape.Get("namespace").String())
+	require.True(t, shape.Get("namespace_sanitized").Bool())
+	require.False(t, shape.Get("namespace_truncated").Bool())
+	fields := shape.Get("fields").Array()
+	require.Equal(t, "extra\uFFFDfield", fields[0].Get("name").String())
+	require.True(t, fields[0].Get("name_sanitized").Bool())
+	require.Equal(t, "boolean", fields[0].Get("type").String())
+	require.NotContains(t, string(encoded), "\\u0000")
+	require.NotContains(t, string(encoded), "PRIVATE_")
 }
 
 // TestDescribeOpenAIToolOutputFailure_OutputShapes exercises JSON output types

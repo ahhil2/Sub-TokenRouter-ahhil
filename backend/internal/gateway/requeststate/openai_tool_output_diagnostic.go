@@ -3,8 +3,11 @@ package requeststate
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tidwall/gjson"
 
@@ -12,7 +15,7 @@ import (
 )
 
 // openai_tool_output_diagnostic.go describes the structure of rejected OpenAI
-// tool histories using fixed labels, counts, and input positions. A missing
+// tool histories using classifications, counts, and input positions. A missing
 // call identifier can describe an ordinary invalid result or an unconverted
 // Codex bootstrap item, so diagnostics include the existing bootstrap checks
 // alongside field states. They inspect the body at tool validation time; these
@@ -20,23 +23,34 @@ import (
 // Bootstrap metadata and output format are classified independently so an
 // unsupported wrapper can be distinguished from unrecognized content.
 //
-// Only failure logging calls this collector. User text, tool arguments, output,
-// identifiers, and arbitrary metadata never become diagnostic values. Samples
+// Only failure logging calls this collector. Missing-ID samples also retain
+// bounded names, namespaces, and top-level field types so operators can identify
+// unsupported events. User text, tool arguments, output, call identifiers, and
+// nested metadata values remain excluded from the observations. Samples
 // prioritize outputs missing call IDs, while aggregate counts include every
 // inspected item. Duplicate members disable decoded bootstrap observations
 // because map decoding and the validator's raw scan could otherwise describe
 // different identities. Returned JSON-style containers are detached metadata
 // and remain immutable after publication to asynchronous logging sinks.
 
-// openAIToolDiagnosticItemLimit bounds serialized samples while aggregate
-// counts retain evidence about tool histories longer than the sample budget.
-const openAIToolDiagnosticItemLimit = 32
+const (
+	// openAIToolDiagnosticItemLimit bounds serialized samples while aggregate
+	// counts retain evidence about tool histories longer than the sample budget.
+	openAIToolDiagnosticItemLimit = 32
+
+	// Structural limits bound retained labels and field descriptions for each
+	// missing-ID sample, including JSON escaping in the serialized size budget.
+	openAIToolDiagnosticFieldLimit = 32
+	openAIToolDiagnosticLabelBytes = 256
+	openAIToolDiagnosticShapeBytes = 4 * 1024
+)
 
 // DescribeOpenAIToolOutputFailure collects safe metadata from the rejected body.
 // Call it after missing-call-ID validation fails and only when the diagnostic
-// will be logged. The result contains JSON-style maps and arrays with fixed
-// string labels, integer counts, and boolean observations; no request values
-// are retained in the returned containers.
+// will be logged. The result contains JSON-style maps and arrays with
+// classifications, counts, and boolean observations. Missing-ID samples include
+// bounded name and namespace strings plus top-level field names and types;
+// callers must treat these strings as client-supplied diagnostic data.
 //
 // Bootstrap checks reuse the normalizer's predicates on this body and report
 // their first blocker. A successful check describes what normalization would
@@ -106,6 +120,7 @@ func DescribeOpenAIToolOutputFailure(body []byte) map[string]any {
 				"missing_call_id":         missingID,
 			}
 			if missingID {
+				sample["item_shape"] = openAIToolDiagnosticItemShape(decodedItem)
 				missingItems = append(missingItems, sample)
 			} else {
 				otherItems = append(otherItems, sample)
@@ -127,17 +142,86 @@ func DescribeOpenAIToolOutputFailure(body []byte) map[string]any {
 	return diagnostic
 }
 
+// openAIToolDiagnosticItemShape describes one failed item's names and fields.
+// Callers supply an item decoded from a request with unique JSON members;
+// unavailable decoding returns a not_checked marker. String names are retained
+// with byte limits, while other field values contribute their JSON types only.
+//
+// Fields are sorted for repeatable observations and selected within count and
+// serialized-byte budgets. Omitted counts describe the remaining fields, even
+// when the budget is reached before the count limit. Nested objects and arrays
+// remain type labels so diagnostic logging cannot traverse their payloads.
+func openAIToolDiagnosticItemShape(raw any) map[string]any {
+	item, ok := raw.(map[string]any)
+	if !ok {
+		return map[string]any{"state": "not_checked"}
+	}
+	shape := map[string]any{
+		"field_count": len(item), "fields_omitted": len(item), "fields": []any{},
+	}
+	for _, key := range []string{"name", "namespace"} {
+		if value, ok := item[key].(string); ok {
+			openAIToolDiagnosticSetLabel(shape, key, value)
+		}
+	}
+	fields := make([]any, 0, min(len(item), openAIToolDiagnosticFieldLimit))
+	for _, key := range slices.Sorted(maps.Keys(item)) {
+		if len(fields) == openAIToolDiagnosticFieldLimit {
+			break
+		}
+		field := map[string]any{"type": openAIToolDiagnosticValueType(item[key], true)}
+		openAIToolDiagnosticSetLabel(field, "name", key)
+		shape["fields"] = append(fields, field)
+		shape["fields_omitted"] = len(item) - len(fields) - 1
+		encoded, err := json.Marshal(shape)
+		// Escaped client labels can exceed their source length. Keep the previous
+		// complete field list when the serialized budget cannot hold the next field.
+		if err != nil || len(encoded) > openAIToolDiagnosticShapeBytes {
+			break
+		}
+		fields = append(fields, field)
+	}
+	shape["fields"] = fields
+	shape["fields_omitted"] = len(item) - len(fields)
+	return shape
+}
+
+// openAIToolDiagnosticSetLabel copies a bounded client label into diagnostic data.
+// UTF-8 code points remain intact, and control characters become replacement
+// characters so names can be stored in PostgreSQL JSON and viewed in logs.
+// Truncation and sanitization flags distinguish modified labels from exact
+// values. The destination contains freshly built strings suitable for queued
+// logging and retains no reference to the source request's storage.
+func openAIToolDiagnosticSetLabel(destination map[string]any, key, value string) {
+	label := make([]byte, 0, min(len(value), openAIToolDiagnosticLabelBytes))
+	for _, char := range value {
+		// Replace controls before applying the byte limit so PostgreSQL can store
+		// NUL-bearing labels and log viewers receive printable text.
+		if unicode.IsControl(char) {
+			char = unicode.ReplacementChar
+			destination[key+"_sanitized"] = true
+		}
+		// Limit by encoded bytes while keeping each retained code point complete.
+		if len(label)+utf8.RuneLen(char) > openAIToolDiagnosticLabelBytes {
+			destination[key+"_truncated"] = true
+			break
+		}
+		label = utf8.AppendRune(label, char)
+	}
+	destination[key] = string(label)
+}
+
 // inspectOpenAIDiagnosticBootstrap prepares shared bootstrap checks for one body.
-// Ambiguous or malformed JSON disables candidate observations so decoded map
-// identities cannot contradict the validator's raw-field interpretation. The
+// Ambiguous JSON or invalid UTF-8 disables candidate observations so decoded
+// map identities cannot contradict the validator's raw-field interpretation. The
 // normalizer's unique-member check and number-preserving decoding are reused
 // here on the failure path. Successfully decoded items support candidate
 // recognition alongside raw field-state scanning because unique members give
 // both views the same field identities. The decoded input is transient and
-// must never be published as logging metadata; callers retain only the fixed
-// classifications derived from it.
+// must never be published as logging metadata; callers extract classifications
+// and bounded name and field descriptions from individual failed items.
 func inspectOpenAIDiagnosticBootstrap(body []byte) (map[string]any, []any) {
-	if !HasUniqueJSONMembers(body) {
+	if !utf8.Valid(body) || !HasUniqueJSONMembers(body) {
 		return unavailableOpenAIDiagnosticBootstrap("not_unique_or_invalid", "json_members_not_unique_or_invalid"), nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))

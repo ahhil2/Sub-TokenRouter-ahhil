@@ -27,9 +27,10 @@ import (
 // diagnostic reasons and HTTP 400 messages, so callers can identify which
 // association information the request lacks.
 // Missing-ID warnings include bounded structural observations and a bootstrap
-// recheck of the rejected body. Diagnostic values use fixed labels and counts
-// so request text and identifiers remain outside the log. Validation leaves
-// the supplied body intact for subsequent execution.
+// recheck of the rejected body. Failed items include bounded names, namespaces,
+// and top-level field types for diagnosing unsupported client events. Request
+// text, tool payloads, and call identifiers remain outside the log. Validation
+// leaves the supplied body intact for subsequent execution.
 
 // ValidateOpenAIFunctionCallOutput reports whether HTTP tool outputs pass its
 // call-context checks. Requests without function_call_output pass immediately.

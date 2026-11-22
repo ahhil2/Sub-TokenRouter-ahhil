@@ -295,7 +295,7 @@ OpenAI OAuth 提供商处理 Anthropic 的 `count_tokens` 时，调用 Responses
 
 HTTP 入口在 `input` 包含 `function_call_output` 时执行这项预校验。启用客户端通知转换后，也会检查剩余的 custom、MCP 和客户端工具搜索结果，防止最后一条 `function_call_output` 被转换后跳过校验。请求带有非空 `previous_response_id` 或内联工具调用上下文时，由后续上游处理继续验证历史。其余独立客户端工具结果需要非空 `call_id`，以及覆盖各调用 ID 的 `item_reference`。错误响应使用 HTTP 400 和 `invalid_request_error`，分别说明缺失调用 ID 或上下文。服务端工具搜索结果不为其他客户端结果提供调用关联。
 
-仅在缺少 `call_id` 而被预校验拒绝时，`openai.request_validation_failed` 的 WARN 日志附加 `tool_output_diagnostic` 对象，`reason` 为 `function_call_output_missing_call_id`。诊断值限定为固定枚举、布尔、计数和输入索引，提示词、工具参数与结果正文、调用 ID 和响应 ID 的值均不写入其中。诊断用于解释这次 HTTP 400；请求准入仍按上述关联条件判断，兼容转换继续由对应的改写规则处理。
+缺少 `call_id` 而被预校验拒绝、且 WARN 日志开启时，`openai.request_validation_failed` 日志附加 `tool_output_diagnostic` 对象，`reason` 为 `function_call_output_missing_call_id`。诊断记录分类、布尔、计数、输入索引，以及失败项受长度限制的名称和字段结构。提示词、工具参数与结果正文、调用 ID 和响应 ID 的值均不写入其中。HTTP 响应返回 `invalid_request_error` 和 `Client tool outputs require a non-empty call_id`，诊断详情供管理员从日志读取。
 
 HTTP Responses 的工具结果校验日志还附加布尔值 `codex_client_notifications_enabled` 和整数 `codex_client_notifications_converted`。前者表示本请求具有有效的 API Key 操作者，且全局开关或名单已选中该操作者；后者表示这次入口处理已经转换的项目数。`enabled=false` 时先检查实际实例的启动配置、环境变量覆盖和鉴权记录；`enabled=true` 且计数为零时检查事件名称、字段格式及 JSON 是否符合转换条件。计数大于零后仍报 400，表示转换后留下的其他工具结果未通过这次校验，需要按输入索引继续核对。这两个字段不包含请求正文，也不证明事件来源可信。
 
@@ -304,6 +304,12 @@ HTTP Responses 的工具结果校验日志还附加布尔值 `codex_client_notif
 逐项摘要最多保留 32 个工具相关输入项，优先保留缺少调用 ID 的项。工具项总数、缺少调用 ID 的结果数和服务端搜索项数统计整个输入数组，`items_omitted` 记录未进入逐项摘要的工具项数量。分析较长历史时，先查看汇总计数和省略数量，再按摘要中的输入索引定位，不能把这 32 项当作完整的输入历史。
 
 每项的 `id_state`、`tool_call_id_state` 与 `call_id_state` 使用相同的存在性和类型分类。字段为非空仅说明请求包含该字段，是否能关联原始调用需要另行核对。`bootstrap_shape` 将工具元数据和输出内容分开检查：`namespace` 识别 `codex_app`、`codex_tui`、`agent`，`name` 识别 `create_thread`、`send_message_to_thread`、`automation_update`、`goal_objective`、`codex_apps_open_page` 和 `codex_apps_selected_page_part_1_of_1`，其他非空字符串记为 `other`；缺失、null、空串、空白串和错误类型各有分类。`output_type` 记录 JSON 类型，`content_format` 使用现有格式校验器独立识别 `delegation`、`automation` 或 `heartbeat`，其他字符串记为 `other`，非字符串记为 `not_text`。因此，`bootstrap_candidate=none` 时可以区分元数据不匹配和内容未通过格式检查；内容匹配本身不代表请求允许转换。JSON 含重复字段或无法解码时，这四项记为 `not_checked`。
+
+`missing_call_id=true` 的样本还包含 `item_shape`，用于定位被归为 `other` 的事件。原项的 `name`、`namespace` 存在且为字符串时，记录其名称。`fields` 按顶层字段名排序，每项记录字段的 `name` 和 JSON `type`，类型包括 `string`、`number`、`boolean`、`null`、`object`、`array`。嵌套对象和数组仅记录类型，内部的键和值不递归展开。`missing_call_id=false` 的样本没有 `item_shape`。
+
+`item_shape.fields` 最多保存 32 个字段描述。实际名称、命名空间和每个字段名最多保存 256 个 UTF-8 字节，截断时保持字符完整，并将对应的 `name_truncated` 或 `namespace_truncated` 设为 `true`。控制字符替换为 `�`，对应的 `name_sanitized` 或 `namespace_sanitized` 设为 `true`；这些标记缺省时表示 `false`。字段描述中的名称使用同样的限制和标记。
+
+每个 `item_shape` 的序列化 JSON 最多为 4 KiB，转义后的字节数也计入预算，达到预算时停止追加字段描述。正常解析时，`field_count` 记录该项的顶层字段总数，`fields_omitted` 记录因字段数量或字节预算而省略的字段数。请求含重复 JSON 字段、非法 UTF-8 或无法解析时，`item_shape` 为 `{"state":"not_checked"}`。这些名称是客户端提交的数据，分析时结合输入索引、字段类型和截断标记判断。
 
 管理员可通过 `GET /api/v1/admin/ops/system-logs`，按时间范围、`request_id` 和 `level=warn` 查询，在返回记录的 `extra.tool_output_diagnostic` 中读取诊断。关键词参数 `q` 可用 `function_call_output_missing_call_id` 或 `tool_output_diagnostic`；进程 JSON 日志也包含该对象。系统日志页面的关键词查询可以找到记录，行详情只展示选定的标量字段，嵌套诊断需要从 API 响应或进程 JSON 日志查看。日志采样、异步写入和留存规则见[可观测性与数据生命周期](../operations/observability_and_data_lifecycle.md#关联与脱敏)。
 
