@@ -19,10 +19,11 @@ import (
 // cache read, but a failed remote fetch can still select cached data with a
 // warning.
 //
-// Update comparison tolerates missing or malformed numeric components as zero
-// and drops hyphen suffixes. Rollback selection applies a stricter three-part
-// numeric spelling before filtering drafts, prereleases, duplicates, and
-// versions that are not older. Numeric ordering selects the newest three
+// Update comparison uses four numeric components, treats missing or malformed
+// components as zero, and drops hyphen suffixes. A three-component release has
+// revision zero. Rollback selection accepts strict three- or four-component
+// numeric spelling before filtering drafts, prereleases, numeric duplicates,
+// and versions that are not older. Numeric ordering selects the newest three
 // candidates from one fetched page. Cache expiry and JSON decoding do not
 // validate metadata completeness, so an available version alone can accompany
 // absent installer inputs.
@@ -177,11 +178,13 @@ func NewReleaseQuery(cache UpdateCache, client ReleaseQueryClient, version, buil
 	return &ReleaseQuery{cache, client, version, buildType}
 }
 
-// parseVersion returns up to three numeric components for permissive update
+// parseVersion returns up to four numeric components for permissive update
 // ordering after removing one lowercase v prefix and a hyphen suffix. Missing,
 // malformed, or overflowing components remain zero; additional components are
-// ignored and no validation error is returned.
-func parseVersion(v string) [3]int {
+// ignored and no validation error is returned. The optional fourth component
+// orders revisions of the same major, minor, and patch release, so 0.4.17 and
+// 0.4.17.0 compare equally while 0.4.17.1 is newer than either spelling.
+func parseVersion(v string) [4]int {
 	// Update ordering compares the numeric release base. Remove a lowercase v and
 	// hyphen suffix here; strict rollback selection uses its separate validator
 	// before numeric comparison.
@@ -190,10 +193,9 @@ func parseVersion(v string) [3]int {
 		v = v[:idx]
 	}
 	parts := strings.Split(v, ".")
-	result := [3]int{0, 0, 0}
-	// Only the first three release components participate; omitted parts retain
-	// zero.
-	for i := 0; i < len(parts) && i < 3; i++ {
+	result := [4]int{}
+	// Missing revision components retain zero for comparisons with three-part releases.
+	for i := 0; i < len(parts) && i < len(result); i++ {
 		// Malformed or overflowing components keep the initialized zero. Update
 		// comparison therefore produces numeric ordering even when the original text
 		// could not be fully parsed.
@@ -205,14 +207,18 @@ func parseVersion(v string) [3]int {
 }
 
 // compareVersions returns minus one, zero, or one for numeric current/latest
-// ordering in major/minor/patch sequence. Both inputs use permissive
-// parseVersion, so discarded suffixes and zero-valued invalid components affect
-// equality without rejecting either text.
+// ordering in major/minor/patch/revision sequence. Each component is numeric,
+// so revision 10 follows revision 2 and the patch component takes precedence
+// over any revision. A missing revision compares as zero, allowing three- and
+// four-component releases to share the same update and rollback ordering.
+// Both inputs use permissive parseVersion, so discarded suffixes and
+// zero-valued invalid components affect equality without rejecting either
+// text. Rollback callers validate their version spelling before comparison.
 func compareVersions(current, latest string) int {
 	currentParts := parseVersion(current)
 	latestParts := parseVersion(latest)
 
-	for i := range 3 {
+	for i := range currentParts {
 		if currentParts[i] < latestParts[i] {
 			return -1
 		}
@@ -335,22 +341,21 @@ func (s *ReleaseQuery) FetchLatestRelease(ctx context.Context) (*UpdateInfo, err
 	}, nil
 }
 
-// normalizeRollbackVersion returns canonical three-component numeric text and
-// true after trimming surrounding space and one lowercase v prefix. Empty
-// parts, multi-digit leading zeros, nondigits, suffixes, metadata, or integer
+// normalizeRollbackVersion returns canonical three- or four-component numeric
+// text and true after trimming surrounding space and one lowercase v prefix.
+// Empty parts, multi-digit leading zeros, nondigits, suffixes, metadata, or integer
 // overflow return empty text and false. The restricted spelling supports
 // candidate deduplication and copied download commands.
 func normalizeRollbackVersion(raw string) (string, bool) {
 	version := strings.TrimSpace(raw)
 	version = strings.TrimPrefix(version, "v")
 	parts := strings.Split(version, ".")
-	if len(parts) != 3 {
+	if len(parts) != 3 && len(parts) != 4 {
 		return "", false
 	}
 	for _, part := range parts {
-		// A single zero is valid, while multi-digit leading zeros are rejected.
-		// Canonical text keeps candidate deduplication by version spelling aligned
-		// with numeric ordering.
+		// Require ordinary decimal components so accepted targets can be matched to
+		// the displayed release spelling before selecting download assets.
 		if part == "" || (len(part) > 1 && part[0] == '0') {
 			return "", false
 		}
@@ -368,8 +373,8 @@ func normalizeRollbackVersion(raw string) (string, bool) {
 
 // NormalizeRollbackVersion exposes strict rollback spelling validation for
 // query and maintenance callers. It accepts an optional lowercase v prefix
-// around three canonical numeric parts, returning empty text and false for
-// unusable targets.
+// around three or four canonical numeric parts, returning empty text and false
+// for unusable targets.
 func NormalizeRollbackVersion(raw string) (string, bool) { return normalizeRollbackVersion(raw) }
 
 // FetchRollbackCandidates reads one recent fifteen-record page, then returns up
@@ -378,9 +383,10 @@ func NormalizeRollbackVersion(raw string) (string, bool) { return normalizeRollb
 // spelling yields an empty slice after a successful fetch.
 //
 // Nil records, drafts, prereleases, noncanonical tags, current/newer versions,
-// and repeated normalized versions are discarded. The first retained duplicate
-// supplies metadata. Remaining pointers are sorted newest first by numeric
-// version, then capped; publication dates do not select their order. The
+// and repeated numeric versions are discarded. Three-component versions and
+// their four-component zero-revision spellings share one candidate. The first
+// retained duplicate supplies metadata. Remaining pointers are sorted newest
+// first by numeric version, then capped; publication dates do not select their order. The
 // returned slice is new but retained release records and their asset slices
 // remain shared with the client result, so callers treat them as stable.
 func (s *ReleaseQuery) FetchRollbackCandidates(ctx context.Context) ([]*GitHubRelease, error) {
@@ -397,22 +403,26 @@ func (s *ReleaseQuery) FetchRollbackCandidates(ctx context.Context) ([]*GitHubRe
 		return []*GitHubRelease{}, nil
 	}
 
-	seen := make(map[string]bool, len(releases))
+	seen := make(map[[4]int]bool, len(releases))
 	candidates := make([]*GitHubRelease, 0, maxRollbackVersions)
 	for _, r := range releases {
 		if r == nil || r.Draft || r.Prerelease {
 			continue
 		}
 		v, valid := normalizeRollbackVersion(r.TagName)
-		if !valid || seen[v] {
+		if !valid {
 			continue
 		}
-		// The current and newer versions are not rollback targets. Mark a normalized
+		versionParts := parseVersion(v)
+		if seen[versionParts] {
+			continue
+		}
+		// The current and newer versions are not rollback targets. Mark a numeric
 		// version seen only after its record passes every eligibility check.
 		if compareVersions(v, currentVersion) >= 0 {
 			continue
 		}
-		seen[v] = true
+		seen[versionParts] = true
 		candidates = append(candidates, r)
 	}
 

@@ -92,6 +92,76 @@ func TestReleaseQueryRetainsAssetAPIURLs(t *testing.T) {
 	}
 }
 
+// TestReleaseQueryFourComponentVersions checks revision updates through fresh
+// metadata and cached reads. Numeric ordering must include the fourth component
+// while treating an omitted revision as zero and rejecting older releases.
+func TestReleaseQueryFourComponentVersions(t *testing.T) {
+	cases := []struct {
+		name      string // version comparison scenario
+		current   string // installed version text
+		latest    string // published version text
+		hasUpdate bool   // expected update eligibility
+	}{
+		{name: "revision after three components", current: "0.4.17", latest: "0.4.17.1", hasUpdate: true},
+		{name: "numeric revision ordering", current: "0.4.17.2", latest: "0.4.17.10", hasUpdate: true},
+		{name: "patch outranks revision", current: "0.4.16.9", latest: "0.4.17", hasUpdate: true},
+		{name: "zero revision equals three components", current: "0.4.17", latest: "0.4.17.0"},
+		{name: "three components equal zero revision", current: "0.4.17.0", latest: "0.4.17"},
+		{name: "older revision", current: "0.4.17.10", latest: "0.4.17.2"},
+		{name: "older three component release", current: "0.4.17.1", latest: "0.4.17"},
+		{name: "older patch with revision", current: "0.4.17", latest: "0.4.16.99"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v" + tc.latest}}
+			query := NewReleaseQuery(&updateServiceCacheStub{}, client, tc.current, "release")
+			for _, force := range []bool{true, false} {
+				info, err := query.CheckUpdate(context.Background(), force)
+				require.NoError(t, err)
+				require.Equal(t, tc.current, info.CurrentVersion)
+				require.Equal(t, tc.latest, info.LatestVersion)
+				require.Equal(t, tc.hasUpdate, info.HasUpdate)
+				require.Equal(t, !force, info.Cached)
+				require.Empty(t, info.Warning)
+				// Change the remote fixture after population so the second read must
+				// use cached metadata rather than accidentally repeat the release fetch.
+				client.release = &GitHubRelease{TagName: "v99.0.0"}
+			}
+		})
+	}
+}
+
+// TestReleaseQueryCachedRevisionRechecksRunningVersion shares cached release
+// metadata across instances with different installed revisions. Each instance
+// must recompute update eligibility from its own running version.
+func TestReleaseQueryCachedRevisionRechecksRunningVersion(t *testing.T) {
+	cache := &updateServiceCacheStub{}
+	client := &updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.4.17.2"}}
+	query := NewReleaseQuery(cache, client, "0.4.17", "release")
+	info, err := query.CheckUpdate(context.Background(), true)
+	require.NoError(t, err)
+	require.True(t, info.HasUpdate)
+	client.release = &GitHubRelease{TagName: "v99.0.0"}
+	for _, tc := range []struct {
+		current   string // installed version text
+		hasUpdate bool   // expected cached eligibility
+	}{
+		{current: "0.4.17.1", hasUpdate: true},
+		{current: "0.4.17.2"},
+		{current: "0.4.17.3"},
+	} {
+		t.Run(tc.current, func(t *testing.T) {
+			otherInstance := NewReleaseQuery(cache, client, tc.current, "release")
+			cached, err := otherInstance.CheckUpdate(context.Background(), false)
+			require.NoError(t, err)
+			require.True(t, cached.Cached)
+			require.Equal(t, tc.current, cached.CurrentVersion)
+			require.Equal(t, "0.4.17.2", cached.LatestVersion)
+			require.Equal(t, tc.hasUpdate, cached.HasUpdate)
+		})
+	}
+}
+
 // FetchRecentReleases returns the supplied recent slice and configured error
 // while ignoring repository, page count, and context. Records remain shared, so
 // tests keep their fixture metadata stable during candidate selection.
@@ -173,6 +243,84 @@ func TestUpdateServiceListRollbackVersionsSortsUnorderedInput(t *testing.T) {
 	require.Equal(t, "0.1.146", versions[0].Version)
 	require.Equal(t, "0.1.145", versions[1].Version)
 	require.Equal(t, "0.1.144", versions[2].Version)
+}
+
+// TestReleaseQueryRollbackRevisionsSortAndDeduplicate supplies mixed release
+// spellings and unordered revisions. Selection must compare revisions numerically
+// and retain the first release record for equivalent three- and four-part versions.
+func TestReleaseQueryRollbackRevisionsSortAndDeduplicate(t *testing.T) {
+	cases := []struct {
+		name     string   // rollback selection scenario
+		current  string   // installed version text
+		tags     []string // returned release tag order
+		expected []string // expected candidate tag order
+	}{
+		{
+			name: "revision ordering and cap", current: "0.4.17.11",
+			tags:     []string{"v0.4.17.2", "v0.4.16.99", "v0.4.17.10", "v0.4.17.1", "v0.4.17.11", "v0.4.18"},
+			expected: []string{"v0.4.17.10", "v0.4.17.2", "v0.4.17.1"},
+		},
+		{
+			name: "zero revision appears first", current: "0.4.17.2",
+			tags:     []string{"v0.4.17.0", "v0.4.17", "v0.4.16.9", "v0.4.17.1"},
+			expected: []string{"v0.4.17.1", "v0.4.17.0", "v0.4.16.9"},
+		},
+		{
+			name: "three components appear first", current: "0.4.17.2",
+			tags:     []string{"v0.4.17", "v0.4.17.0", "v0.4.16.9", "v0.4.17.1"},
+			expected: []string{"v0.4.17.1", "v0.4.17", "v0.4.16.9"},
+		},
+		{
+			name: "current zero revision is excluded", current: "0.4.17",
+			tags:     []string{"v0.4.17.0", "v0.4.17.1", "v0.4.16.10", "v0.4.16.2"},
+			expected: []string{"v0.4.16.10", "v0.4.16.2"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			releases := make([]*GitHubRelease, 0, len(tc.tags))
+			for _, tag := range tc.tags {
+				releases = append(releases, &GitHubRelease{TagName: tag, Name: "Release " + tag})
+			}
+			candidates, err := newRollbackTestService(tc.current, releases).FetchRollbackCandidates(context.Background())
+			require.NoError(t, err)
+			actual := make([]string, 0, len(candidates))
+			for _, candidate := range candidates {
+				actual = append(actual, candidate.TagName)
+				require.Equal(t, "Release "+candidate.TagName, candidate.Name)
+			}
+			require.Equal(t, tc.expected, actual)
+		})
+	}
+}
+
+// TestNormalizeRollbackVersionFourthComponent checks supported revision text
+// and malformed fourth components. Canonical three- and four-part values remain
+// usable, while extra components and unsafe spellings are rejected.
+func TestNormalizeRollbackVersionFourthComponent(t *testing.T) {
+	for _, tc := range []struct {
+		input    string // submitted rollback version
+		expected string // accepted normalized spelling
+	}{
+		{input: "0.4.17", expected: "0.4.17"},
+		{input: "0.4.17.0", expected: "0.4.17.0"},
+		{input: " v0.4.17.10 ", expected: "0.4.17.10"},
+		{input: "0.4.17."},
+		{input: "0.4.17.one"},
+		{input: "0.4.17.-1"},
+		{input: "0.4.17.01"},
+		{input: "0.4.17.1+build"},
+		{input: "0.4.17.1-rc1"},
+		{input: "0.4.17.1.2"},
+		{input: "0.4.17.999999999999999999999999999999999999"},
+		{input: "0.4.17.1;echo unsafe"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			version, ok := NormalizeRollbackVersion(tc.input)
+			require.Equal(t, tc.expected != "", ok)
+			require.Equal(t, tc.expected, version)
+		})
+	}
 }
 
 // TestUpdateServiceListRollbackVersionsRejectsNonSemverTags supplies a numeric
