@@ -17,6 +17,13 @@ import (
 // injected repository, while optional readers carry richer filter shapes and
 // model dimensions for implementations that support them; access control
 // remains with each HTTP or module caller.
+//
+// Administrator interval summaries pair filtered totals with elapsed-minute
+// rates from the same measured range. The caller captures one current instant,
+// and the service clips future query bounds before computing the denominator.
+// Unbounded request searches retain their history totals and omit rates because
+// no duration was selected. The query cache stores the complete summary under
+// the selected filters so repeated current-day requests reuse one sample.
 
 // ErrUsageLogNotFound identifies an absent usage row for repository and HTTP
 // callers, allowing the standard application-error mapper to return not found.
@@ -328,6 +335,51 @@ func (s *UsageService) GetStatsWithFilters(ctx context.Context, filters UsageLog
 		return nil, fmt.Errorf("get usage stats with filters: %w", err)
 	}
 	return stats, nil
+}
+
+// GetStatsWithPeriodRates returns filtered totals and their elapsed-minute
+// averages through asOf. Both time bounds are required for rates; an unbounded
+// request lookup keeps its retained-history totals and returns nil rates.
+//
+// A future end is clipped to asOf before querying, so the numerator and elapsed
+// time describe the same observations. Future or empty ranges produce zero
+// totals and rates. Filters are copied before clipping, and the result copies
+// the repository's statistics value so adding rates cannot mutate shared totals.
+// Cache callers store this complete result under the original selected range.
+func (s *UsageService) GetStatsWithPeriodRates(ctx context.Context, filters UsageLogFilters, asOf time.Time) (*UsagePeriodStats, error) {
+	var minutes float64
+	bounded := filters.StartTime != nil && filters.EndTime != nil
+	if bounded {
+		end := *filters.EndTime
+		if end.After(asOf) {
+			end = asOf
+		}
+		filters.EndTime = &end
+		minutes = end.Sub(*filters.StartTime).Minutes()
+		if minutes <= 0 {
+			// Keep provider cost present in empty administrator summaries so the UI
+			// can display its zero value just as it does for an empty repository query.
+			return &UsagePeriodStats{
+				UsageStats: UsageStats{TotalProviderCost: new(float64)},
+				AverageRPM: new(float64),
+				AverageTPM: new(float64),
+			}, nil
+		}
+	}
+	stats, err := s.GetStatsWithFilters(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+	result := &UsagePeriodStats{UsageStats: *stats}
+	if bounded {
+		// Compute both rates from this same filtered sample and interval; cache
+		// tokens remain separately reported totals and do not enter text throughput.
+		rpm := float64(stats.TotalRequests) / minutes
+		tpm := (float64(stats.TotalInputTokens) + float64(stats.TotalOutputTokens)) / minutes
+		result.AverageRPM = &rpm
+		result.AverageTPM = &tpm
+	}
+	return result, nil
 }
 
 // GetUserStatsWithFilters uses the reduced user-summary reader when one is

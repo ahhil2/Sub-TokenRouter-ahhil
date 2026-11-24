@@ -12,7 +12,7 @@ import type { EndpointStat } from '@/api/usage.types'
 
 /**
  * AdminUsageStatsResponse summarizes filtered usage totals, costs, average
- * duration and optional endpoint breakdowns.
+ * duration, interval-average throughput and optional endpoint breakdowns.
  */
 export interface AdminUsageStatsResponse {
   total_requests: number // Recorded total requests.
@@ -26,6 +26,10 @@ export interface AdminUsageStatsResponse {
   total_actual_cost: number // Total actual cost.
   total_provider_cost: number // Total provider cost.
   average_duration_ms: number // Average duration milliseconds.
+  // The server divides matching requests and input/output tokens by elapsed
+  // interval minutes. Date-free request-ID searches return null for both rates.
+  average_rpm: number | null // Interval-average requests per minute.
+  average_tpm: number | null // Interval-average non-cache tokens per minute.
   endpoints?: EndpointStat[] // Endpoint usage summaries.
   upstream_endpoints?: EndpointStat[] // Recorded upstream endpoints.
   endpoint_paths?: EndpointStat[] // Recorded endpoint paths.
@@ -163,6 +167,8 @@ export async function getStats(
     model?: string // Model identifier value.
     request_type?: UsageRequestType // Recorded request mode.
     stream?: boolean // Streaming request flag.
+    billing_type?: number | null // Recorded billing category.
+    billing_mode?: string | null // Token, per_request, image, or video.
     period?: string // Requested statistics period.
     start_date?: string // Requested start date.
     end_date?: string // Requested end date.

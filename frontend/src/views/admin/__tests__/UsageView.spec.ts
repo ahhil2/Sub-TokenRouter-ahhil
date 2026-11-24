@@ -5,9 +5,10 @@ import * as XLSX from 'xlsx'
 
 import UsageView from '../UsageView.vue'
 import Pagination from '@/components/common/Pagination.vue'
+import type { AdminUsageStatsResponse } from '@/api/admin/usage'
 
 // UsageView.spec.ts tests administrator usage queries, endpoint caching, route
-// hydration, user-scoped performance summaries, and workbook export. API substitutes control
+// hydration, filtered interval-average performance, and workbook export. API substitutes control
 // response order and child controls expose page actions, while spreadsheet assertions
 // read serialized values and column preference cases retain the real page storage operations.
 
@@ -252,21 +253,34 @@ const mountRouteFilteredUsageView = (realStats = false) =>
     },
   })
 
+// createUsageSummary returns a complete filtered-summary fixture with independent
+// overrides for each response. Rates are supplied by the API substitute so page tests
+// verify publication and filtering instead of repeating the server's interval calculation.
+const createUsageSummary = (
+  overrides: Partial<AdminUsageStatsResponse> = {},
+): AdminUsageStatsResponse => ({
+  total_requests: 0,
+  total_input_tokens: 0,
+  total_output_tokens: 0,
+  total_cache_tokens: 0,
+  total_cache_creation_tokens: 0,
+  total_cache_read_tokens: 0,
+  total_tokens: 0,
+  total_cost: 0,
+  total_actual_cost: 0,
+  total_provider_cost: 0,
+  average_duration_ms: 0,
+  average_rpm: 0,
+  average_tpm: 0,
+  ...overrides,
+})
+
 describe('admin UsageView 路由筛选', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     Object.keys(routeQuery).forEach((key) => delete routeQuery[key])
     list.mockReset().mockResolvedValue({ items: [], total: 0, pages: 0 })
-    getStats.mockReset().mockResolvedValue({
-      total_requests: 0,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_tokens: 0,
-      total_tokens: 0,
-      total_cost: 0,
-      total_actual_cost: 0,
-      average_duration_ms: 0,
-    })
+    getStats.mockReset().mockResolvedValue(createUsageSummary())
     getSnapshotV2.mockReset().mockResolvedValue({ trend: [], models: [], groups: [] })
     getModelStats.mockReset().mockResolvedValue({ models: [] })
     getById.mockReset()
@@ -279,59 +293,53 @@ describe('admin UsageView 路由筛选', () => {
     vi.useRealTimers()
   })
 
-  // The page receives dashboard rates alongside its existing chart snapshot.
-  // The shared card sits between tokens and cost, and a refresh replaces both rates.
-  it('shows and refreshes dashboard performance between token and cost totals', async () => {
-    getSnapshotV2.mockResolvedValue({ stats: { rpm: 12, tpm: 5400 }, trend: [], groups: [] })
+  // Usage totals and interval averages arrive together while chart snapshots retain
+  // independent live statistics. The card must display summary averages and visibly
+  // identify their period measurement even when a snapshot contains different rates.
+  it('shows interval averages from the filtered summary independently of chart snapshots', async () => {
+    getStats.mockResolvedValue(createUsageSummary({ average_rpm: 12.25, average_tpm: 5400 }))
+    getSnapshotV2.mockResolvedValue({ stats: { rpm: 999, tpm: 999000 }, trend: [], groups: [] })
     const wrapper = mountRouteFilteredUsageView(true)
     try {
       expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
-      vi.advanceTimersByTime(120)
       await flushPromises()
       const performanceCard = wrapper.get('[data-testid="performance-metrics-card"]')
       const cards = performanceCard.element.parentElement!
       expect(cards.classList).toContain('lg:grid-cols-5')
       expect(cards.children[2]).toBe(performanceCard.element)
-      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('12')
+      expect(performanceCard.text()).toContain('admin.dashboard.periodPerformance')
+      expect(performanceCard.get('[title]').attributes('title')).toBe(
+        'admin.dashboard.periodPerformanceHint',
+      )
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('12.25')
       expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('5.40K')
+      vi.advanceTimersByTime(120)
+      await flushPromises()
       expect(getSnapshotV2).toHaveBeenCalledTimes(1)
       expect(getSnapshotV2).toHaveBeenCalledWith(
         expect.objectContaining({
-          include_stats: true,
+          include_stats: false,
           include_trend: true,
           include_group_stats: true,
         }),
       )
-
-      getSnapshotV2.mockResolvedValue({ stats: { rpm: 37, tpm: 765000 }, trend: [], groups: [] })
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('12.25')
+      getStats.mockResolvedValue(createUsageSummary({ average_rpm: 37.5, average_tpm: 765000 }))
       wrapper.findComponent(UsageFiltersStub).vm.$emit('refresh')
       await flushPromises()
-      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('37')
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('37.5')
       expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('765.00K')
-
-      wrapper
-        .findComponent(UsageFiltersStub)
-        .vm.$emit('update:modelValue', { request_id: 'req-123' })
-      wrapper.findComponent(UsageFiltersStub).vm.$emit('change')
-      await flushPromises()
-      expect(getSnapshotV2).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          include_stats: true,
-          include_trend: false,
-          include_group_stats: false,
-        }),
-      )
-      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('37')
     } finally {
       wrapper.unmount()
     }
   })
 
-  // Two refreshes finish in reverse order while the performance card is visible.
-  // The newer rates must remain displayed after the earlier snapshot finally arrives.
-  it('retains the newest performance rates when snapshots complete out of order', async () => {
+  // Two summary refreshes finish in reverse order while the rate card is visible.
+  // The newest interval averages must remain displayed when an earlier request completes,
+  // even if that request's transport ignores cancellation.
+  it('retains the newest interval averages when summaries complete out of order', async () => {
     let finishEarlier!: (value: unknown) => void
-    getSnapshotV2.mockImplementationOnce(
+    getStats.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finishEarlier = resolve
@@ -339,12 +347,11 @@ describe('admin UsageView 路由筛选', () => {
     )
     const wrapper = mountRouteFilteredUsageView(true)
     try {
-      vi.advanceTimersByTime(120)
       await flushPromises()
-      getSnapshotV2.mockResolvedValue({ stats: { rpm: 80, tpm: 90000 }, trend: [], groups: [] })
+      getStats.mockResolvedValue(createUsageSummary({ average_rpm: 80, average_tpm: 90000 }))
       wrapper.findComponent(UsageFiltersStub).vm.$emit('refresh')
       await flushPromises()
-      finishEarlier({ stats: { rpm: 10, tpm: 1000 }, trend: [], groups: [] })
+      finishEarlier(createUsageSummary({ average_rpm: 10, average_tpm: 1000 }))
       await flushPromises()
       expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('80')
       expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('90.00K')
@@ -353,77 +360,78 @@ describe('admin UsageView 路由筛选', () => {
     }
   })
 
-  // Changing the selected user moves the card between global and individual rates.
-  // Every transition clears the preceding scope while its snapshot is pending and
-  // displays only the new scope's values after that request completes.
-  it('clears performance rates when selecting, switching, and clearing users', async () => {
-    getSnapshotV2.mockResolvedValue({ stats: { rpm: 12, tpm: 5400 }, trend: [], groups: [] })
+  // Each selection changes the rows contributing to the summary and its averages.
+  // Clear preceding rates before requesting replacements, retain explicit false and zero
+  // predicates, and publish rates returned for the selected filters.
+  it.each([
+    { name: 'user', filters: { user_id: 5 } },
+    { name: 'API key', filters: { api_key_id: 8 } },
+    { name: 'model', filters: { model: 'gpt-5' } },
+    { name: 'provider', filters: { provider_id: 11 } },
+    { name: 'group', filters: { group_id: 12 } },
+    { name: 'team', filters: { team_id: 13 } },
+    { name: 'request mode', filters: { request_type: 'ws_v2' } },
+    { name: 'billing mode', filters: { billing_mode: 'per_request' } },
+    {
+      name: 'false and zero predicates',
+      filters: { stream: false, billing_type: 0, native_compaction_v2: false },
+    },
+    { name: 'dates', filters: { start_date: '2026-10-01', end_date: '2026-10-02' } },
+    { name: 'timezone', filters: { timezone: 'Asia/Shanghai' } },
+  ])('reloads interval averages for the $name filter', async ({ filters }) => {
+    getStats.mockResolvedValue(createUsageSummary({ average_rpm: 12, average_tpm: 5400 }))
     const wrapper = mountRouteFilteredUsageView(true)
     try {
-      vi.advanceTimersByTime(120)
+      await flushPromises()
+      let finishSummary!: (value: unknown) => void
+      getStats.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishSummary = resolve
+          }),
+      )
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('update:modelValue', filters)
+      await flushPromises()
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('change')
+      await flushPromises()
+      expect(getStats).toHaveBeenLastCalledWith(
+        expect.objectContaining(filters),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      )
+      finishSummary(createUsageSummary({ average_rpm: 0.25, average_tpm: 500 }))
+      await flushPromises()
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('0.25')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('500')
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('update:modelValue', {})
+      await flushPromises()
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('change')
       await flushPromises()
       expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('12')
-      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('5.40K')
-      expect(
-        wrapper.get('[data-testid="performance-metrics-card"] [title]').attributes('title'),
-      ).toBe('admin.dashboard.performanceHint')
-
-      for (const scope of [
-        { userId: 5, rpm: 3, tpm: 300, displayedTPM: '300' },
-        { userId: 9, rpm: 7, tpm: 700, displayedTPM: '700' },
-        { userId: undefined, rpm: 21, tpm: 21000, displayedTPM: '21.00K' },
-      ]) {
-        let finishSnapshot!: (value: unknown) => void
-        getSnapshotV2.mockImplementationOnce(
-          () =>
-            new Promise((resolve) => {
-              finishSnapshot = resolve
-            }),
-        )
-        wrapper
-          .findComponent(UsageFiltersStub)
-          .vm.$emit('update:modelValue', { user_id: scope.userId })
-        wrapper.findComponent(UsageFiltersStub).vm.$emit('change')
-        await flushPromises()
-
-        expect(getSnapshotV2).toHaveBeenLastCalledWith(
-          expect.objectContaining({ user_id: scope.userId, include_stats: true }),
-        )
-        expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
-        expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
-        expect(
-          wrapper.get('[data-testid="performance-metrics-card"] [title]').attributes('title'),
-        ).toBe(
-          scope.userId ? 'admin.dashboard.userPerformanceHint' : 'admin.dashboard.performanceHint',
-        )
-
-        finishSnapshot({ stats: { rpm: scope.rpm, tpm: scope.tpm }, trend: [], groups: [] })
-        await flushPromises()
-        expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe(String(scope.rpm))
-        expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe(scope.displayedTPM)
-      }
     } finally {
       wrapper.unmount()
     }
   })
 
-  // Two user refreshes remain pending when selection moves to another user whose request
-  // fails. Neither a response between filter events nor one arriving after that failure
-  // may refill the cleared card; refreshing the unchanged scope still retains its rates.
-  it('keeps failed user scopes empty when an earlier scope finishes late', async () => {
-    routeQuery.user_id = '5'
-    getById.mockResolvedValue({ id: 5, email: 'selected@test.com' })
-    getSnapshotV2.mockResolvedValue({ stats: { rpm: 4, tpm: 800 }, trend: [], groups: [] })
+  // Refreshing one selection can fail without discarding its successful averages.
+  // A changed provider clears that observation, and old responses cannot refill it
+  // before the change event or after the new selection fails.
+  it('keeps changed scopes empty and retains same-scope averages on refresh failure', async () => {
+    getStats.mockResolvedValue(createUsageSummary({ average_rpm: 4, average_tpm: 800 }))
     const logError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const wrapper = mountRouteFilteredUsageView(true)
     try {
-      vi.advanceTimersByTime(120)
+      await flushPromises()
+      getStats.mockRejectedValueOnce(new Error('same selection temporarily unavailable'))
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('refresh')
       await flushPromises()
       expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('4')
       expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('800')
-
       let finishEarlier!: (value: unknown) => void
-      getSnapshotV2.mockImplementationOnce(
+      let finishBeforeChange!: (value: unknown) => void
+      getStats.mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             finishEarlier = resolve
@@ -431,12 +439,7 @@ describe('admin UsageView 路由筛选', () => {
       )
       wrapper.findComponent(UsageFiltersStub).vm.$emit('refresh')
       await flushPromises()
-      expect(getSnapshotV2).toHaveBeenLastCalledWith(expect.objectContaining({ user_id: 5 }))
-      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('4')
-      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('800')
-
-      let finishBeforeChange!: (value: unknown) => void
-      getSnapshotV2.mockImplementationOnce(
+      getStats.mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             finishBeforeChange = resolve
@@ -444,57 +447,91 @@ describe('admin UsageView 路由筛选', () => {
       )
       wrapper.findComponent(UsageFiltersStub).vm.$emit('refresh')
       await flushPromises()
-
-      wrapper.findComponent(UsageFiltersStub).vm.$emit('update:modelValue', { user_id: 9 })
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('update:modelValue', { provider_id: 9 })
       await flushPromises()
       expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
-      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
-
-      // Complete the latest old-user request before change dispatches a replacement.
-      // Filter identity itself must revoke ownership during this gap between events.
-      finishBeforeChange({ stats: { rpm: 88, tpm: 88000 }, trend: [], groups: [] })
+      finishBeforeChange(createUsageSummary({ average_rpm: 88, average_tpm: 88000 }))
       await flushPromises()
       expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
-      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
-
-      let failCurrent!: (reason: Error) => void
-      getSnapshotV2.mockImplementationOnce(
-        () =>
-          new Promise((_, reject) => {
-            failCurrent = reject
-          }),
-      )
+      getStats.mockRejectedValueOnce(new Error('changed selection unavailable'))
       wrapper.findComponent(UsageFiltersStub).vm.$emit('change')
       await flushPromises()
-      expect(getSnapshotV2).toHaveBeenLastCalledWith(expect.objectContaining({ user_id: 9 }))
+      expect(logError).toHaveBeenCalledWith('Failed to load usage statistics:', expect.any(Error))
       expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
-      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
-
-      failCurrent(new Error('current user snapshot unavailable'))
-      await flushPromises()
-      expect(logError).toHaveBeenCalledWith('Failed to load chart data:', expect.any(Error))
-      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
-      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
-
-      finishEarlier({ stats: { rpm: 99, tpm: 99000 }, trend: [], groups: [] })
+      finishEarlier(createUsageSummary({ average_rpm: 99, average_tpm: 99000 }))
       await flushPromises()
       expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
       expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
-
-      getSnapshotV2.mockResolvedValue({ stats: { rpm: 7, tpm: 700 }, trend: [], groups: [] })
+      getStats.mockResolvedValue(createUsageSummary({ average_rpm: 7, average_tpm: 700 }))
       wrapper.findComponent(UsageFiltersStub).vm.$emit('refresh')
       await flushPromises()
-      expect(getSnapshotV2).toHaveBeenLastCalledWith(expect.objectContaining({ user_id: 9 }))
+      expect(getStats).toHaveBeenLastCalledWith(
+        expect.objectContaining({ provider_id: 9, nocache: 1 }),
+        expect.any(Object),
+      )
       expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('7')
-      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('700')
     } finally {
       wrapper.unmount()
       logError.mockRestore()
     }
   })
 
+  // Request-ID searches omit date bounds and therefore have no averaging interval.
+  // Null rates render as unavailable, and hidden charts no longer request snapshots
+  // that could supply unrelated live dashboard measurements.
+  it('shows unavailable averages for a date-free request-ID search', async () => {
+    getStats.mockResolvedValue(createUsageSummary({ average_rpm: 4, average_tpm: 800 }))
+    const wrapper = mountRouteFilteredUsageView(true)
+    try {
+      vi.advanceTimersByTime(120)
+      await flushPromises()
+      getSnapshotV2.mockClear()
+      getStats.mockResolvedValue(createUsageSummary({ average_rpm: null, average_tpm: null }))
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('update:modelValue', {
+        request_id: 'req-123',
+        start_date: '2026-10-01',
+        end_date: '2026-10-02',
+      })
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('change')
+      await flushPromises()
+      expect(getStats).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          request_id: 'req-123',
+          start_date: undefined,
+          end_date: undefined,
+        }),
+        expect.any(Object),
+      )
+      expect(getSnapshotV2).not.toHaveBeenCalled()
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  // Sparse traffic over a long interval can produce tiny positive averages.
+  // Significant digits keep those observations distinct from measured zero while
+  // both metrics retain compact notation at larger scales.
+  it('distinguishes zero traffic from small positive interval averages', async () => {
+    getStats.mockResolvedValue(createUsageSummary({ average_rpm: 0.00000123, average_tpm: 0.125 }))
+    const wrapper = mountRouteFilteredUsageView(true)
+    try {
+      await flushPromises()
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('0.00000123')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('0.125')
+      getStats.mockResolvedValue(createUsageSummary({ average_rpm: 0, average_tpm: 0 }))
+      wrapper.findComponent(UsageFiltersStub).vm.$emit('refresh')
+      await flushPromises()
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('0')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('0')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   // Navigation can remove the page before its deferred snapshot begins.
-  // Teardown must cancel that timer so no chart or performance request starts afterward.
+  // Teardown must cancel that timer so no chart request starts after the page has left.
   it('cancels the initial snapshot when the usage page is unmounted', async () => {
     const wrapper = mountRouteFilteredUsageView()
     wrapper.unmount()

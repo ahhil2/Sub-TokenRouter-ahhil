@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -59,6 +60,8 @@ type adminUsageRepoCapture struct {
 	listParams               pagination.PaginationParams // captured list pagination and sort
 	listFilters              usage.UsageLogFilters       // captured usage list selectors
 	statsFilters             usage.UsageLogFilters       // captured usage statistics selectors
+	stats                    usage.UsageStats            // configured filtered statistics result
+	statsCalls               int                         // completed statistics query count
 	logs                     []usage.UsageLog            // configured shared usage record rows
 }
 
@@ -625,17 +628,24 @@ func TestAdminUsageListIncludesDetailedTiming(t *testing.T) {
 }
 
 // GetStatsWithFilters captures supplied administrator selectors and returns
-// an empty successful summary.
+// configured summary counters. Tests configure the counters before dispatch
+// and inspect the captured selectors after each HTTP request completes.
 func (s *adminUsageRepoCapture) GetStatsWithFilters(ctx context.Context, filters usage.UsageLogFilters) (*usage.UsageStats, error) {
 	s.statsFilters = filters
-	return &usage.UsageStats{}, nil
+	s.statsCalls++
+	return &s.stats, nil
 }
 
 // newAdminUsageRequestTypeTestRouter constructs administrator usage list and
-// statistics routes with a capture fixture.
-func newAdminUsageRequestTypeTestRouter(repo *adminUsageRepoCapture) *gin.Engine {
+// statistics routes with a capture fixture. An optional calendar supplies the
+// clock for interval cases; other callers use the process-local system clock.
+func newAdminUsageRequestTypeTestRouter(repo *adminUsageRepoCapture, calendars ...timezone.Calendar) *gin.Engine {
 	usageSvc := usage.NewUsageService(repo)
-	handler := NewUsageHandler(usageSvc, nil, nil, nil, timezone.NewCalendar(time.Local))
+	calendar := timezone.NewCalendar(time.Local)
+	if len(calendars) > 0 {
+		calendar = calendars[0]
+	}
+	handler := NewUsageHandler(usageSvc, nil, nil, nil, calendar)
 	router := gin.New()
 	router.GET("/admin/usage", handler.List)
 	router.GET("/admin/usage/stats", handler.Stats)
@@ -836,6 +846,125 @@ func TestAdminUsageStatsInvalidStream(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestAdminUsageStatsIntervalFilters submits every administrator selector with
+// a future end. Cached and bypassed requests must query the same clipped range
+// and return rates from that filtered summary, including request-category precedence.
+func TestAdminUsageStatsIntervalFilters(t *testing.T) {
+	asOf := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	start := asOf.Add(-2 * time.Hour)
+	calendar := timezone.NewCalendarWithClock(time.UTC, func() time.Time { return asOf })
+	for _, nocache := range []string{"false", "true"} {
+		for _, requestType := range []string{"", "ws_v2"} {
+			t.Run(nocache+"/"+requestType, func(t *testing.T) {
+				repo := &adminUsageRepoCapture{stats: usage.UsageStats{
+					TotalRequests: 120, TotalInputTokens: 4000, TotalOutputTokens: 2000,
+					TotalCacheTokens: 90000, TotalTokens: 96000,
+				}}
+				router := newAdminUsageRequestTypeTestRouter(repo, calendar)
+				query := url.Values{
+					"start_date": {start.Format(time.RFC3339)}, "end_date": {asOf.Add(time.Hour).Format(time.RFC3339)},
+					"user_id": {"7"}, "api_key_id": {"11"}, "provider_id": {"13"}, "group_id": {"17"}, "team_id": {"19"},
+					"model": {"requested-model"}, "request_id": {" req-filtered "}, "billing_mode": {" token "},
+					"billing_type": {"1"}, "native_compaction_v2": {"false"}, "stream": {"true"},
+					"request_type": {requestType}, "endpoint_source": {"inbound"}, "nocache": {nocache},
+				}
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/usage/stats?"+query.Encode(), nil))
+				require.Equal(t, http.StatusOK, rec.Code)
+				wantCache := "miss"
+				if nocache == "true" {
+					wantCache = "bypass"
+				}
+				require.Equal(t, wantCache, rec.Header().Get("X-Usage-Stats-Cache"))
+				require.Equal(t, 1, repo.statsCalls)
+				stream, compaction, billing := true, false, int8(1)
+				want := usage.UsageLogFilters{
+					StartTime: &start, EndTime: &asOf, UserID: 7, APIKeyID: 11, ProviderID: 13, GroupID: 17, TeamID: 19,
+					Model: "requested-model", ModelFilterSource: usage.ModelSourceRequested,
+					RequestID: "req-filtered", BillingMode: "token", BillingType: &billing,
+					NativeCompactionV2: &compaction, Stream: &stream, EndpointSource: "inbound",
+				}
+				if requestType != "" {
+					value := int16(usage.RequestTypeWSV2)
+					want.RequestType = &value
+					want.Stream = nil
+				}
+				require.Equal(t, want, repo.statsFilters)
+				var envelope struct {
+					Data usage.UsagePeriodStats `json:"data"` // decoded filtered interval summary
+				}
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+				require.Equal(t, repo.stats, envelope.Data.UsageStats)
+				require.NotNil(t, envelope.Data.AverageRPM)
+				require.NotNil(t, envelope.Data.AverageTPM)
+				require.Equal(t, 1.0, *envelope.Data.AverageRPM)
+				require.Equal(t, 50.0, *envelope.Data.AverageTPM)
+			})
+		}
+	}
+}
+
+// TestAdminUsageStatsIntervalDates exercises date-only, explicit, future and
+// request-lookup ranges. It checks actual elapsed DST minutes, current-day
+// clipping, zero empty summaries and JSON null for unbounded averages.
+func TestAdminUsageStatsIntervalDates(t *testing.T) {
+	asOf := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	calendar := timezone.NewCalendarWithClock(time.UTC, func() time.Time { return asOf })
+	for _, tc := range []struct {
+		name      string     // descriptive date selection case
+		query     url.Values // requested query date parameters
+		minutes   float64    // expected elapsed interval minutes
+		unbounded bool       // retained-history request lookup flag
+	}{
+		{name: "today", query: url.Values{"start_date": {"2026-11-21"}, "end_date": {"2026-11-21"}}, minutes: 720},
+		{name: "historical day", query: url.Values{"start_date": {"2026-11-20"}, "end_date": {"2026-11-20"}}, minutes: 1440},
+		{name: "explicit hour", query: url.Values{"start_date": {"2026-11-20T10:00:00Z"}, "end_date": {"2026-11-20T11:00:00Z"}}, minutes: 60},
+		{name: "spring DST", query: url.Values{"start_date": {"2026-03-08"}, "end_date": {"2026-03-08"}, "timezone": {"America/New_York"}}, minutes: 1380},
+		{name: "fall DST", query: url.Values{"start_date": {"2026-11-01"}, "end_date": {"2026-11-01"}, "timezone": {"America/New_York"}}, minutes: 1500},
+		{name: "future day", query: url.Values{"start_date": {"2026-11-22"}, "end_date": {"2026-11-22"}}},
+		{name: "empty instants", query: url.Values{"start_date": {"2026-11-20T10:00:00Z"}, "end_date": {"2026-11-20T10:00:00Z"}}},
+		{name: "request history", query: url.Values{"request_id": {"req-history"}}, unbounded: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &adminUsageRepoCapture{stats: usage.UsageStats{
+				TotalRequests: 2760, TotalInputTokens: 5520, TotalOutputTokens: 2760,
+			}}
+			router := newAdminUsageRequestTypeTestRouter(repo, calendar)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/usage/stats?"+tc.query.Encode(), nil))
+			require.Equal(t, http.StatusOK, rec.Code)
+			var envelope struct {
+				Data map[string]any `json:"data"` // decoded raw summary response fields
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+			require.Contains(t, envelope.Data, "average_rpm")
+			require.Contains(t, envelope.Data, "average_tpm")
+			if tc.unbounded {
+				require.Equal(t, 1, repo.statsCalls)
+				require.Nil(t, repo.statsFilters.StartTime)
+				require.Nil(t, repo.statsFilters.EndTime)
+				require.Nil(t, envelope.Data["average_rpm"])
+				require.Nil(t, envelope.Data["average_tpm"])
+				require.Equal(t, 2760.0, envelope.Data["total_requests"])
+				return
+			}
+			if tc.minutes == 0 {
+				require.Zero(t, repo.statsCalls)
+				require.Equal(t, 0.0, envelope.Data["total_requests"])
+				require.Equal(t, 0.0, envelope.Data["total_provider_cost"])
+				require.Equal(t, 0.0, envelope.Data["average_rpm"])
+				require.Equal(t, 0.0, envelope.Data["average_tpm"])
+				return
+			}
+			require.Equal(t, 1, repo.statsCalls)
+			require.Equal(t, tc.minutes, repo.statsFilters.EndTime.Sub(*repo.statsFilters.StartTime).Minutes())
+			require.False(t, repo.statsFilters.EndTime.After(asOf))
+			require.InDelta(t, 2760/tc.minutes, envelope.Data["average_rpm"], 1e-9)
+			require.InDelta(t, 8280/tc.minutes, envelope.Data["average_tpm"], 1e-9)
+		})
+	}
 }
 
 // TestAdminUsageEndpointSource supplies empty, all, supported and invalid

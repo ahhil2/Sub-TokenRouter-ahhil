@@ -379,6 +379,16 @@ type UsageStats struct {
 	EndpointPaths     []EndpointStat `json:"endpoint_paths,omitempty"`      // endpoint path usage breakdown
 }
 
+// UsagePeriodStats combines filtered totals with rates for their measured range.
+type UsagePeriodStats struct {
+	UsageStats // recorded totals for the measured interval
+	// AverageRPM and AverageTPM share the statistics query's elapsed minutes.
+	// They are nil for unbounded history and zero for an empty bounded interval;
+	// token rates count input and output tokens, excluding both cache buckets.
+	AverageRPM *float64 `json:"average_rpm"` // mean requests per minute
+	AverageTPM *float64 `json:"average_tpm"` // mean text tokens per minute
+}
+
 // PlatformUsage carries today's and selected-range user charges grouped by
 // recorded execution platform.
 type PlatformUsage struct {

@@ -3,7 +3,7 @@
     <div class="space-y-4">
       <UsageStatsCards :stats="usageStats">
         <template #performance>
-          <PerformanceMetricsCard :metrics="performanceStats" :user-scoped="!!filters.user_id" />
+          <PerformanceMetricsCard :metrics="performanceStats" period-average />
         </template>
       </UsageStatsCards>
       <!-- Charts Section -->
@@ -333,10 +333,10 @@ import type { DashboardStats } from '@/api/admin/dashboard.types'
 // model-source caches have separate invalidation rules. Column preferences are stored
 // independently for usage and errors, and hidden-column migration appends newly hidden
 // defaults while retaining saved choices. Ranking mounts on first selection and continues
-// following shared filters afterward. Performance rates use the snapshot's preceding
-// minute for the selected user or the whole site. Changing users clears the preceding
-// observation and invalidates pending snapshots before another response can publish.
-// Date and chart filters describe separate usage totals and distributions.
+// following shared filters afterward. Performance rates arrive with the usage summary
+// and average the same filtered records over the server's elapsed interval. Changing
+// summary filters clears preceding rates and invalidates pending summaries before
+// another response can publish. Snapshots supply the visible usage charts separately.
 
 // Translation and application notifications provide labels and request feedback for usage
 // records, filters, and export actions.
@@ -358,9 +358,9 @@ const route = useRoute()
 // distribution responses used by charts.
 const usageStats = ref<AdminUsageStatsResponse | null>(null)
 const usageLogs = ref<AdminUsageLog[]>([])
-// performanceStats retains the selected user's latest rates across same-user reloads.
-// Changing the user clears it to null until a snapshot supplies that user's measurements;
-// an absent user filter selects whole-site rates.
+// performanceStats retains interval averages across refreshes of identical filters.
+// A changed summary selection clears these rates until its summary returns; searches
+// without a bounded interval also display null because no average can be calculated.
 const performanceStats = ref<Pick<DashboardStats, 'rpm' | 'tpm'> | null>(null)
 // Loading flags distinguish the records table, chart requests, and export operation so each
 // section can render its own progress.
@@ -421,7 +421,7 @@ let chartReqSeq = 0
 let statsReqSeq = 0
 let statsAbortController: AbortController | null = null
 let modelStatsReqSeq = 0
-// initialSnapshotTimer defers the first chart and performance read until the
+// initialSnapshotTimer defers the first chart read until the
 // table starts loading, and unmount cancels it before it can dispatch new work.
 let initialSnapshotTimer: ReturnType<typeof setTimeout> | undefined
 // Export progress holds dialog visibility, percentage, processed rows, expected total, and
@@ -762,8 +762,9 @@ const loadEndpointStats = async (source: EndpointSource, force = false) => {
 //
 // The active raw endpoint starts independently, allowing summary cards and that chart to
 // finish separately. Only the current summary sequence can replace totals, clear inbound
-// results on error, or release its loading state. A failed current summary keeps the
-// earlier usageStats record but clears inbound endpoint counts.
+// results on error, or release its loading state. The same response publishes interval
+// rates, so their filters and observation match the totals. A failed current summary
+// keeps earlier rates for an unchanged selection; filter changes clear rates before loading.
 const loadStats = async (force = false) => {
   // Cancel the prior summary before invalidating raw-source caches so the replacement
   // summary and selected raw chart use the refreshed filter state.
@@ -783,6 +784,10 @@ const loadStats = async (force = false) => {
     })
     if (seq !== statsReqSeq) return
     usageStats.value = response
+    performanceStats.value =
+      response.average_rpm == null || response.average_tpm == null
+        ? null
+        : { rpm: response.average_rpm, tpm: response.average_tpm }
     inboundEndpointStats.value = response.endpoints || []
   } catch (error) {
     // Only the current summary failure clears inbound counts; previously displayed summary
@@ -873,22 +878,21 @@ const loadModelStats = async (source: ModelDistributionSource, force = false) =>
   }
 }
 
-// loadChartData retrieves user-scoped performance rates with the visible usage charts.
-// Request-ID filtering requests the rates while excluding trend and group sections.
-// The server uses the selected user or whole site for the preceding minute, independently
-// of the selected date range and other chart filters.
+// loadChartData retrieves trends and group distributions for the selected usage filters.
+// Request-ID searches hide those charts and skip the snapshot request. Performance
+// averages arrive through loadStats with the other filtered usage totals.
 //
 // A sequence identifies the current snapshot so older responses cannot replace
-// newer rates or charts, including after unmount or a user change. Current failures retain
-// the last successful rates for the same user; the user watcher clears rates upon scope
-// changes. Model statistics use their separate loader and source cache, while the existing
-// snapshot request supplies rates alongside its charts.
+// newer charts, including after unmount or a filter change. Current failures retain
+// the preceding chart arrays. Model statistics use their separate loader and source
+// cache, while snapshots request only the trend and group sections displayed here.
 const loadChartData = async () => {
   const includeCharts = !filters.value.request_id
   // Capture chart ownership before awaiting the snapshot so only the latest
   // request publishes successful arrays and releases loading.
   const seq = ++chartReqSeq
   chartsLoading.value = includeCharts
+  if (!includeCharts) return
   try {
     const requestType = filters.value.request_type
     const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
@@ -906,21 +910,18 @@ const loadChartData = async () => {
       stream: legacyStream === null ? undefined : legacyStream,
       billing_type: filters.value.billing_type,
       native_compaction_v2: filters.value.native_compaction_v2,
-      include_stats: true,
+      include_stats: false,
       include_trend: includeCharts,
       include_model_stats: false,
       include_group_stats: includeCharts,
       include_users_trend: false,
     })
     if (seq !== chartReqSeq) return
-    if (snapshot.stats) {
-      performanceStats.value = { rpm: snapshot.stats.rpm, tpm: snapshot.stats.tpm }
-    }
     trendData.value = snapshot.trend || []
     groupStats.value = snapshot.groups || []
   } catch (error) {
-    // Keep same-user rates and preceding charts on a current request failure; a user
-    // change already cleared rates and revoked the earlier snapshot's publication rights.
+    // Keep preceding charts on a current request failure; changes to the summary
+    // selection already revoked earlier snapshots' publication rights.
     if (seq !== chartReqSeq) return
     console.error('Failed to load chart data:', error)
   } finally {
@@ -1517,12 +1518,15 @@ watch(endpointDistributionSource, (source) => {
   void loadEndpointStats(source)
 })
 
-// Clear rates and invalidate pending snapshots synchronously with user selection. This
-// covers the interval before the filter's change event starts the replacement request.
+// Clear rates and revoke pending summary and chart responses when effective summary
+// filters change. Query serialization also covers the interval before the filter's
+// change event starts its replacement requests; unchanged refreshes retain their rates.
 watch(
-  () => filters.value.user_id,
+  () => JSON.stringify(statsParams('inbound', false)),
   () => {
     performanceStats.value = null
+    statsReqSeq += 1
+    statsAbortController?.abort()
     chartReqSeq += 1
   },
   { flush: 'sync' },
@@ -1532,7 +1536,7 @@ watch(
 // view so pending cancelable work cannot retain those resources.
 onUnmounted(() => {
   // Clear deferred dispatch and invalidate active snapshot ownership together
-  // so neither scheduled nor late requests can publish performance data afterward.
+  // so neither scheduled charts nor late summaries can publish data afterward.
   clearTimeout(initialSnapshotTimer)
   chartReqSeq += 1
   statsReqSeq += 1

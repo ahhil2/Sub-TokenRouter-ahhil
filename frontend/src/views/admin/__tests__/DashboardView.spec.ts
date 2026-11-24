@@ -133,7 +133,7 @@ describe('admin DashboardView', () => {
 
   // The snapshot request remains pending while the mounted dashboard initializes. The
   // layout skeleton must stay visible until the deferred response resolves, then give
-  // way to summary cards.
+  // way to summary cards with the dashboard's live-rate label and measurements.
   it('数据未返回时显示布局骨架，返回后渲染统计卡', async () => {
     let resolveSnapshot!: (value: unknown) => void
     getSnapshotV2.mockImplementationOnce(
@@ -170,6 +170,12 @@ describe('admin DashboardView', () => {
     expect(wrapper.text()).toContain('admin.dashboard.apiKeys')
     expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('23')
     expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('4.50K')
+    expect(
+      wrapper.get('[data-testid="performance-metrics-card"] [title]').attributes('title'),
+    ).toBe('admin.dashboard.performanceHint')
+    expect(wrapper.get('[data-testid="performance-metrics-card"]').text()).not.toContain(
+      'admin.dashboard.periodPerformance',
+    )
     wrapper.unmount()
   })
 

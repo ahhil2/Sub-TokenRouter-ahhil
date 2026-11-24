@@ -90,6 +90,9 @@ RequestLogger
 - 身份、团队和 Key：用户资料、会话、七类身份、强认证和用户管理在 `identity/httpapi`，团队在 `team/httpapi`，Key 的生命周期和凭据在 `apikey/httpapi`。app 组装同一组身份处理器；微信支付 OAuth 在 `payment/httpapi` 里单独接入。HTTP 适配层保持历史的 DTO 格式和凭据差异，安全的 `Principal` 表示身份，Key 的 `AccessSnapshot` 表示付款和成员上下文。
 
 `GET /api/v1/admin/usage/stats` 的可选参数 `endpoint_source` 接受 `inbound`、`upstream`、`path`，选择附带的端点统计；省略、空值或 `all` 返回全部端点维度，其他值返回 400。摘要字段照常返回，缓存按端点来源分别保存。管理页面先加载摘要和入站端点，切换图表后才读取上游端点或路径；筛选变化和页面退出会取消过期的端点请求。
+
+该摘要的 `average_rpm` 和 `average_tpm` 为当前筛选范围内的每分钟平均请求数、输入与输出 Token 数，允许小数。未来的结束时间截到查询时刻，合计和平均值使用同一时间范围；空区间返回零。请求 ID 查询未提供日期或 period、因而没有时间边界时，两字段返回 null。计算口径和页面行为见[使用记录查询](../operations/pre_aggregation.md#query_routing_and_fallback)，样本复用规则见[查询缓存](../operations/observability_and_data_lifecycle.md#usage_query_contracts)。
+
 - 网关观测：网关 HTTP 请求的 Ops 观测键、流错误快照和传输标记由 `gateway/httpapi` 管理；每个 WS turn 单独保存第一个错误，以及当次的提供商、模型和规则匹配快照。采集队列和持久化由 Ops 负责。
 - 用量、审计和 Ops：用量和 Dashboard 的用户端、管理端入口在 `usage/httpapi`；`/v1/usage` 和 Antigravity 用量自省的公开 handler 由 app 直接构造，区分 quota_limited 和 unrestricted、日期范围、余额和指定订阅，统计按尽力而为计算。审计入口在 `audit/httpapi`，已清空的 TOTP 和管理员 API Key 的拒绝规则继续有效。Ops 的管理和实时入口在 `ops/httpapi`。留痕的保证见[清理与留存](../operations/observability_and_data_lifecycle.md#data_cleanup)。
 - 通知、搜索、风控和站点：通知模板、SMTP 测试和公开退订绑定 `notification/httpapi`；搜索配置、管理测试和额度重置绑定 `search/httpapi`；风险配置、日志、媒体、Cyber 和解封绑定 `moderation/httpapi`；公开设置和页面由 `site/httpapi` 提供。

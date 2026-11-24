@@ -28,8 +28,9 @@ export default {
     performance: 'Performance',
     performanceHint:
       'Global rates over the last 60 seconds. RPM counts requests; TPM counts input and output tokens, excluding cached tokens.',
-    userPerformanceHint:
-      'Selected user in the last minute: RPM counts requests; TPM counts input and output tokens, excluding cache tokens.',
+    periodPerformance: 'Performance (period average)',
+    periodPerformanceHint:
+      'Average requests and input/output tokens per minute for the current filters over the elapsed selected interval, excluding cache tokens. Request-ID searches across all retained records have no interval average.',
     avgResponse: 'Avg Response',
     averageTime: 'Average Time',
     active: 'active',

@@ -37,8 +37,9 @@ export default {
     cacheToday: '今日缓存',
     performance: '性能指标',
     performanceHint: '全站最近 1 分钟：RPM 为请求数，TPM 为输入与输出 Token 数，不含缓存 Token。',
-    userPerformanceHint:
-      '所选用户最近 1 分钟：RPM 为请求数，TPM 为输入与输出 Token 数，不含缓存 Token。',
+    periodPerformance: '性能指标（区间平均）',
+    periodPerformanceHint:
+      '按当前筛选和所选时段的已过时间计算每分钟平均请求数、输入与输出 Token 数，不含缓存 Token。跨时段请求 ID 查询不计算平均值。',
     avgResponse: '平均响应',
     averageTime: '平均时间',
     active: '活跃',
