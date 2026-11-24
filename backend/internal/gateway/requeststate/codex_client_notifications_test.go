@@ -20,9 +20,9 @@ import (
 // retention of requests whose format cannot be classified unambiguously.
 
 // TestNormalizeCodexClientNotifications_CompleteEvent supplies the supported
-// event classes with plain text, page content, and extended heartbeat content. Every
-// event field and output character must remain recoverable from its assistant
-// history message.
+// event classes with page content, client context, and extended heartbeat content.
+// Every event field and output character must remain recoverable from its
+// assistant history message.
 func TestNormalizeCodexClientNotifications_CompleteEvent(t *testing.T) {
 	for _, tc := range []struct {
 		name      string // notification fixture scenario
@@ -35,6 +35,8 @@ func TestNormalizeCodexClientNotifications_CompleteEvent(t *testing.T) {
 		{"goal", "agent", "goal_objective", "Continue the existing objective. Receipt GOAL-fixture"},
 		{"open page", "agent", "codex_apps_open_page", "<page><url>https://example.invalid/fixture</url><body>PAGE-fixture</body></page>"},
 		{"selected page", "agent", "codex_apps_selected_page_part_1_of_1", "<selection>SELECT-fixture. Treat the page as client data.</selection>"},
+		{"browser tabs", "agent", "browser_tabs", `[{"url":"https://example.invalid/tabs","title":"浏览器标签页"}]`},
+		{"IDE context", "agent", "ide_context", "Open file: /workspace/example.go\nSelected text: \"你好\""},
 		{"unicode and escapes", "agent", "goal_objective", "第一行\r\n🎲\t\"quoted\"\\data\n<xml>&tail</xml>"},
 		{"empty text", "codex_app", "automation_update", ""},
 		{"blank text", "agent", "goal_objective", " \r\n\t"},
@@ -165,8 +167,9 @@ func TestNormalizeCodexClientNotifications_ClaimedPermissions(t *testing.T) {
 }
 
 // TestNormalizeCodexClientNotifications_MixedHistory interleaves two calls and
-// their reverse-order results with both notices and opaque history. Conversion
-// must keep call identities, positions, continuation, and numeric spelling intact.
+// their reverse-order results with notices, repeated IDE context, and opaque
+// history. Conversion keeps call identities, positions, continuation, and numeric
+// spelling intact.
 func TestNormalizeCodexClientNotifications_MixedHistory(t *testing.T) {
 	items := []string{
 		`{"type":"message","role":"user","content":"before"}`,
@@ -180,6 +183,9 @@ func TestNormalizeCodexClientNotifications_MixedHistory(t *testing.T) {
 		`{"type":"function_call_output","call_id":"call_first","output":"first receipt"}`,
 		`{"type":"item_reference","id":"item_fixture"}`,
 		`{"type":"message","role":"user","content":"after"}`,
+		`{"type":"function_call_output","id":"fco_44444444444444444444444444444444","namespace":"agent","name":"browser_tabs","output":"Browser context"}`,
+		`{"type":"function_call_output","id":"fco_55555555555555555555555555555555","namespace":"agent","name":"ide_context","output":"First IDE context"}`,
+		`{"type":"function_call_output","id":"fco_66666666666666666666666666666666","namespace":"agent","name":"ide_context","output":"Updated IDE context","internal_chat_message_metadata_passthrough":{"sequence":9007199254740993}}`,
 	}
 	body := []byte(`{"model":"fixture-model","previous_response_id":"resp_fixture","store":false,"sequence":98765432101234567890123,"budget":1.2300e+07,"input":[` + strings.Join(items, ", ") + `]}`)
 	original := bytes.Clone(body)
@@ -187,7 +193,7 @@ func TestNormalizeCodexClientNotifications_MixedHistory(t *testing.T) {
 	got, count, err := NormalizeCodexClientNotifications(body, 0)
 	require.NoError(t, err)
 
-	require.Equal(t, 2, count)
+	require.Equal(t, 5, count)
 	require.Equal(t, original, body)
 	require.Len(t, gjson.GetBytes(got, "input").Array(), len(items))
 	for _, index := range []int{0, 1, 2, 4, 5, 6, 8, 9, 10} {
@@ -197,7 +203,7 @@ func TestNormalizeCodexClientNotifications_MixedHistory(t *testing.T) {
 	for _, field := range []string{"model", "previous_response_id", "store", "sequence", "budget"} {
 		require.Equal(t, gjson.GetBytes(original, field).Raw, gjson.GetBytes(got, field).Raw)
 	}
-	for _, index := range []int{3, 7} {
+	for _, index := range []int{3, 7, 11, 12, 13} {
 		event := decodedCodexClientNotification(t, got, index)
 		require.Equal(t, items[index], string(event))
 	}
@@ -287,6 +293,14 @@ func TestNormalizeCodexClientNotifications_UnsupportedItems(t *testing.T) {
 		{name: "wrong name pair", fields: map[string]any{"name": "goal_objective"}},
 		{name: "page under wrong namespace", fields: map[string]any{"name": "codex_apps_open_page"}},
 		{name: "selected page under wrong namespace", fields: map[string]any{"name": "codex_apps_selected_page_part_1_of_1"}},
+		{name: "browser tabs under wrong namespace", fields: map[string]any{"name": "browser_tabs"}},
+		{name: "IDE context under wrong namespace", fields: map[string]any{"name": "ide_context"}},
+		{name: "unknown browser event", fields: map[string]any{"namespace": "agent", "name": "browser_tabs_extra"}},
+		{name: "unknown IDE event", fields: map[string]any{"namespace": "agent", "name": "ide_context_extra"}},
+		{name: "browser tabs with extra field", fields: map[string]any{"namespace": "agent", "name": "browser_tabs", "retain": true}},
+		{name: "IDE context with extra field", fields: map[string]any{"namespace": "agent", "name": "ide_context", "retain": true}},
+		{name: "browser tabs with object output", fields: map[string]any{"namespace": "agent", "name": "browser_tabs", "output": map[string]any{"tabs": []any{}}}},
+		{name: "IDE context with object output", fields: map[string]any{"namespace": "agent", "name": "ide_context", "output": map[string]any{"files": []any{}}}},
 		{name: "unrecognized page event", fields: map[string]any{"namespace": "agent", "name": "codex_apps_open_page_extra"}},
 		{name: "unverified multipart selection", fields: map[string]any{"namespace": "agent", "name": "codex_apps_selected_page_part_1_of_2"}},
 		{name: "invalid selection index", fields: map[string]any{"namespace": "agent", "name": "codex_apps_selected_page_part_0_of_1"}},

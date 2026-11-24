@@ -13,10 +13,10 @@ import (
 
 // codex_client_notifications.go adapts named client notifications into Responses
 // assistant history messages before ordinary tool-result handling.
-// Some clients encode automation, goal, and page records as function_call_output
-// items with item IDs but no originating call. Ordinary tool-result validation
-// cannot associate these items with a model invocation. Their complete event records
-// therefore travel as client-provided text, at the same positions in the input.
+// Some clients encode automation, goal, page, browser, and IDE context records as
+// function_call_output items with item IDs but no originating call. Tool-result
+// validation cannot associate these items with a model invocation. Their complete
+// event records therefore travel as client-provided text, at the same input positions.
 //
 // Callers invoke the normalizer on authenticated Responses requests before
 // validating ordinary tool results. Metadata establishes a supported shape,
@@ -124,8 +124,8 @@ func NormalizeCodexClientNotifications(body []byte, maxBytes int64) ([]byte, int
 	return out.Bytes(), len(notices), nil
 }
 
-// isCodexClientNotification recognizes the supported automation, goal, and page
-// event names using exact namespace/name pairs.
+// isCodexClientNotification recognizes supported client event names using exact
+// namespace/name pairs, including browser tabs and IDE context records.
 // Each item has string type, id, namespace, name, and output fields, with an
 // fco_ identifier matching the supported format. Optional native metadata remains
 // event data. Any other field, including a null or blank call_id, declines conversion.
@@ -157,7 +157,8 @@ func isCodexClientNotification(item gjson.Result) bool {
 		return fields["name"].Str == "automation_update"
 	case "agent":
 		switch fields["name"].Str {
-		case "goal_objective", "codex_apps_open_page", "codex_apps_selected_page_part_1_of_1":
+		case "goal_objective", "codex_apps_open_page", "codex_apps_selected_page_part_1_of_1",
+			"browser_tabs", "ide_context":
 			return true
 		}
 	}

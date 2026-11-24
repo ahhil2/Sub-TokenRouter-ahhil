@@ -634,7 +634,7 @@ func TestOpenAITokensNativeHTTPContracts(t *testing.T) {
 	}
 }
 
-// TestOpenAITokensNotificationRepresentation sends goal and page events through
+// TestOpenAITokensNotificationRepresentation sends client context events through
 // input_tokens.go and the actual token attempt loop. Counting retains complete
 // event data and metadata in the configured representation, while expansion
 // limits stop funding and provider selection.
@@ -646,6 +646,8 @@ func TestOpenAITokensNotificationRepresentation(t *testing.T) {
 		event string // complete encoded notification data
 	}{
 		{name: "goal", event: `{"type":"function_call_output","id":"fco_00000000000000000000000000000001","namespace":"agent","name":"goal_objective","output":"GOAL-counting"}`},
+		{name: "browser tabs", event: codexBrowserTabsFixture},
+		{name: "IDE context", event: codexIDEContextFixture},
 		{name: "open page", event: `{"type":"function_call_output","id":"fco_00000000000000000000000000000002","namespace":"agent","name":"codex_apps_open_page","output":"<page url=\"https://example.invalid/doc?a=1&b=2\">中文页面</page>","internal_chat_message_metadata_passthrough":{"sequence":9007199254740993,"page":{"title":"页面标题","active":true}}}`},
 		{name: "selected page part", event: `{"type":"function_call_output","id":"fco_00000000000000000000000000000003","namespace":"agent","name":"codex_apps_selected_page_part_1_of_1","output":"Selected text: \"引用\"\n<content>& data","internal_chat_message_metadata_passthrough":{"sequence":9007199254740995,"selection":{"start":0,"end":17},"tags":["中文",null]}}`},
 	} {

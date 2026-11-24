@@ -59,7 +59,7 @@ Compose 的 `.env` 用于解析编排变量，应用容器通过服务的 `envir
 
 用户名单默认 `[]`，YAML 使用正整数列表，环境变量 `GATEWAY_CODEX_CLIENT_NOTIFICATION_USER_IDS` 使用逗号分隔的 ID，例如 `101,102`；空环境变量会清空 YAML 中的名单。零、负数、浮点数、布尔值或超出 int64 范围的项会使启动失败。关闭所有用户的兼容转换需要同时将全局开关设为 `false`、名单设为空，并核对环境变量是否覆盖文件配置。
 
-全局开关和名单均要求 `authctx.GetPrincipal` 返回有效的 API Key 操作者，团队凭据按成员身份判断。缺少这份鉴权记录时不启用转换；付款账户 `AuthSubject.UserID` 与 Key 所有者不参与名单匹配。启用后，Responses 入口把符合限定字段格式的 `codex_app.automation_update`、`agent.goal_objective`、`agent.codex_apps_open_page` 和 `agent.codex_apps_selected_page_part_1_of_1` 完整记录封装为 `role=assistant` 历史消息，标注它是客户端提供的事件数据。名称按这四项精确匹配，未知分页或分片名称不按前缀放行。已认证 principal 说明调用者身份，不能证明事件来自可信调度器或页面来源；通知内容不能增加执行或审批权限。具体字段条件和诊断方式见 [OpenAI 上游](openai_upstream.md#openai_tool_identity)。
+全局开关和名单均要求 `authctx.GetPrincipal` 返回有效的 API Key 操作者，团队凭据按成员身份判断。缺少这份鉴权记录时不启用转换；付款账户 `AuthSubject.UserID` 与 Key 所有者不参与名单匹配。启用后，Responses 入口把符合限定字段格式的 `codex_app.automation_update`、`agent.goal_objective`、`agent.codex_apps_open_page`、`agent.codex_apps_selected_page_part_1_of_1`、`agent.browser_tabs` 和 `agent.ide_context` 完整记录封装为 `role=assistant` 历史消息，标注它是客户端提供的事件数据。名称按这六项精确匹配，未知分页或分片名称不按前缀放行。已认证 principal 说明调用者身份，不能证明事件来自可信调度器或页面来源；通知内容不能增加执行或审批权限。具体字段条件和诊断方式见 [OpenAI 上游](openai_upstream.md#openai_tool_identity)。
 
 确认转换生效时，按同一请求检查 `openai.codex_client_notifications_normalized` 日志及其 `notification_count`。HTTP 400 工具结果校验日志还提供 `codex_client_notifications_enabled` 和 `codex_client_notifications_converted`，分别表示本请求的操作者是否被选中、已经转换的项目数。混合历史中的内联调用或 `previous_response_id` 会影响入口校验是否放行，因此混合请求成功或返回 200 不能证明通知转换已启用。
 

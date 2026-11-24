@@ -30,9 +30,9 @@ import (
 // upstreams capture both initial notifications and subsequent response.create
 // frames; no external provider or model invocation is used.
 
-// TestClientNotifications_ConsecutiveTransportTurns verifies automation, goal,
-// and page events before upstream serialization in every WS execution mode.
-// Page events each start a session without tool-call history, and a second
+// TestClientNotifications_ConsecutiveTransportTurns verifies client context
+// events before upstream serialization in every WS execution mode.
+// Standalone events each start a session without tool-call history, and a second
 // frame omits model while continuing the first response. Ordinary paired tool
 // history and complete notification metadata remain available in mixed turns.
 func TestClientNotifications_ConsecutiveTransportTurns(t *testing.T) {
@@ -57,6 +57,17 @@ func TestClientNotifications_ConsecutiveTransportTurns(t *testing.T) {
 			name:   "selection then opened page",
 			first:  strings.Replace(wsNotificationEvent, "goal_objective", "codex_apps_selected_page_part_1_of_1", 1),
 			second: strings.Replace(wsNotificationEvent, "goal_objective", "codex_apps_open_page", 1),
+		},
+		{
+			name:   "browser tabs then IDE context",
+			first:  strings.Replace(wsNotificationEvent, "goal_objective", "browser_tabs", 1),
+			second: strings.Replace(wsNotificationEvent, "goal_objective", "ide_context", 1),
+		},
+		{
+			name:   "IDE context then browser tabs with tool history",
+			first:  strings.Replace(wsNotificationEvent, "goal_objective", "ide_context", 1),
+			second: strings.Replace(wsNotificationEvent, "goal_objective", "browser_tabs", 1),
+			mixed:  true,
 		},
 	} {
 		for _, scenario := range []string{"pooled", "per_session", "http_bridge", "pooled_oauth", "per_session_oauth"} {

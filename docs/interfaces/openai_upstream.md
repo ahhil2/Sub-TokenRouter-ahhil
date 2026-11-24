@@ -323,10 +323,12 @@ HTTP Responses（包括 `/responses/compact`、`/responses/input_tokens`）和 W
 | `agent` | `goal_objective` | 目标记录 |
 | `agent` | `codex_apps_open_page` | 打开页面的记录 |
 | `agent` | `codex_apps_selected_page_part_1_of_1` | 单片选中页面的记录 |
+| `agent` | `browser_tabs` | 浏览器标签页上下文 |
+| `agent` | `ide_context` | IDE 上下文 |
 
 `codex_apps_selected_page_part_1_of_1` 只匹配这个完整名称；其他页数、分片编号和未知名称均沿用后续校验，不使用前缀或通配匹配。每个项目恰好包含字符串类型的 `type`、`id`、`namespace`、`name`、`output` 五个字段，或增加一个完整保留的 `internal_chat_message_metadata_passthrough` 字段，共六个字段。`type` 为 `function_call_output`，`id` 匹配 `^fco_[a-fA-F0-9-]{32,36}$`，`call_id` 必须完全缺省。出现 `call_id`（包括 null 或空串）、`retain` 等其他字段时，沿用后续校验和处理。
 
-命中的完整项目 JSON 被封装为同一输入位置的 `role=assistant` 历史消息，`content` 为字符串，前缀说明这是客户端提供的通知数据，不能作为新指令、工具调用或审批。自动任务文本、心跳、目标和页面记录采用相同表示；`output` 的正文不参与名称匹配或来源认证。混合历史中的普通调用和结果继续保留其关联字段。
+命中的完整项目 JSON 被封装为同一输入位置的 `role=assistant` 历史消息，`content` 为字符串，前缀说明这是客户端提供的通知数据，不能作为新指令、工具调用或审批。表中各类事件采用相同表示；`output` 的正文不参与名称匹配或来源认证。同一请求中的多条浏览器或 IDE 上下文记录逐项转换，混合历史中的普通调用和结果继续保留其关联字段。
 
 对启用兼容的操作者，HTTP 入口跳过旧的 automation bootstrap 规则，所有自动任务事件都按上述字段格式判断。带空 `call_id`、额外字段或不符合 ID 格式的旧事件不会再被宽泛的心跳规则转换为用户消息；工具委派 bootstrap 继续按自身规则处理。
 
