@@ -26,8 +26,8 @@ import (
 // retained-history request identity lookup. List accepts independent time
 // bounds, while Stats uses both explicit dates together or a period default,
 // then removes default bounds for a request-ID query that supplied no dates
-// or period. Bounded statistics include interval rates computed from the same
-// sample, clipped to the captured current time; cache hits retain that sample.
+// or period. Statistics combine cached selected-range totals with a fresh
+// preceding-minute query using the same non-date selectors.
 //
 // Cleanup commands create persisted tasks with inclusive end instants and
 // operator attribution. Their date-only end expansion uses a fixed
@@ -269,9 +269,9 @@ func (h *UsageHandler) List(c *gin.Context) {
 // bounds for retained-history lookup. Endpoint-source validation selects all
 // or one chart, and request category takes precedence over legacy stream.
 // nocache bypasses lookup and insertion for this response; it leaves existing
-// entries available to later cached requests. Bounded totals and interval
-// averages share a query clipped to the captured current time; unbounded
-// request lookups return null averages. Cache hits reuse that complete sample.
+// entries available to later cached requests. Selected-range totals are clipped
+// to the captured current time and can use cached results. Recent rates use a
+// separate sixty-second query with the same non-date selectors on every response.
 func (h *UsageHandler) Stats(c *gin.Context) {
 	var userID, apiKeyID, providerID, groupID, teamID int64
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
@@ -437,11 +437,11 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		filters.EndTime = nil
 	}
 
-	var stats *usage.UsagePeriodStats
+	var stats *usage.UsageStatsWithRates
 	// nocache bypasses this response's lookup and insertion. Existing snapshots remain
 	// available for later callers, so this flag is a read choice rather than cache eviction.
 	if parseBoolQueryWithDefault(c.Query("nocache"), false) {
-		s, err := h.usageService.GetStatsWithPeriodRates(c.Request.Context(), filters, now)
+		s, err := h.usageService.GetStatsWithRecentRates(c.Request.Context(), filters, now)
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
@@ -745,9 +745,9 @@ func (h *UsageHandler) CancelCleanupTask(c *gin.Context) {
 	response.Success(c, gin.H{"id": taskID, "status": usage.UsageCleanupStatusCanceled})
 }
 
-// getStatsCached returns administrator totals, period rates and cache-hit status.
+// getStatsCached returns cached totals, fresh recent rates and cache-hit status.
 // Callers supply a nonnil context and immutable filter pointers while a shared
 // load can continue after one waiter cancels; asOf bounds its first sample.
-func (h *UsageHandler) getStatsCached(ctx context.Context, f usage.UsageLogFilters, asOf time.Time) (*usage.UsagePeriodStats, bool, error) {
+func (h *UsageHandler) getStatsCached(ctx context.Context, f usage.UsageLogFilters, asOf time.Time) (*usage.UsageStatsWithRates, bool, error) {
 	return h.usageService.GetStatsCached(ctx, f, asOf)
 }

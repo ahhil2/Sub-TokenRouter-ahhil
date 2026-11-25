@@ -23,9 +23,11 @@ import (
 // ComputeTokenBreakdown chooses the applicable price record and splits the
 // overlapping image counts before totaling USD component amounts. Catalog tiers
 // or eligible built-in multipliers price the whole usage, while configured
-// intervals suppress those built-in rules. Display construction uses the same
-// price selection inputs and preserves unpriced gaps rather than flattening
-// them into free ranges. Time and effort factors are applied to token costs
+// intervals suppress those built-in rules. Configured context surcharges compare
+// the charged usage with the same usage at the shortest positive context's prices.
+// Display construction uses the same price selection inputs and preserves
+// unpriced gaps rather than flattening them into free ranges. Time and effort
+// factors are applied to token costs
 // separately from request or media-unit charging.
 
 // These OpenAI wire labels identify Fast service tiers for billing consumers;
@@ -286,7 +288,10 @@ func ApplyConfigTokenPriceOverrides(pricing *ModelPricing, configPricing *ModelP
 // supply a non-nil resolved record, valid counts whose sum fits int, and finite
 // amounts. Missing effective pricing returns ErrModelPricingUnavailable.
 //
-// Configured intervals suppress built-in long-context charging.
+// Configured intervals suppress built-in long-context charging. Their surcharge
+// marker compares the same usage at the selected prices and at the prices for
+// the smallest positive context, including any configured first interval. An
+// unavailable reference price leaves the marker unset.
 // ComputeTokenBreakdown selects the service tier and applies the user rate;
 // catalog time rules then apply only for catalog-source resolution. Card time
 // rules use their separate instant and location, and final max effort scales
@@ -305,6 +310,15 @@ func CalculateTokenCost(resolved *ResolvedPricing, input CostInput) (*CostBreakd
 	applyLongCtx := len(resolved.Intervals) == 0 && resolved.LongContextPricingEnabled
 
 	breakdown := ComputeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx)
+	if len(resolved.Intervals) > 0 && totalContext > 0 {
+		// The smallest positive context selects the ordinary configured rate, even
+		// when an interval owns it. Compare identical usage and service-tier inputs
+		// so a free or discounted interval cannot be reported as an extra charge.
+		if shortContextPricing := GetIntervalPricing(resolved, 1); shortContextPricing != nil {
+			baseCost := ComputeTokenBreakdown(shortContextPricing, input.Tokens, input.RateMultiplier, input.ServiceTier, false)
+			breakdown.LongContextBillingApplied = breakdown.ActualCost > baseCost.ActualCost
+		}
+	}
 	if resolved.Source == PricingSourceCatalog && pricing.TimePricing != nil {
 		ApplyCostBreakdownMultiplier(breakdown, pricing.TimePricing.MultiplierAt(input.ModelPricingAt, input.ModelTimeLocation))
 	}

@@ -26,7 +26,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage/httpapi/ports"
 )
 
-// Administrator cleanup HTTP commands parse dates and operator identity
+// usage_handler_test.go exercises administrator cleanup dates and operator identity
 // before calling the persisted task service. These capture fixtures inspect
 // authentication rejection, date validation, request-category precedence,
 // list envelopes and cancellation status mapping.
@@ -62,6 +62,8 @@ type adminUsageRepoCapture struct {
 	statsFilters             usage.UsageLogFilters       // captured usage statistics selectors
 	stats                    usage.UsageStats            // configured filtered statistics result
 	statsCalls               int                         // completed statistics query count
+	recentFilters            usage.UsageLogFilters       // captured recent-rate query selectors
+	recentCalls              int                         // completed recent-rate query count
 	logs                     []usage.UsageLog            // configured shared usage record rows
 }
 
@@ -631,6 +633,11 @@ func TestAdminUsageListIncludesDetailedTiming(t *testing.T) {
 // configured summary counters. Tests configure the counters before dispatch
 // and inspect the captured selectors after each HTTP request completes.
 func (s *adminUsageRepoCapture) GetStatsWithFilters(ctx context.Context, filters usage.UsageLogFilters) (*usage.UsageStats, error) {
+	if filters.EndpointSource == "none" {
+		s.recentFilters = filters
+		s.recentCalls++
+		return &s.stats, nil
+	}
 	s.statsFilters = filters
 	s.statsCalls++
 	return &s.stats, nil
@@ -849,8 +856,8 @@ func TestAdminUsageStatsInvalidStream(t *testing.T) {
 }
 
 // TestAdminUsageStatsIntervalFilters submits every administrator selector with
-// a future end. Cached and bypassed requests must query the same clipped range
-// and return rates from that filtered summary, including request-category precedence.
+// a future end. Cached and bypassed requests retain the clipped summary range
+// and use the same non-date selectors for a separate recent-minute query.
 func TestAdminUsageStatsIntervalFilters(t *testing.T) {
 	asOf := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
 	start := asOf.Add(-2 * time.Hour)
@@ -892,23 +899,28 @@ func TestAdminUsageStatsIntervalFilters(t *testing.T) {
 					want.Stream = nil
 				}
 				require.Equal(t, want, repo.statsFilters)
+				recentStart := asOf.Add(-time.Minute)
+				want.StartTime = &recentStart
+				want.EndpointSource = "none"
+				require.Equal(t, 1, repo.recentCalls)
+				require.Equal(t, want, repo.recentFilters)
 				var envelope struct {
-					Data usage.UsagePeriodStats `json:"data"` // decoded filtered interval summary
+					Data usage.UsageStatsWithRates `json:"data"` // decoded filtered recent-rate summary
 				}
 				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
 				require.Equal(t, repo.stats, envelope.Data.UsageStats)
 				require.NotNil(t, envelope.Data.AverageRPM)
 				require.NotNil(t, envelope.Data.AverageTPM)
-				require.Equal(t, 1.0, *envelope.Data.AverageRPM)
-				require.Equal(t, 50.0, *envelope.Data.AverageTPM)
+				require.Equal(t, 120.0, *envelope.Data.AverageRPM)
+				require.Equal(t, 6000.0, *envelope.Data.AverageTPM)
 			})
 		}
 	}
 }
 
 // TestAdminUsageStatsIntervalDates exercises date-only, explicit, future and
-// request-lookup ranges. It checks actual elapsed DST minutes, current-day
-// clipping, zero empty summaries and JSON null for unbounded averages.
+// request-lookup ranges. Totals follow those selections and retain DST bounds,
+// while every recent-rate query covers the same preceding sixty seconds.
 func TestAdminUsageStatsIntervalDates(t *testing.T) {
 	asOf := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
 	calendar := timezone.NewCalendarWithClock(time.UTC, func() time.Time { return asOf })
@@ -941,12 +953,15 @@ func TestAdminUsageStatsIntervalDates(t *testing.T) {
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
 			require.Contains(t, envelope.Data, "average_rpm")
 			require.Contains(t, envelope.Data, "average_tpm")
+			require.Equal(t, 1, repo.recentCalls)
+			require.Equal(t, asOf.Add(-time.Minute), *repo.recentFilters.StartTime)
+			require.Equal(t, asOf, *repo.recentFilters.EndTime)
+			require.Equal(t, 2760.0, envelope.Data["average_rpm"])
+			require.Equal(t, 8280.0, envelope.Data["average_tpm"])
 			if tc.unbounded {
 				require.Equal(t, 1, repo.statsCalls)
 				require.Nil(t, repo.statsFilters.StartTime)
 				require.Nil(t, repo.statsFilters.EndTime)
-				require.Nil(t, envelope.Data["average_rpm"])
-				require.Nil(t, envelope.Data["average_tpm"])
 				require.Equal(t, 2760.0, envelope.Data["total_requests"])
 				return
 			}
@@ -954,15 +969,11 @@ func TestAdminUsageStatsIntervalDates(t *testing.T) {
 				require.Zero(t, repo.statsCalls)
 				require.Equal(t, 0.0, envelope.Data["total_requests"])
 				require.Equal(t, 0.0, envelope.Data["total_provider_cost"])
-				require.Equal(t, 0.0, envelope.Data["average_rpm"])
-				require.Equal(t, 0.0, envelope.Data["average_tpm"])
 				return
 			}
 			require.Equal(t, 1, repo.statsCalls)
 			require.Equal(t, tc.minutes, repo.statsFilters.EndTime.Sub(*repo.statsFilters.StartTime).Minutes())
 			require.False(t, repo.statsFilters.EndTime.After(asOf))
-			require.InDelta(t, 2760/tc.minutes, envelope.Data["average_rpm"], 1e-9)
-			require.InDelta(t, 8280/tc.minutes, envelope.Data["average_tpm"], 1e-9)
 		})
 	}
 }

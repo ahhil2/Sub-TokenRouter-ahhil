@@ -15,7 +15,96 @@ import (
 // calculate_test.go verifies configured and catalog token charges across
 // cache, image, service-tier, and context rules. Explicit prices and reported
 // token counts let the assertions distinguish absent amounts, zero prices, and
-// overlapping input subsets.
+// overlapping input subsets. Configured context cases also cover surcharge
+// notices when cached usage crosses a price threshold.
+
+// TestConfiguredContextSurchargeUsesChargedUsage applies an explicit context
+// tier to ordinary and cached usage. The recorded marker follows the charge
+// increase, including cache-triggered thresholds and free user rates.
+func TestConfiguredContextSurchargeUsesChargedUsage(t *testing.T) {
+	inputPrice, outputPrice, cachePrice, cacheWritePrice := 2e-6, 10e-6, 0.1e-6, 2.5e-6
+	longInput, longOutput, longCache, longCacheWrite := 4e-6, 15e-6, 0.2e-6, 5e-6
+	fastMultiplier := 2.0
+	card := &ModelPricingEntry{
+		BillingMode: BillingModeToken, InputPrice: &inputPrice, OutputPrice: &outputPrice,
+		CacheReadPrice: &cachePrice, CacheWritePrice: &cacheWritePrice, FastMultiplier: &fastMultiplier,
+		Intervals: []PricingInterval{{
+			MinTokens: 272000, InputPrice: &longInput, OutputPrice: &longOutput,
+			CacheReadPrice: &longCache, CacheWritePrice: &longCacheWrite,
+		}},
+	}
+	for _, enabled := range []bool{false, true} {
+		resolved := ResolvePriceCards(card, nil, PricingSourceUnpriced, enabled)
+		for _, tc := range []struct {
+			name    string      // reported context usage case
+			tokens  UsageTokens // reported disjoint token counts
+			rate    float64     // effective user charge multiplier
+			tier    string      // requested service pricing tier
+			cost    float64     // expected final USD charge
+			applied bool        // expected recorded surcharge flag
+		}{
+			{"cached request", UsageTokens{InputTokens: 3104, CacheReadTokens: 356736, OutputTokens: 159}, 0.4, "", 0.03445928, true},
+			{"threshold equality", UsageTokens{InputTokens: 3104, CacheReadTokens: 268896, OutputTokens: 159}, 0.4, "", (0.006208 + 0.0268896 + 0.00159) * 0.4, false},
+			{"uncached threshold crossed", UsageTokens{InputTokens: 272001}, 0.4, "", 272001 * 4e-6 * 0.4, true},
+			{"cache creation threshold", UsageTokens{InputTokens: 3104, CacheCreationTokens: 356736, OutputTokens: 159}, 0.4, "", (0.012416 + 1.78368 + 0.002385) * 0.4, true},
+			{"free user rate", UsageTokens{InputTokens: 3104, CacheReadTokens: 356736, OutputTokens: 159}, 0, "", 0, false},
+			{"priority tier", UsageTokens{InputTokens: 3104, CacheReadTokens: 356736, OutputTokens: 159}, 0.4, "priority", 0.06891856, true},
+			{"empty context", UsageTokens{OutputTokens: 159}, 0.4, "", 0.000636, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				cost, err := CalculateCost(resolved, CostInput{
+					Model: "configured-context", Tokens: tc.tokens, RateMultiplier: tc.rate, ServiceTier: tc.tier,
+				})
+				require.NoError(t, err)
+				// Decimal token prices accumulate binary rounding; the tolerance is below
+				// the persisted amount precision and keeps each independently priced fixture comparable.
+				require.InDelta(t, tc.cost, cost.ActualCost, 1e-12)
+				require.Equal(t, tc.applied, cost.LongContextBillingApplied)
+			})
+		}
+	}
+}
+
+// TestConfiguredContextSurchargeComparesShortContextPrices varies the normal
+// context price, including cards with no defaults. A notice requires an increase
+// over an available short-context charge for the same reported usage.
+func TestConfiguredContextSurchargeComparesShortContextPrices(t *testing.T) {
+	low, base, high, highest, doubled, zero := 1e-6, 2e-6, 3e-6, 4e-6, 2.0, 0.0
+	shortLimit := 100
+	for _, tc := range []struct {
+		name      string            // configured context pricing case
+		base      *float64          // available default input price
+		intervals []PricingInterval // configured context price ranges
+		cost      float64           // expected final USD charge
+		applied   bool              // expected recorded surcharge flag
+	}{
+		{"multiplier increase", &base, []PricingInterval{{MinTokens: 100, InputMultiplier: &doubled}}, 0.0012, true},
+		{"discounted interval", &base, []PricingInterval{{MinTokens: 100, InputPrice: &low}}, 0.0003, false},
+		{"same price", &base, []PricingInterval{{MinTokens: 100, InputPrice: &base}}, 0.0006, false},
+		{"free interval", &base, []PricingInterval{{MinTokens: 100, InputPrice: &zero}}, 0, false},
+		{"unused output increase", &base, []PricingInterval{{MinTokens: 100, OutputPrice: &high}}, 0.0006, false},
+		{"all contexts overridden", &base, []PricingInterval{{MinTokens: 0, InputPrice: &highest}}, 0.0012, false},
+		{"lower than first interval", &base, []PricingInterval{{MinTokens: 0, MaxTokens: &shortLimit, InputPrice: &highest}, {MinTokens: 100, InputPrice: &high}}, 0.0009, false},
+		{"higher than first interval", &base, []PricingInterval{{MinTokens: 0, MaxTokens: &shortLimit, InputPrice: &low}, {MinTokens: 100, InputPrice: &base}}, 0.0006, true},
+		{"missing short price", nil, []PricingInterval{{MinTokens: 100, InputPrice: &high}}, 0.0009, false},
+		{"intervals without default", nil, []PricingInterval{{MinTokens: 0, MaxTokens: &shortLimit, InputPrice: &low}, {MinTokens: 100, InputPrice: &base}}, 0.0006, true},
+		{"return to default price", &base, []PricingInterval{{MinTokens: 0, MaxTokens: &shortLimit, InputPrice: &low}}, 0.0006, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolved := ResolvePriceCards(&ModelPricingEntry{
+				BillingMode: BillingModeToken, InputPrice: tc.base, Intervals: tc.intervals,
+			}, nil, PricingSourceUnpriced, true)
+			cost, err := CalculateCost(resolved, CostInput{
+				Model: "configured-context", Tokens: UsageTokens{InputTokens: 300}, RateMultiplier: 1,
+			})
+			require.NoError(t, err)
+			// Decimal token prices accumulate binary rounding; the tolerance is below
+			// the persisted amount precision and keeps each independently priced fixture comparable.
+			require.InDelta(t, tc.cost, cost.ActualCost, 1e-12)
+			require.Equal(t, tc.applied, cost.LongContextBillingApplied)
+		})
+	}
+}
 
 // TestPriorityCacheTTLUsesPricesRegardlessOfSource supplies identical prices
 // with two source labels. Both TTL cost cases and Fast display rates must

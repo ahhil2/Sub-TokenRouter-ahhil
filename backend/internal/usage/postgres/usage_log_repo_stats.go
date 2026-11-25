@@ -817,7 +817,8 @@ func (r *Store) GetUserStatsWithFilters(ctx context.Context, filters UsageLogFil
 //
 // Compatible analytics supplies the whole summary or raw SQL replaces it.
 // Endpoint windows separately default to epoch and now, and EndpointSource
-// selects empty/all or one recognized detail. Their failures become empty lists,
+// selects empty/all, one recognized detail, or internal none for totals alone.
+// Detail failures become empty lists,
 // with non-cancellation errors logged, while summary failure aborts the
 // response. Pool queries execute concurrently and transaction executors
 // serially; returned provider cost stays allocated even when zero.

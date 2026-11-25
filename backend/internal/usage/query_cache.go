@@ -6,7 +6,7 @@ import (
 )
 
 // query_cache.go constructs administrator usage-statistics cache keys and loads
-// shared totals and interval rates.
+// shared totals and fresh recent rates.
 // Administrator usage statistics share a thirty-second snapshot by an encoded
 // subset of their query filters. UTC RFC3339 strings make equivalent offsets
 // share time keys at second precision, while nil time bounds remain empty and
@@ -18,8 +18,9 @@ import (
 // across requests that can share a key. Query execution and per-waiter
 // cancellation belong to querycache; callers keep captured filter pointers
 // unchanged until the shared load finishes. The original selected range keys
-// each entry; its first loader clips future bounds and captures rates together
-// with totals, allowing current-day requests to reuse one consistent sample.
+// each entry; its first loader clips future bounds for the cached totals.
+// Every caller then loads recent throughput for its own preceding minute, so
+// reusing a summary cannot freeze the displayed rates at an earlier sample.
 
 // usageStatsCacheKeyData identifies the filters for the 30-second admin usage
 // statistics cache.
@@ -84,8 +85,8 @@ func usageStatsCacheKey(filters UsageLogFilters) string {
 	})
 }
 
-// GetStatsCached returns totals and interval rates through the thirty-second query
-// cache and reports its cache-hit observation. The cache shares same-key loads
+// GetStatsCached returns cached totals and fresh rates for the preceding minute,
+// and reports the totals' cache-hit observation. The cache shares same-key loads
 // while each waiter observes its own context cancellation. Shared work inherits
 // the first caller's context values; the final departing waiter cancels an
 // unfinished load.
@@ -93,19 +94,23 @@ func usageStatsCacheKey(filters UsageLogFilters) string {
 // Callers supply nonnil contexts and filters suitable for usageStatsCacheKey.
 // Keep optional filter values immutable until loading finishes, because the
 // loader captures their pointers. The first loader uses asOf to clip a future
-// end and computes rates from those totals; hits retain that sample's rates.
-// The returned statistics, rate pointers, provider cost, and endpoint slices
-// are recursively copied for independent caller edits. Lookup or payload-type
-// failures return errors.
+// end. Returned totals, provider cost, and endpoint slices are recursively copied
+// before a separate query attaches the caller's current minute rates. Recent
+// counts use the caller's context and bypass this cache. Lookup, payload-type,
+// and recent-query failures return errors.
 // @project-doc docs/operations/observability_and_data_lifecycle.md#usage_query_contracts
-func (h *UsageService) GetStatsCached(ctx context.Context, filters UsageLogFilters, asOf time.Time) (*UsagePeriodStats, bool, error) {
+func (h *UsageService) GetStatsCached(ctx context.Context, filters UsageLogFilters, asOf time.Time) (*UsageStatsWithRates, bool, error) {
 	key := usageStatsCacheKey(filters)
 	entry, hit, err := h.statsQueryCache.GetOrLoadContext(ctx, key, func(shared context.Context) (any, error) {
-		return h.GetStatsWithPeriodRates(shared, filters, asOf)
+		return h.getStatsThrough(shared, filters, asOf)
 	})
 	if err != nil {
 		return nil, hit, err
 	}
-	stats, err := snapshotPayloadAs[*UsagePeriodStats](entry.Payload)
-	return stats, hit, err
+	stats, err := snapshotPayloadAs[*UsageStats](entry.Payload)
+	if err != nil {
+		return nil, hit, err
+	}
+	result, err := h.withRecentRates(ctx, stats, filters, asOf)
+	return result, hit, err
 }

@@ -11,7 +11,7 @@ import (
 )
 
 // query_cache_test.go verifies administrator statistics cache keys, shared
-// cancellation, and independent interval samples. Concurrent statistics reads
+// cancellation, and independent recent samples. Concurrent statistics reads
 // can share a query while the first caller cancels its own wait. The blocking
 // repository announces entry and waits for
 // an explicit release or shared-context cancellation, and the second context
@@ -23,8 +23,8 @@ import (
 // needed by another. Separate key cases check repeatability, while filter
 // changes must load independent totals and rates for each administrator selector.
 //
-// Fixed current-day selections reuse the first sample's totals and rates when
-// a later caller supplies another observation time. Mutating returned rate
+// Fixed current-day selections reuse summary totals while each caller loads
+// recent rates at its own observation time. Mutating returned rate
 // pointers and nested totals checks that the cache keeps an independent copy.
 
 // statsCancellationRepo blocks shared statistics queries until the test
@@ -118,7 +118,7 @@ func (c *joinedStatsContext) Done() <-chan struct{} {
 
 // TestStatsCanceledLeaderKeepsLiveWaiter registers a second waiter before
 // canceling the first. It requires first-caller cancellation, the second
-// caller's statistics result and one repository load.
+// caller's statistics result, one shared total load and its separate recent read.
 func TestStatsCanceledLeaderKeepsLiveWaiter(t *testing.T) {
 	repo := &statsCancellationRepo{started: make(chan struct{}), release: make(chan struct{})}
 	service := NewUsageService(repo)
@@ -136,7 +136,7 @@ func TestStatsCanceledLeaderKeepsLiveWaiter(t *testing.T) {
 	<-repo.started
 	live := &joinedStatsContext{Context: context.Background(), joined: make(chan struct{})}
 	nextDone := make(chan error, 1)
-	nextValue := make(chan *UsagePeriodStats, 1)
+	nextValue := make(chan *UsageStatsWithRates, 1)
 	go func() {
 		value, _, err := service.GetStatsCached(live, filters, asOf)
 		nextValue <- value
@@ -152,13 +152,13 @@ func TestStatsCanceledLeaderKeepsLiveWaiter(t *testing.T) {
 	close(repo.release)
 	require.NoError(t, <-nextDone)
 	require.EqualValues(t, 17, (<-nextValue).TotalRequests)
-	require.EqualValues(t, 1, repo.calls.Load())
+	require.EqualValues(t, 2, repo.calls.Load())
 }
 
-// TestStatsCachedKeepsIntervalSampleAndCopiesPayload advances the observation
-// time for a fixed today selection. It requires one repository query, stable
-// sampled averages, and independent embedded totals, slices and rate pointers.
-func TestStatsCachedKeepsIntervalSampleAndCopiesPayload(t *testing.T) {
+// TestStatsCachedKeepsTotalsAndRefreshesRecentRates advances the observation
+// time for a fixed today selection. It requires one summary query, fresh
+// minute counts, and independent embedded totals, slices and rate pointers.
+func TestStatsCachedKeepsTotalsAndRefreshesRecentRates(t *testing.T) {
 	start := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 0, 1)
 	asOf := start.Add(2 * time.Hour)
@@ -175,8 +175,8 @@ func TestStatsCachedKeepsIntervalSampleAndCopiesPayload(t *testing.T) {
 	first, hit, err := service.GetStatsCached(context.Background(), filters, asOf)
 	require.NoError(t, err)
 	require.False(t, hit)
-	require.Equal(t, 1.0, *first.AverageRPM)
-	require.Equal(t, 50.0, *first.AverageTPM)
+	require.Equal(t, 120.0, *first.AverageRPM)
+	require.Equal(t, 6000.0, *first.AverageTPM)
 	// Mutate every reference-bearing part of the returned summary before reading
 	// the same entry again, exposing aliases through the newly embedded totals.
 	*first.AverageRPM = -1
@@ -186,6 +186,7 @@ func TestStatsCachedKeepsIntervalSampleAndCopiesPayload(t *testing.T) {
 	first.UpstreamEndpoints[0].Requests = -1
 	first.EndpointPaths[0].Requests = -1
 	first.TotalRequests = -1
+	repo.recentStats = &UsageStats{TotalRequests: 7, TotalInputTokens: 200, TotalOutputTokens: 100}
 	second, hit, err := service.GetStatsCached(context.Background(), filters, asOf.Add(5*time.Second))
 	require.NoError(t, err)
 	require.True(t, hit)
@@ -193,20 +194,26 @@ func TestStatsCachedKeepsIntervalSampleAndCopiesPayload(t *testing.T) {
 	require.Equal(t, asOf, *repo.filters[0].EndTime)
 	require.Equal(t, start.AddDate(0, 0, 1), end)
 	require.Equal(t, repo.stats, second.UsageStats)
-	require.Equal(t, 1.0, *second.AverageRPM)
-	require.Equal(t, 50.0, *second.AverageTPM)
+	require.Equal(t, 7.0, *second.AverageRPM)
+	require.Equal(t, 300.0, *second.AverageTPM)
 	*second.AverageRPM = -2
 	third, hit, err := service.GetStatsCached(context.Background(), filters, asOf.Add(10*time.Second))
 	require.NoError(t, err)
 	require.True(t, hit)
-	require.Equal(t, 1.0, *third.AverageRPM)
+	require.Equal(t, 7.0, *third.AverageRPM)
+	require.Len(t, repo.recentFilters, 3)
+	for index, recent := range repo.recentFilters {
+		instant := asOf.Add(time.Duration(index) * 5 * time.Second)
+		require.Equal(t, instant.Add(-time.Minute), *recent.StartTime)
+		require.Equal(t, instant, *recent.EndTime)
+	}
 }
 
-// TestStatsCachedUnboundedRequestKeepsNullRates repeats a retained-history
-// request lookup. It requires a cache hit to preserve nil averages alongside
-// the original totals and unrestricted query bounds.
-func TestStatsCachedUnboundedRequestKeepsNullRates(t *testing.T) {
-	repo := &periodStatsRepo{stats: UsageStats{TotalRequests: 3}}
+// TestStatsCachedUnboundedRequestUsesRecentWindow repeats a retained-history
+// request lookup. Summary bounds stay unrestricted while a recent window
+// with no matching records reports zero rates on cache misses and hits.
+func TestStatsCachedUnboundedRequestUsesRecentWindow(t *testing.T) {
+	repo := &periodStatsRepo{stats: UsageStats{TotalRequests: 3}, recentStats: &UsageStats{}}
 	service := NewUsageService(repo)
 	filters := UsageLogFilters{RequestID: "req-history"}
 	for index := range 2 {
@@ -214,8 +221,8 @@ func TestStatsCachedUnboundedRequestKeepsNullRates(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, index > 0, hit)
 		require.EqualValues(t, 3, stats.TotalRequests)
-		require.Nil(t, stats.AverageRPM)
-		require.Nil(t, stats.AverageTPM)
+		require.Zero(t, *stats.AverageRPM)
+		require.Zero(t, *stats.AverageTPM)
 	}
 	require.Equal(t, []UsageLogFilters{filters}, repo.filters)
 }
@@ -253,8 +260,8 @@ func TestStatsCachedIsolatesFilterSelections(t *testing.T) {
 			first, hit, err := service.GetStatsCached(context.Background(), base, end)
 			require.NoError(t, err)
 			require.False(t, hit)
-			require.Equal(t, 2.0, *first.AverageRPM)
-			require.Equal(t, 100.0, *first.AverageTPM)
+			require.Equal(t, 120.0, *first.AverageRPM)
+			require.Equal(t, 6000.0, *first.AverageTPM)
 
 			selected := base
 			tc.selectFilter(&selected)
@@ -262,8 +269,8 @@ func TestStatsCachedIsolatesFilterSelections(t *testing.T) {
 			filtered, hit, err := service.GetStatsCached(context.Background(), selected, end)
 			require.NoError(t, err)
 			require.False(t, hit)
-			require.Equal(t, 5.0, *filtered.AverageRPM)
-			require.Equal(t, 300.0, *filtered.AverageTPM)
+			require.Equal(t, 300.0, *filtered.AverageRPM)
+			require.Equal(t, 18000.0, *filtered.AverageTPM)
 			require.Equal(t, []UsageLogFilters{base, selected}, repo.filters)
 
 			// Replace the fixture values before reading both cached scopes again.
@@ -272,11 +279,13 @@ func TestStatsCachedIsolatesFilterSelections(t *testing.T) {
 			baseAgain, hit, err := service.GetStatsCached(context.Background(), base, end)
 			require.NoError(t, err)
 			require.True(t, hit)
-			require.Equal(t, first, baseAgain)
+			require.Equal(t, first.UsageStats, baseAgain.UsageStats)
+			require.Equal(t, 600.0, *baseAgain.AverageRPM)
 			selectedAgain, hit, err := service.GetStatsCached(context.Background(), selected, end)
 			require.NoError(t, err)
 			require.True(t, hit)
-			require.Equal(t, filtered, selectedAgain)
+			require.Equal(t, filtered.UsageStats, selectedAgain.UsageStats)
+			require.Equal(t, 600.0, *selectedAgain.AverageRPM)
 			require.Len(t, repo.filters, 2)
 		})
 	}

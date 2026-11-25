@@ -3,7 +3,7 @@
     <div class="space-y-4">
       <UsageStatsCards :stats="usageStats">
         <template #performance>
-          <PerformanceMetricsCard :metrics="performanceStats" period-average />
+          <PerformanceMetricsCard :metrics="performanceStats" filtered />
         </template>
       </UsageStatsCards>
       <!-- Charts Section -->
@@ -358,9 +358,9 @@ const route = useRoute()
 // distribution responses used by charts.
 const usageStats = ref<AdminUsageStatsResponse | null>(null)
 const usageLogs = ref<AdminUsageLog[]>([])
-// performanceStats retains interval averages across refreshes of identical filters.
-// A changed summary selection clears these rates until its summary returns; searches
-// without a bounded interval also display null because no average can be calculated.
+// performanceStats retains recent-minute rates across refreshes of identical filters.
+// A changed selection clears these rates until its response returns. Selected dates
+// control the totals, while these rates use the preceding sixty seconds.
 const performanceStats = ref<Pick<DashboardStats, 'rpm' | 'tpm'> | null>(null)
 // Loading flags distinguish the records table, chart requests, and export operation so each
 // section can render its own progress.
@@ -762,8 +762,8 @@ const loadEndpointStats = async (source: EndpointSource, force = false) => {
 //
 // The active raw endpoint starts independently, allowing summary cards and that chart to
 // finish separately. Only the current summary sequence can replace totals, clear inbound
-// results on error, or release its loading state. The same response publishes interval
-// rates, so their filters and observation match the totals. A failed current summary
+// results on error, or release its loading state. The same response publishes recent
+// rates with matching non-date filters and a separate sixty-second window. A failed current summary
 // keeps earlier rates for an unchanged selection; filter changes clear rates before loading.
 const loadStats = async (force = false) => {
   // Cancel the prior summary before invalidating raw-source caches so the replacement

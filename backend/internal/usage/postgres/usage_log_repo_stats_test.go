@@ -13,8 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Summary and endpoint SQL must retain user-charge meanings even when a provider
-// filter narrows records. Mocked reports check transaction-local JIT recovery,
+// usage_log_repo_stats_test.go exercises summary and endpoint SQL with provider
+// filters that narrow records. Mocked reports check transaction-local JIT recovery,
 // endpoint-source dispatch, model and transport predicates, and platform cost
 // accumulation while keeping provider expense separate from actual_cost.
 
@@ -49,7 +49,7 @@ func TestProviderReportOwnsJITTransaction(t *testing.T) {
 // summary. It checks only selected detail queries execute and only their
 // corresponding response lists are populated.
 func TestStatsEndpointSourceQueries(t *testing.T) {
-	for _, source := range []string{"", "inbound", "upstream", "path"} {
+	for _, source := range []string{"", "inbound", "upstream", "path", "none"} {
 		db, mock := newSQLMock(t)
 		r := &Store{sql: db}
 		mock.ExpectQuery("(?s)SELECT.*total_requests.*FROM usage_logs").WillReturnRows(sqlmock.NewRows([]string{"requests", "input", "output", "cache", "creation", "read", "cost", "actual", "provider", "average"}).AddRow(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))

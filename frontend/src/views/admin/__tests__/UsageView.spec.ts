@@ -8,7 +8,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import type { AdminUsageStatsResponse } from '@/api/admin/usage'
 
 // UsageView.spec.ts tests administrator usage queries, endpoint caching, route
-// hydration, filtered interval-average performance, and workbook export. API substitutes control
+// hydration, filtered recent-minute performance, and workbook export. API substitutes control
 // response order and child controls expose page actions, while spreadsheet assertions
 // read serialized values and column preference cases retain the real page storage operations.
 
@@ -255,7 +255,7 @@ const mountRouteFilteredUsageView = (realStats = false) =>
 
 // createUsageSummary returns a complete filtered-summary fixture with independent
 // overrides for each response. Rates are supplied by the API substitute so page tests
-// verify publication and filtering instead of repeating the server's interval calculation.
+// verify publication and filtering instead of repeating the server's recent-window calculation.
 const createUsageSummary = (
   overrides: Partial<AdminUsageStatsResponse> = {},
 ): AdminUsageStatsResponse => ({
@@ -293,10 +293,10 @@ describe('admin UsageView 路由筛选', () => {
     vi.useRealTimers()
   })
 
-  // Usage totals and interval averages arrive together while chart snapshots retain
+  // Usage totals and recent rates arrive together while chart snapshots retain
   // independent live statistics. The card must display summary averages and visibly
-  // identify their period measurement even when a snapshot contains different rates.
-  it('shows interval averages from the filtered summary independently of chart snapshots', async () => {
+  // identify their recent measurement window even when a snapshot contains different rates.
+  it('shows recent rates from the filtered summary independently of chart snapshots', async () => {
     getStats.mockResolvedValue(createUsageSummary({ average_rpm: 12.25, average_tpm: 5400 }))
     getSnapshotV2.mockResolvedValue({ stats: { rpm: 999, tpm: 999000 }, trend: [], groups: [] })
     const wrapper = mountRouteFilteredUsageView(true)
@@ -307,9 +307,9 @@ describe('admin UsageView 路由筛选', () => {
       const cards = performanceCard.element.parentElement!
       expect(cards.classList).toContain('lg:grid-cols-5')
       expect(cards.children[2]).toBe(performanceCard.element)
-      expect(performanceCard.text()).toContain('admin.dashboard.periodPerformance')
+      expect(performanceCard.text()).toContain('admin.dashboard.recentPerformance')
       expect(performanceCard.get('[title]').attributes('title')).toBe(
-        'admin.dashboard.periodPerformanceHint',
+        'admin.dashboard.recentPerformanceHint',
       )
       expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('12.25')
       expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('5.40K')
@@ -335,9 +335,9 @@ describe('admin UsageView 路由筛选', () => {
   })
 
   // Two summary refreshes finish in reverse order while the rate card is visible.
-  // The newest interval averages must remain displayed when an earlier request completes,
+  // The newest recent rates must remain displayed when an earlier request completes,
   // even if that request's transport ignores cancellation.
-  it('retains the newest interval averages when summaries complete out of order', async () => {
+  it('retains the newest recent rates when summaries complete out of order', async () => {
     let finishEarlier!: (value: unknown) => void
     getStats.mockImplementationOnce(
       () =>
@@ -378,7 +378,7 @@ describe('admin UsageView 路由筛选', () => {
     },
     { name: 'dates', filters: { start_date: '2026-10-01', end_date: '2026-10-02' } },
     { name: 'timezone', filters: { timezone: 'Asia/Shanghai' } },
-  ])('reloads interval averages for the $name filter', async ({ filters }) => {
+  ])('reloads recent rates for the $name filter', async ({ filters }) => {
     getStats.mockResolvedValue(createUsageSummary({ average_rpm: 12, average_tpm: 5400 }))
     const wrapper = mountRouteFilteredUsageView(true)
     try {
@@ -476,17 +476,17 @@ describe('admin UsageView 路由筛选', () => {
     }
   })
 
-  // Request-ID searches omit date bounds and therefore have no averaging interval.
-  // Null rates render as unavailable, and hidden charts no longer request snapshots
-  // that could supply unrelated live dashboard measurements.
-  it('shows unavailable averages for a date-free request-ID search', async () => {
+  // Request-ID searches keep retained-history totals and recent-minute rates.
+  // A request outside that minute displays zero, while hidden charts do not
+  // supply unrelated dashboard measurements.
+  it('shows recent zero traffic for a date-free request-ID search', async () => {
     getStats.mockResolvedValue(createUsageSummary({ average_rpm: 4, average_tpm: 800 }))
     const wrapper = mountRouteFilteredUsageView(true)
     try {
       vi.advanceTimersByTime(120)
       await flushPromises()
       getSnapshotV2.mockClear()
-      getStats.mockResolvedValue(createUsageSummary({ average_rpm: null, average_tpm: null }))
+      getStats.mockResolvedValue(createUsageSummary({ average_rpm: 0, average_tpm: 0 }))
       wrapper.findComponent(UsageFiltersStub).vm.$emit('update:modelValue', {
         request_id: 'req-123',
         start_date: '2026-10-01',
@@ -503,17 +503,17 @@ describe('admin UsageView 路由筛选', () => {
         expect.any(Object),
       )
       expect(getSnapshotV2).not.toHaveBeenCalled()
-      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('—')
-      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('—')
+      expect(wrapper.get('[data-testid="performance-rpm"]').text()).toBe('0')
+      expect(wrapper.get('[data-testid="performance-tpm"]').text()).toBe('0')
     } finally {
       wrapper.unmount()
     }
   })
 
-  // Sparse traffic over a long interval can produce tiny positive averages.
+  // Compatible API responses can contain small fractional rate measurements.
   // Significant digits keep those observations distinct from measured zero while
   // both metrics retain compact notation at larger scales.
-  it('distinguishes zero traffic from small positive interval averages', async () => {
+  it('distinguishes zero traffic from small positive recent rates', async () => {
     getStats.mockResolvedValue(createUsageSummary({ average_rpm: 0.00000123, average_tpm: 0.125 }))
     const wrapper = mountRouteFilteredUsageView(true)
     try {

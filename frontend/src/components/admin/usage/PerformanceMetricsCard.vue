@@ -14,15 +14,13 @@
           class="text-xs font-medium text-gray-500 dark:text-gray-400"
           :title="
             t(
-              periodAverage
-                ? 'admin.dashboard.periodPerformanceHint'
+              filtered
+                ? 'admin.dashboard.recentPerformanceHint'
                 : 'admin.dashboard.performanceHint',
             )
           "
         >
-          {{
-            t(periodAverage ? 'admin.dashboard.periodPerformance' : 'admin.dashboard.performance')
-          }}
+          {{ t(filtered ? 'admin.dashboard.recentPerformance' : 'admin.dashboard.performance') }}
         </p>
         <div class="mt-0.5 flex items-baseline gap-2">
           <p
@@ -55,18 +53,18 @@ import Icon from '@/components/icons/Icon.vue'
 import { formatTokens } from '@/utils/format'
 
 // PerformanceMetricsCard.vue displays administrator request and text-token rates in a
-// shared card. The parent selects either preceding-minute dashboard measurements or
-// interval averages from filtered usage statistics. Missing observations display a dash,
-// while sub-unit interval averages retain significant digits so sparse traffic stays visible.
+// shared card. Both views measure the preceding minute; the usage view applies its
+// non-date selectors and receives a label explaining that window. Missing observations
+// display a dash, while fractional values from compatible responses retain precision.
 
 // props pairs the displayed values with their measurement mode and explanatory labels.
 const props = defineProps<{
   // metrics contains the latest successful rates; null displays a dash until
   // a response provides measurements over a defined time interval.
   metrics: Pick<DashboardStats, 'rpm' | 'tpm'> | null
-  // periodAverage selects filtered interval-average labels and fractional precision.
+  // filtered selects labels explaining the usage filters and recent-minute window.
   // Omission displays the dashboard's whole-site rates for the preceding minute.
-  periodAverage?: boolean
+  filtered?: boolean
 }>()
 
 // Shared dashboard translations label the rates and explain their measurement
@@ -74,10 +72,10 @@ const props = defineProps<{
 const { t } = useI18n()
 
 // formatRate renders large measurements with compact suffixes and keeps three
-// significant digits for positive interval averages below one. Dashboard counts
+// significant digits for positive compatible rates below one. Dashboard counts
 // retain their ordinary locale formatting, while zero remains visibly distinct.
 const formatRate = (value: number) =>
-  props.periodAverage && value > 0 && value < 1
+  props.filtered && value > 0 && value < 1
     ? value.toLocaleString(getLocale(), { maximumSignificantDigits: 3 })
     : formatTokens(value)
 </script>

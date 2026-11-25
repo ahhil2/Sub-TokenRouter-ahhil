@@ -32,7 +32,7 @@ import (
 	usagecore "github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// Recording fixtures observe financial commands and attempted analysis rows
+// record_external_test.go observes financial commands and attempted analysis rows
 // through serial spies. They exercise protocol bucket interpretation,
 // configured price identities, media units, and captured request ownership
 // using fixed catalogues; these assertions do not run persistent settlement
@@ -3089,6 +3089,58 @@ func TestOpenAIGatewayServiceRecordUsage_GroupControlsLongContextBilling(t *test
 			require.InDelta(t, 2000*15e-6*outputMultiplier, usageRepo.LastLog.OutputCost, 1e-10)
 		})
 	}
+}
+
+// TestOpenAIGatewayServiceRecordUsage_ConfiguredContextSurcharge records a cached
+// request priced by an administrator's long-context interval. The usage row
+// carries the surcharge marker and the exact amount submitted for settlement.
+func TestOpenAIGatewayServiceRecordUsage_ConfiguredContextSurcharge(t *testing.T) {
+	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(
+		usageRepo,
+		&completiontestkit.UserStore{},
+		&completiontestkit.SubscriptionStore{},
+		nil,
+	)
+	inputPrice, outputPrice, cachePrice := 2e-6, 10e-6, 0.1e-6
+	longInput, longOutput, longCache := 4e-6, 15e-6, 0.2e-6
+	groupID := int64(1)
+	group := configureBillingGroup(svc, &routing.Group{
+		ID: groupID, RateMultiplier: 0.4,
+	}, pricing.BillingSettings{
+		PeakRateMultiplier: 1,
+	}, []routing.ModelPricingEntry{{
+		Models: []string{"gpt-6.2-sol"}, BillingMode: routing.BillingModeToken,
+		InputPrice: &inputPrice, OutputPrice: &outputPrice, CacheReadPrice: &cachePrice,
+		Intervals: []routing.PricingInterval{{
+			MinTokens: 272000, InputPrice: &longInput, OutputPrice: &longOutput, CacheReadPrice: &longCache,
+		}},
+	}})
+	err := svc.RecordOpenAI(t.Context(), &gatewaycapture.OpenAICapture{
+		Result: &forwardcore.OpenAIResult{
+			RequestID: "configured_context_surcharge",
+			Usage: openai.ForwardUsage{
+				InputTokens: 359840, CacheReadInputTokens: 356736, OutputTokens: 159,
+			},
+			Model: "gpt-6.2-sol", Duration: time.Second,
+		},
+		APIKey: &apikey.APIKey{ID: 1020, GroupID: &groupID, Group: group},
+		User:   &identity.User{ID: 2020},
+		Provider: &providercore.Record{
+			ID: 3020, Platform: capability.PlatformOpenAI,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.LastLog)
+	require.Equal(t, 3104, usageRepo.LastLog.InputTokens)
+	require.True(t, usageRepo.LastLog.LongContextBillingApplied)
+	// The expected amounts use the configured USD rates; decimal tolerance
+	// accommodates binary rounding while distinguishing the ordinary-context charge.
+	require.InDelta(t, 0.0861482, usageRepo.LastLog.TotalCost, 1e-10)
+	require.InDelta(t, 0.03445928, usageRepo.LastLog.ActualCost, 1e-10)
+	commands := requireOpenAIRecordUsageBillingRepoStub(t, svc)
+	require.Equal(t, 1, commands.Calls)
+	require.InDelta(t, 0.03445928, commands.LastCmd.BillableAmountUSD, 1e-10)
 }
 
 // TestOpenAIGatewayServiceRecordUsage_GrokLongContextFollowsGroupToggle records

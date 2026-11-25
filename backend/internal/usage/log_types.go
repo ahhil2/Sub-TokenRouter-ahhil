@@ -311,7 +311,7 @@ type PlatformDashboardStats struct {
 type UsageLogFilters struct {
 	// EndpointSource selects inbound, upstream or path breakdowns in
 	// GetStatsWithFilters. Empty text requests each available endpoint chart for
-	// the same filtered totals.
+	// the same filtered totals; internal "none" queries request counters alone.
 	EndpointSource string // selected endpoint chart source
 	UserID         int64  // positive actor visibility identifier
 	APIKeyID       int64  // positive key equality identifier
@@ -379,12 +379,12 @@ type UsageStats struct {
 	EndpointPaths     []EndpointStat `json:"endpoint_paths,omitempty"`      // endpoint path usage breakdown
 }
 
-// UsagePeriodStats combines filtered totals with rates for their measured range.
-type UsagePeriodStats struct {
-	UsageStats // recorded totals for the measured interval
-	// AverageRPM and AverageTPM share the statistics query's elapsed minutes.
-	// They are nil for unbounded history and zero for an empty bounded interval;
-	// token rates count input and output tokens, excluding both cache buckets.
+// UsageStatsWithRates combines selected-range totals with recent filtered rates.
+type UsageStatsWithRates struct {
+	UsageStats // recorded totals for the selected interval
+	// AverageRPM and AverageTPM describe the preceding sixty seconds with the
+	// same non-date filters as totals. Successful reads populate both pointers,
+	// including zero for no traffic; TPM excludes both cache token buckets.
 	AverageRPM *float64 `json:"average_rpm"` // mean requests per minute
 	AverageTPM *float64 `json:"average_tpm"` // mean text tokens per minute
 }

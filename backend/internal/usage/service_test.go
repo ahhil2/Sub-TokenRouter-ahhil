@@ -9,15 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// service_test.go checks that interval rates and summary queries describe the
-// same elapsed range. Captured repository bounds expose future clipping, while
-// fixed counters distinguish text throughput from separately counted cache
-// tokens and unbounded searches from measurable intervals.
+// service_test.go checks selected-range totals alongside recent throughput.
+// Captured repository bounds distinguish the summary's dates from the preceding
+// minute, while separate counters expose accidental use of historical totals
+// or cache tokens in recent rates.
 
-// TestGetStatsWithPeriodRates measures historical, ongoing, empty and unbounded
-// intervals. It checks matching query bounds, cache-token exclusion, absent
-// unbounded averages, and preservation of the caller's selected end.
-func TestGetStatsWithPeriodRates(t *testing.T) {
+// TestGetStatsWithRecentRates measures historical, ongoing, empty and unbounded
+// selections. Every selection uses the preceding minute for rates while keeping
+// the original summary scope and excluding cache tokens from TPM.
+func TestGetStatsWithRecentRates(t *testing.T) {
 	start := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
 	asOf := start.Add(2 * time.Hour)
 	historicalEnd := start.Add(time.Hour)
@@ -43,20 +43,24 @@ func TestGetStatsWithPeriodRates(t *testing.T) {
 			repo := &periodStatsRepo{stats: UsageStats{
 				TotalRequests: 120, TotalInputTokens: 4000, TotalOutputTokens: 2000,
 				TotalCacheTokens: 90000, TotalTokens: 96000,
-			}}
+			}, recentStats: &UsageStats{TotalRequests: 7, TotalInputTokens: 200, TotalOutputTokens: 100, TotalCacheTokens: 9000}}
 			filters := UsageLogFilters{RequestID: "req-history", StartTime: tc.start, EndTime: tc.end}
 			var selectedEnd time.Time
 			if tc.end != nil {
 				selectedEnd = *tc.end
 			}
-			result, err := NewUsageService(repo).GetStatsWithPeriodRates(context.Background(), filters, asOf)
+			result, err := NewUsageService(repo).GetStatsWithRecentRates(context.Background(), filters, asOf)
 			require.NoError(t, err)
 			if tc.end != nil {
 				require.Equal(t, selectedEnd, *tc.end)
 			}
+			require.Equal(t, 7.0, *result.AverageRPM)
+			require.Equal(t, 300.0, *result.AverageTPM)
+			require.Len(t, repo.recentFilters, 1)
+			require.Equal(t, asOf.Add(-time.Minute), *repo.recentFilters[0].StartTime)
+			require.Equal(t, asOf, *repo.recentFilters[0].EndTime)
+			require.Equal(t, filters.RequestID, repo.recentFilters[0].RequestID)
 			if tc.unbounded {
-				require.Nil(t, result.AverageRPM)
-				require.Nil(t, result.AverageTPM)
 				require.Equal(t, repo.stats, result.UsageStats)
 				require.Equal(t, []UsageLogFilters{filters}, repo.filters)
 				return
@@ -66,26 +70,27 @@ func TestGetStatsWithPeriodRates(t *testing.T) {
 			if tc.minutes == 0 {
 				require.Empty(t, repo.filters)
 				require.Equal(t, UsageStats{TotalProviderCost: new(float64)}, result.UsageStats)
-				require.Zero(t, *result.AverageRPM)
-				require.Zero(t, *result.AverageTPM)
 				return
 			}
 			require.Len(t, repo.filters, 1)
 			require.Equal(t, *tc.start, *repo.filters[0].StartTime)
 			require.Equal(t, tc.wantEnd, *repo.filters[0].EndTime)
 			require.Equal(t, repo.stats, result.UsageStats)
-			require.InDelta(t, 120/tc.minutes, *result.AverageRPM, 1e-9)
-			require.InDelta(t, 6000/tc.minutes, *result.AverageTPM, 1e-9)
 		})
 	}
 }
 
-// TestGetStatsWithPeriodRatesReturnsQueryError injects a failed summary query.
+// TestGetStatsWithRecentRatesReturnsQueryError injects a failed summary query.
 // It requires the service to return that error and no usable partial rates.
-func TestGetStatsWithPeriodRatesReturnsQueryError(t *testing.T) {
+func TestGetStatsWithRecentRatesReturnsQueryError(t *testing.T) {
 	errQuery := errors.New("summary unavailable")
 	repo := &periodStatsRepo{err: errQuery}
-	result, err := NewUsageService(repo).GetStatsWithPeriodRates(context.Background(), UsageLogFilters{}, time.Now())
+	result, err := NewUsageService(repo).GetStatsWithRecentRates(context.Background(), UsageLogFilters{}, time.Now())
+	require.ErrorIs(t, err, errQuery)
+	require.Nil(t, result)
+	repo.err = nil
+	repo.recentErr = errQuery
+	result, err = NewUsageService(repo).GetStatsWithRecentRates(context.Background(), UsageLogFilters{}, time.Now())
 	require.ErrorIs(t, err, errQuery)
 	require.Nil(t, result)
 }

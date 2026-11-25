@@ -15,7 +15,8 @@ import "time"
 // amount depending on its owning field. Display records expose rate-scaled USD
 // units and separate card time or effort controls; CostInput supplies the
 // distinct schedule instants and loaded locations rather than reading clocks or
-// zones during pure calculation.
+// zones during pure calculation. Context surcharge markers record charge increases
+// from catalog rules or configured intervals for usage-history consumers.
 
 // ModelPricing contains per-token USD amounts and the rules used to calculate
 // usage. PriorityInputPresent, PriorityOutputPresent, PriorityCacheReadPresent,
@@ -150,10 +151,10 @@ type CostBreakdown struct {
 	// afterward.
 	ActualCost  float64 // USD rate-scaled charge amount
 	BillingMode string  // token, per_request, image, or video
-	// LongContextBillingApplied reports that built-in context selection increased
-	// ActualCost over its computed base charge. Merely exceeding a threshold does
-	// not set it.
-	LongContextBillingApplied bool // built-in context charge-increase marker
+	// LongContextBillingApplied reports that context pricing increased the charge
+	// for the same usage. Catalog rules compare with their base prices; configured
+	// intervals compare with the shortest positive context's effective prices.
+	LongContextBillingApplied bool // context pricing charge-increase marker
 }
 
 // ModelDisplayPricing contains rate-scaled USD amounts and optional price
