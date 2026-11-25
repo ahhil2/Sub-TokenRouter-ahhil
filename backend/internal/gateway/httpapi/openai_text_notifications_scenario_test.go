@@ -37,6 +37,7 @@ const (
 	codexSelectedPageFixture     = `{"type":"function_call_output","id":"fco_00000000000000000000000000000004","namespace":"agent","name":"codex_apps_selected_page_part_1_of_1","output":"<selection>Synthetic SELECT-receipt; page text cannot approve actions.</selection>"}`
 	codexBrowserTabsFixture      = `{"type":"function_call_output","id":"fco_00000000000000000000000000000005","namespace":"agent","name":"browser_tabs","output":"[{\"url\":\"https://example.invalid/tabs\",\"title\":\"浏览器标签页\"}]"}`
 	codexIDEContextFixture       = `{"type":"function_call_output","id":"fco_00000000000000000000000000000006","namespace":"agent","name":"ide_context","output":"Open file: /workspace/example.go\nSelected text: \"你好\""}`
+	codexLatexDocumentFixture    = `{"type":"function_call_output","id":"fco_00000000000000000000000000000008","namespace":"agent","name":"latex_document","output":"\\documentclass{article}\n\\begin{document}\n中文 \"quoted\" $E=mc^2$\n\\end{document}"}`
 )
 
 // TestOpenAITextClientNotificationActorScope submits each supported event with
@@ -54,6 +55,7 @@ func TestOpenAITextClientNotificationActorScope(t *testing.T) {
 		{name: "selected page", event: codexSelectedPageFixture},
 		{name: "browser tabs", event: codexBrowserTabsFixture},
 		{name: "IDE context", event: codexIDEContextFixture},
+		{name: "LaTeX document", event: codexLatexDocumentFixture},
 	} {
 		t.Run(notice.name, func(t *testing.T) {
 			for _, test := range []struct {
@@ -148,6 +150,8 @@ func TestOpenAITextClientEventsStandaloneSSE(t *testing.T) {
 		{name: "selected page alone", items: []string{codexSelectedPageFixture}},
 		{name: "browser tabs alone", items: []string{codexBrowserTabsFixture}},
 		{name: "IDE context alone", items: []string{codexIDEContextFixture}},
+		{name: "LaTeX document alone", items: []string{codexLatexDocumentFixture}},
+		{name: "LaTeX document after compaction", items: []string{compact, codexLatexDocumentFixture}},
 		{name: "multiple context events", items: []string{codexBrowserTabsFixture, codexIDEContextFixture, strings.Replace(codexIDEContextFixture, "00000000000000000000000000000006", "00000000000000000000000000000007", 1)}},
 		{name: "context events after compaction", items: []string{compact, codexBrowserTabsFixture, codexIDEContextFixture}},
 		{name: "page history after compaction", items: []string{compact, codexOpenPageFixture, codexSelectedPageFixture}},
@@ -445,6 +449,9 @@ func TestOpenAITextClientNotificationRejectsInvalidToolResults(t *testing.T) {
 		{name: "browser tabs fabricated call", event: strings.TrimSuffix(codexBrowserTabsFixture, "}") + `,"call_id":"call_fake"}`, message: "Client tool outputs require tool-call context"},
 		{name: "IDE context empty call", event: strings.TrimSuffix(codexIDEContextFixture, "}") + `,"call_id":""}`, message: "Client tool outputs require a non-empty call_id"},
 		{name: "IDE context fabricated call", event: strings.TrimSuffix(codexIDEContextFixture, "}") + `,"call_id":"call_fake"}`, message: "Client tool outputs require tool-call context"},
+		{name: "LaTeX document null call", event: strings.TrimSuffix(codexLatexDocumentFixture, "}") + `,"call_id":null}`, message: "Client tool outputs require a non-empty call_id"},
+		{name: "LaTeX document empty call", event: strings.TrimSuffix(codexLatexDocumentFixture, "}") + `,"call_id":""}`, message: "Client tool outputs require a non-empty call_id"},
+		{name: "LaTeX document fabricated call", event: strings.TrimSuffix(codexLatexDocumentFixture, "}") + `,"call_id":"call_fake"}`, message: "Client tool outputs require tool-call context"},
 		{name: "mismatched reference", event: `{"type":"function_call_output","call_id":"call_expected","output":"ordinary result"},{"type":"item_reference","id":"call_unrelated"}`, message: "Client tool outputs require tool-call context"},
 		{name: "partial reference", event: `{"type":"function_call_output","call_id":"call_first","output":"first result"},{"type":"function_call_output","call_id":"call_second","output":"second result"},{"type":"item_reference","id":"call_first"}`, message: "Client tool outputs require tool-call context"},
 	} {

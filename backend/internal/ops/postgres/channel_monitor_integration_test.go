@@ -13,10 +13,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// channel_monitor_integration_test.go exercises monitor queries against temporary
+// PostgreSQL tables. Fixtures combine visibility rules, request history, and saved
+// settings to verify metrics and display order through the production SQL, with
+// each test transaction rolled back after its assertions.
+
+// TestChannelMonitorSQLVisibilityAndMetrics combines selected and hidden groups
+// with duplicate requests and empty periods. It verifies metric aggregation and
+// the saved monitoring order across configuration reads and public snapshots.
 func TestChannelMonitorSQLVisibilityAndMetrics(t *testing.T) {
 	ctx := t.Context()
 	transaction, err := integrationDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
+	// Roll back the fixture transaction after assertions so temporary tables and
+	// settings cannot leak into other tests sharing the integration database.
 	defer func() { _ = transaction.Rollback() }()
 	_, err = transaction.ExecContext(ctx, `
 CREATE TEMP TABLE groups (id bigint, name text, display_brand text, rate_multiplier float8, sort_order int DEFAULT 0, status text DEFAULT 'active', is_exclusive bool DEFAULT false, deleted_at timestamptz) ON COMMIT DROP;
@@ -117,21 +127,30 @@ UPDATE ops_error_logs SET status_code=401,error_owner='client' WHERE id=6;
 	}
 	require.NoError(t, legacyRows.Err())
 	require.NoError(t, legacyRows.Close())
-	configuration := `[{"group_id":1,"enabled":true,"status":"failed"}]`
+	configuration := `[{"group_id":6,"enabled":true,"status":"auto"},{"group_id":1,"enabled":true,"status":"failed"}]`
+	// Persist the reverse of the general group order, then read both endpoints
+	// so ordering must survive storage and the public metrics join.
 	_, err = transaction.ExecContext(ctx, saveChannelMonitorConfigSQL, configuration)
 	require.NoError(t, err)
 	options, err := transaction.QueryContext(ctx, channelMonitorConfigSQL)
 	require.NoError(t, err)
 	configured := 0
+	var optionOrder []int64
 	for options.Next() {
 		var group ops.ChannelMonitorGroupOption
 		require.NoError(t, options.Scan(&group.GroupID, &group.Name, &group.Brand, &group.Enabled, &group.Status, &group.Eligible))
-		if group.GroupID == 1 {
+		optionOrder = append(optionOrder, group.GroupID)
+		switch group.GroupID {
+		case 1:
 			require.True(t, group.Enabled)
 			require.True(t, group.Eligible)
 			require.Equal(t, "failed", group.Status)
 			configured++
-		} else {
+		case 6:
+			require.True(t, group.Enabled)
+			require.True(t, group.Eligible)
+			require.Equal(t, "auto", group.Status)
+		default:
 			require.False(t, group.Enabled)
 			require.Equal(t, "auto", group.Status)
 		}
@@ -139,6 +158,28 @@ UPDATE ops_error_logs SET status_code=401,error_owner='client' WHERE id=6;
 	require.NoError(t, options.Err())
 	require.NoError(t, options.Close())
 	require.Equal(t, 1, configured)
+	require.Equal(t, []int64{6, 1, 2, 3, 5, 7, 8, 9}, optionOrder)
+	orderedRows, err := transaction.QueryContext(ctx, fmt.Sprintf(channelMonitorSQL, usageTTFTSQL("ul"), sla), end.Add(-90*time.Minute), end, 270)
+	require.NoError(t, err)
+	var channelOrder []int64
+	for orderedRows.Next() {
+		var id, requests, successes int64
+		var name, brand, status string
+		var rate float64
+		var bucket int
+		var cache, ttft sql.NullFloat64
+		require.NoError(t, orderedRows.Scan(&id, &name, &brand, &rate, &bucket, &requests, &successes, &cache, &ttft, &status))
+		channelOrder = append(channelOrder, id)
+		if id == 1 {
+			require.Equal(t, "failed", status)
+		}
+	}
+	require.NoError(t, orderedRows.Err())
+	require.NoError(t, orderedRows.Close())
+	require.Equal(t, []int64{6, 1, 1, 1}, channelOrder)
+	var changedGroupOrder int
+	require.NoError(t, transaction.QueryRowContext(ctx, "SELECT COUNT(*) FROM groups WHERE sort_order <> 0").Scan(&changedGroupOrder))
+	require.Zero(t, changedGroupOrder)
 	for _, groupID := range []int64{4, 999} {
 		result, saveErr := transaction.ExecContext(ctx, saveChannelMonitorConfigSQL, fmt.Sprintf(`[{"group_id":%d,"enabled":true,"status":"auto"}]`, groupID))
 		require.NoError(t, saveErr)
@@ -157,5 +198,17 @@ UPDATE ops_error_logs SET status_code=401,error_owner='client' WHERE id=6;
 		require.False(t, empty.Next())
 		require.NoError(t, empty.Err())
 		require.NoError(t, empty.Close())
+		unconfigured, queryErr := transaction.QueryContext(ctx, channelMonitorConfigSQL)
+		require.NoError(t, queryErr)
+		var unconfiguredOrder []int64
+		for unconfigured.Next() {
+			var group ops.ChannelMonitorGroupOption
+			require.NoError(t, unconfigured.Scan(&group.GroupID, &group.Name, &group.Brand, &group.Enabled, &group.Status, &group.Eligible))
+			require.False(t, group.Enabled)
+			unconfiguredOrder = append(unconfiguredOrder, group.GroupID)
+		}
+		require.NoError(t, unconfigured.Err())
+		require.NoError(t, unconfigured.Close())
+		require.Equal(t, []int64{1, 2, 3, 5, 6, 7, 8, 9}, unconfiguredOrder)
 	}
 }

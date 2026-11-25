@@ -435,6 +435,8 @@ export default {
     title: '使用记录',
     description: '查看和分析您的 API 使用历史',
     costDetails: '费用明细',
+    longContextSurcharge: '长上下文加价',
+    longContextSurchargeHint: '本次请求已触发长上下文额外收费，显示的费用已包含该项收费。',
     tokenDetails: 'Token 明细',
     cacheTtlOverriddenHint: '缓存 TTL Override 已启用',
     cacheTtlOverriddenLabel: 'TTL 替换',

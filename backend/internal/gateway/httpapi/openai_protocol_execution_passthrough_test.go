@@ -178,10 +178,10 @@ func TestOpenAIPassthroughCompactFallbackSecondStreamFailureUsesStandardErrorPat
 	require.True(t, events[1].Passthrough)
 }
 
-// TestOpenAIPassthroughAPIKeyRestoresClientToolsNonStreaming lowers client
-// custom tools for a native API-key response. It checks outgoing declarations
-// and restored custom call types and inputs in buffered JSON.
-func TestOpenAIPassthroughAPIKeyRestoresClientToolsNonStreaming(t *testing.T) {
+// TestOpenAIPassthroughAPIKeyPreservesNativeCustomToolsNonStreaming sends
+// custom tools to a native Responses endpoint. Their declarations and returned
+// custom calls keep their client representation through buffered delivery.
+func TestOpenAIPassthroughAPIKeyPreservesNativeCustomToolsNonStreaming(t *testing.T) {
 	body := openAIClientToolsRequest(false)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -191,8 +191,8 @@ func TestOpenAIPassthroughAPIKeyRestoresClientToolsNonStreaming(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body: io.NopCloser(strings.NewReader(`{"id":"resp_tools","status":"completed","output":[
-			{"type":"function_call","id":"i1","call_id":"c1","name":"exec","arguments":"{\"input\":\"pwd\"}"},
-			{"type":"function_call","id":"i2","call_id":"c2","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\"}"}],"usage":{}}`)),
+			{"type":"custom_tool_call","id":"ctc_1","call_id":"c1","name":"exec","input":"pwd"},
+			{"type":"custom_tool_call","id":"ctc_2","call_id":"c2","name":"apply_patch","input":"*** Begin Patch"}],"usage":{}}`)),
 	}}
 	svc := openAIClientToolsTestService(upstream)
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 5659, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{"api_key": "test-key"}}}
@@ -202,7 +202,7 @@ func TestOpenAIPassthroughAPIKeyRestoresClientToolsNonStreaming(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Empty(t, result.UpstreamResponseModel)
-	assertOpenAIClientToolsLowered(t, upstream.lastBody)
+	require.JSONEq(t, gjson.GetBytes(body, "tools").Raw, gjson.GetBytes(upstream.lastBody, "tools").Raw)
 	require.Equal(t, "custom_tool_call", gjson.Get(recorder.Body.String(), "output.0.type").String())
 	require.Equal(t, "pwd", gjson.Get(recorder.Body.String(), "output.0.input").String())
 	require.Equal(t, "custom_tool_call", gjson.Get(recorder.Body.String(), "output.1.type").String())
@@ -210,9 +210,8 @@ func TestOpenAIPassthroughAPIKeyRestoresClientToolsNonStreaming(t *testing.T) {
 }
 
 // TestOpenAIPassthroughAPIKeyPreservesCustomToolOutputContentParts supplies
-// text and file parts in a custom tool result. It checks conversion to
-// function_call_output with the upstream output array and its field values
-// retained.
+// text and file parts in a native custom tool result. The outgoing item keeps
+// its custom type, output array, and each content part's field values.
 func TestOpenAIPassthroughAPIKeyPreservesCustomToolOutputContentParts(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","stream":false,"tools":[{"type":"custom","name":"exec"}],"input":[{"type":"custom_tool_call_output","call_id":"call_1","output":[{"type":"input_text","text":"result"},{"type":"input_file","file_id":"file_123"}]}]}`)
 	recorder := httptest.NewRecorder()
@@ -231,7 +230,8 @@ func TestOpenAIPassthroughAPIKeyPreservesCustomToolOutputContentParts(t *testing
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, "function_call_output", gjson.GetBytes(upstream.lastBody, "input.0.type").String())
+	require.JSONEq(t, gjson.GetBytes(body, "input").Raw, gjson.GetBytes(upstream.lastBody, "input").Raw)
+	require.Equal(t, "custom_tool_call_output", gjson.GetBytes(upstream.lastBody, "input.0.type").String())
 	output := gjson.GetBytes(upstream.lastBody, "input.0.output")
 	require.True(t, output.IsArray(), "native Responses content parts must reach the upstream as an array")
 	require.Equal(t, "input_text", output.Get("0.type").String())
@@ -240,20 +240,20 @@ func TestOpenAIPassthroughAPIKeyPreservesCustomToolOutputContentParts(t *testing
 	require.Equal(t, "file_123", output.Get("1.file_id").String())
 }
 
-// TestOpenAIPassthroughAPIKeyRestoresClientToolsStreaming returns
-// function-call stream events for a lowered custom tool. It checks restored
-// custom-call events and string input, plus the final observed runtime model.
-func TestOpenAIPassthroughAPIKeyRestoresClientToolsStreaming(t *testing.T) {
+// TestOpenAIPassthroughAPIKeyPreservesNativeCustomToolsStreaming returns
+// native custom-call lifecycle events from a Responses endpoint. Streaming
+// delivery keeps their input strings, call identities, and observed runtime model.
+func TestOpenAIPassthroughAPIKeyPreservesNativeCustomToolsStreaming(t *testing.T) {
 	body := openAIClientToolsRequest(true)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 
 	sse := strings.Join([]string{
-		`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"i1","call_id":"c1","name":"apply_patch","status":"in_progress"}}`,
-		`data: {"type":"response.function_call_arguments.done","sequence_number":1,"item_id":"i1","call_id":"c1","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\"}"}`,
-		`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"i1","call_id":"c1","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\"}","status":"completed"}}`,
-		`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_stream_tools","model":"runtime-version","status":"completed","output":[{"type":"function_call","id":"i1","call_id":"c1","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\"}"}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+		`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"custom_tool_call","id":"ctc_1","call_id":"c1","name":"apply_patch","status":"in_progress"}}`,
+		`data: {"type":"response.custom_tool_call_input.done","sequence_number":1,"item_id":"ctc_1","call_id":"c1","name":"apply_patch","input":"*** Begin Patch"}`,
+		`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"custom_tool_call","id":"ctc_1","call_id":"c1","name":"apply_patch","input":"*** Begin Patch","status":"completed"}}`,
+		`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_stream_tools","model":"runtime-version","status":"completed","output":[{"type":"custom_tool_call","id":"ctc_1","call_id":"c1","name":"apply_patch","input":"*** Begin Patch"}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
 	}, "\n\n") + "\n\n"
 	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(sse))}}
 	svc := openAIClientToolsTestService(upstream)
@@ -264,7 +264,7 @@ func TestOpenAIPassthroughAPIKeyRestoresClientToolsStreaming(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "runtime-version", result.UpstreamResponseModel)
-	assertOpenAIClientToolsLowered(t, upstream.lastBody)
+	require.JSONEq(t, gjson.GetBytes(body, "tools").Raw, gjson.GetBytes(upstream.lastBody, "tools").Raw)
 	output := recorder.Body.String()
 	require.Contains(t, output, `"type":"custom_tool_call"`)
 	require.Contains(t, output, `"type":"response.custom_tool_call_input.done"`)

@@ -10,17 +10,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// channel_monitor.go stores monitoring selections and reads public channel
+// metrics from request history. The settings JSON array defines monitoring
+// order, and both queries retain each entry's array position through the group
+// join. Configuration reads append unconfigured groups in their general group
+// order so administrators can select them. Public reads apply eligibility and
+// visibility filters before aggregating request history for the selected groups.
+//
+// Successful requests supersede matching error records, and aggregate and slot
+// metrics share that deduplicated event set. Results remain ordered by monitor
+// position while bucket rows are assembled into channels, including empty slots
+// for periods with no usable observations.
+
 const (
+	// These queries share settings-array ordering for configuration and public
+	// monitoring, while the write validates group existence before replacing settings.
 	channelMonitorSQL = `
 WITH visible_groups AS MATERIALIZED (
- SELECT id, name, COALESCE(NULLIF(display_brand, ''), name) AS brand, rate_multiplier, sort_order, config.status AS status_override
+ SELECT id, name, COALESCE(NULLIF(display_brand, ''), name) AS brand, rate_multiplier, config.monitor_order, config.status AS status_override
  FROM groups
- JOIN jsonb_to_recordset(COALESCE((SELECT value::jsonb FROM settings WHERE key = 'channel_monitor_groups'), '[]'::jsonb))
- AS config(group_id bigint, enabled bool, status text) ON config.group_id = groups.id AND config.enabled
+ JOIN ROWS FROM (
+  jsonb_to_recordset(COALESCE((SELECT value::jsonb FROM settings WHERE key = 'channel_monitor_groups'), '[]'::jsonb))
+  AS (group_id bigint, enabled bool, status text)
+ ) WITH ORDINALITY AS config(group_id, enabled, status, monitor_order)
+ ON config.group_id = groups.id AND config.enabled
  WHERE groups.deleted_at IS NULL AND groups.status = 'active' AND NOT groups.is_exclusive
  AND EXISTS (SELECT 1 FROM provider_groups pg JOIN providers p ON p.id = pg.provider_id
              WHERE pg.group_id = groups.id AND p.deleted_at IS NULL AND p.status = 'active')
- ORDER BY sort_order, id LIMIT 200
+ ORDER BY config.monitor_order, id LIMIT 200
 ), successful AS MATERIALIZED (
  SELECT DISTINCT ON (ul.group_id, ul.api_key_id, COALESCE(NULLIF(ul.request_id, ''), ul.id::text))
  ul.group_id, ul.api_key_id, ul.request_id, ul.created_at,
@@ -54,7 +71,7 @@ WITH visible_groups AS MATERIALIZED (
 SELECT g.id, g.name, g.brand, g.rate_multiplier, COALESCE(m.bucket, -1),
  COALESCE(m.requests, 0), COALESCE(m.successes, 0), m.cache_rate, m.ttft, g.status_override
 FROM visible_groups g LEFT JOIN metrics m ON m.group_id = g.id
-ORDER BY g.sort_order, g.id, m.bucket`
+ORDER BY g.monitor_order, g.id, m.bucket`
 	channelMonitorConfigSQL = `
 SELECT g.id, g.name, COALESCE(NULLIF(g.display_brand, ''), g.name),
  COALESCE(config.enabled, false), COALESCE(config.status, 'auto'),
@@ -62,9 +79,11 @@ SELECT g.id, g.name, COALESCE(NULLIF(g.display_brand, ''), g.name),
  SELECT 1 FROM provider_groups pg JOIN providers p ON p.id = pg.provider_id
  WHERE pg.group_id = g.id AND p.deleted_at IS NULL AND p.status = 'active') AS eligible
 FROM groups g
-LEFT JOIN jsonb_to_recordset(COALESCE((SELECT value::jsonb FROM settings WHERE key = 'channel_monitor_groups'), '[]'::jsonb))
- AS config(group_id bigint, enabled bool, status text) ON config.group_id = g.id
-WHERE g.deleted_at IS NULL ORDER BY g.sort_order, g.id`
+LEFT JOIN ROWS FROM (
+ jsonb_to_recordset(COALESCE((SELECT value::jsonb FROM settings WHERE key = 'channel_monitor_groups'), '[]'::jsonb))
+ AS (group_id bigint, enabled bool, status text)
+) WITH ORDINALITY AS config(group_id, enabled, status, monitor_order) ON config.group_id = g.id
+WHERE g.deleted_at IS NULL ORDER BY config.monitor_order NULLS LAST, g.sort_order, g.id`
 	saveChannelMonitorConfigSQL = `
 INSERT INTO settings (key, value, updated_at)
 SELECT 'channel_monitor_groups', $1::text, NOW()

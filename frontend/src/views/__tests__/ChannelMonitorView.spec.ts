@@ -166,4 +166,57 @@ describe('ChannelMonitorView', () => {
     expect(getChannelMonitor).toHaveBeenCalledTimes(3)
     wrapper.unmount()
   })
+
+  // Saved order can interleave brands before the page groups their cards.
+  // Refreshing after a settings save updates brand sections by first occurrence
+  // and keeps the returned order of channels within each section.
+  it('uses saved channel order for brand sections and cards after refreshing', async () => {
+    auth.isAuthenticated = true
+    auth.isAdmin = true
+    const channels = [
+      { id: 3, name: 'Gemini Pro', brand: 'Google' },
+      { id: 1, name: 'GPT', brand: 'OpenAI' },
+      { id: 4, name: 'Gemini Flash', brand: 'Google' },
+    ].map((channel) => ({
+      ...channel,
+      rate_multiplier: 1,
+      requests: 0,
+      successes: 0,
+      availability: null,
+      cache_rate: null,
+      ttft_p50_ms: null,
+      slots: [],
+    }))
+    vi.mocked(getChannelMonitor).mockResolvedValueOnce({ ...response, channels })
+    const wrapper = render()
+    await flushPromises()
+    let sections = wrapper.findAll('.monitor-brand-group')
+    expect(sections.map((section) => section.attributes('aria-label'))).toEqual([
+      'Google',
+      'OpenAI',
+    ])
+    expect(
+      sections[0]
+        .findAllComponents({ name: 'ChannelMonitorCard' })
+        .map((card) => card.props('channel').id),
+    ).toEqual([3, 4])
+    vi.mocked(getChannelMonitor).mockResolvedValueOnce({
+      ...response,
+      channels: [channels[1], channels[2], channels[0]],
+    })
+    await wrapper.get('[aria-controls="channel-monitor-settings"]').trigger('click')
+    wrapper.findComponent({ name: 'ChannelMonitorSettings' }).vm.$emit('saved')
+    await flushPromises()
+    sections = wrapper.findAll('.monitor-brand-group')
+    expect(sections.map((section) => section.attributes('aria-label'))).toEqual([
+      'OpenAI',
+      'Google',
+    ])
+    expect(
+      sections[1]
+        .findAllComponents({ name: 'ChannelMonitorCard' })
+        .map((card) => card.props('channel').id),
+    ).toEqual([4, 3])
+    wrapper.unmount()
+  })
 })

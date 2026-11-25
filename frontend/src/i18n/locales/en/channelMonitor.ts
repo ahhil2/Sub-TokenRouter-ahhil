@@ -32,6 +32,10 @@ export default {
   configure: 'Monitor settings',
   configHint:
     'Select groups to display. New groups are hidden by default. Status can follow request statistics or be set manually. Manual status is labeled; metrics and history blocks still reflect actual requests. Up to 200 groups can be displayed.',
+  orderHint:
+    'Use the arrows to reorder selected groups, then save. Channels are grouped by brand; each brand appears in the order of its first group.',
+  moveUp: 'Move {name} up',
+  moveDown: 'Move {name} down',
   configLoadFailed: 'Could not load settings. Please retry.',
   configSaveFailed:
     'Could not save settings. Check that selected groups still exist and that no more than 200 are selected, then retry.',

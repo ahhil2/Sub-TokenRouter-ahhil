@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
+import Icon from '@/components/icons/Icon.vue'
 import {
   getChannelMonitorConfig,
   saveChannelMonitorConfig,
@@ -10,9 +11,16 @@ import {
 } from '@/api/channelMonitor'
 
 /**
- * ChannelMonitorSettings.vue edits public channel visibility and manual status
- * selections. It loads an editable copy of the server configuration, permits saving
- * after a successful load, and retains the draft when persistence reports an error.
+ * ChannelMonitorSettings.vue edits public channel visibility, display order, and
+ * manual status selections. It loads an editable copy of the server configuration
+ * and submits selected groups in their displayed order. Ordering controls move
+ * selected groups past unchecked rows, so each move changes the selected sequence.
+ * The public page arranges these groups into brand sections after loading them.
+ *
+ * Changes remain in the local draft until saving succeeds. Saving disables editing
+ * to keep the submitted order and statuses consistent with the success message.
+ * Failed saves retain the draft for another attempt, while unmounting cancels the
+ * configuration read and suppresses late request results.
  */
 
 const emit = defineEmits<{ saved: [] }>()
@@ -35,6 +43,28 @@ const statuses: ChannelMonitorStatus[] = [
 const options = computed(() =>
   statuses.map((value) => ({ value, label: t(`channelMonitor.status.${value}`) })),
 )
+// selectedGroups follows the draft order and identifies the first and last movable
+// rows. Unchecked groups remain available for selection but have no saved position.
+const selectedGroups = computed(() => groups.value.filter((group) => group.enabled))
+
+/**
+ * moveGroup swaps a selected group with its previous or next selected neighbor.
+ * Unchecked rows are skipped, endpoint moves are ignored, and saving locks the
+ * draft until the request completes. A successful move clears the saved message.
+ */
+function moveGroup(groupId: number, direction: -1 | 1) {
+  if (saving.value) return
+  const selectedIndex = selectedGroups.value.findIndex((group) => group.group_id === groupId)
+  const neighbor = selectedGroups.value[selectedIndex + direction]
+  if (selectedIndex < 0 || !neighbor) return
+  const from = groups.value.findIndex((group) => group.group_id === groupId)
+  const to = groups.value.findIndex((group) => group.group_id === neighbor.group_id)
+  const reordered = [...groups.value]
+  reordered[from] = groups.value[to]
+  reordered[to] = groups.value[from]
+  groups.value = reordered
+  saved.value = false
+}
 
 async function load() {
   loading.value = true
@@ -88,6 +118,7 @@ onBeforeUnmount(() => {
     <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{
       t('channelMonitor.configHint')
     }}</p>
+    <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ t('channelMonitor.orderHint') }}</p>
     <div v-if="loading" role="status" class="mt-4">{{ t('channelMonitor.loading') }}</div>
     <div v-if="error" role="alert" class="mt-4 text-red-600 dark:text-red-400">{{ error }}</div>
     <button v-if="!loading && !loaded" type="button" class="btn btn-secondary mt-4" @click="load">{{
@@ -114,14 +145,44 @@ onBeforeUnmount(() => {
               t('channelMonitor.ineligible')
             }}</p>
           </div>
-          <Select
-            v-model="group.status"
-            :options="options"
-            :disabled="saving || !group.enabled"
-            :aria-label="t('channelMonitor.groupStatus', { name: group.name })"
-            class="w-full sm:w-56"
-            @update:model-value="saved = false"
-          />
+          <div class="flex items-center gap-2 sm:shrink-0">
+            <div class="flex shrink-0 gap-2">
+              <button
+                type="button"
+                class="btn btn-ghost btn-icon"
+                :disabled="
+                  saving || !group.enabled || group.group_id === selectedGroups[0]?.group_id
+                "
+                :title="t('channelMonitor.moveUp', { name: group.name })"
+                :aria-label="t('channelMonitor.moveUp', { name: group.name })"
+                @click="moveGroup(group.group_id, -1)"
+              >
+                <Icon name="arrowUp" size="sm" :animate-on-hover="false" />
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost btn-icon"
+                :disabled="
+                  saving ||
+                  !group.enabled ||
+                  group.group_id === selectedGroups[selectedGroups.length - 1]?.group_id
+                "
+                :title="t('channelMonitor.moveDown', { name: group.name })"
+                :aria-label="t('channelMonitor.moveDown', { name: group.name })"
+                @click="moveGroup(group.group_id, 1)"
+              >
+                <Icon name="arrowDown" size="sm" :animate-on-hover="false" />
+              </button>
+            </div>
+            <Select
+              v-model="group.status"
+              :options="options"
+              :disabled="saving || !group.enabled"
+              :aria-label="t('channelMonitor.groupStatus', { name: group.name })"
+              class="min-w-0 flex-1 sm:w-56"
+              @update:model-value="saved = false"
+            />
+          </div>
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <button type="submit" class="btn btn-primary" :disabled="saving">{{

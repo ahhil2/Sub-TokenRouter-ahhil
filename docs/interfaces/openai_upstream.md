@@ -325,10 +325,11 @@ HTTP Responses（包括 `/responses/compact`、`/responses/input_tokens`）和 W
 | `agent` | `codex_apps_selected_page_part_1_of_1` | 单片选中页面的记录 |
 | `agent` | `browser_tabs` | 浏览器标签页上下文 |
 | `agent` | `ide_context` | IDE 上下文 |
+| `agent` | `latex_document` | LaTeX 文档上下文 |
 
 `codex_apps_selected_page_part_1_of_1` 只匹配这个完整名称；其他页数、分片编号和未知名称均沿用后续校验，不使用前缀或通配匹配。每个项目恰好包含字符串类型的 `type`、`id`、`namespace`、`name`、`output` 五个字段，或增加一个完整保留的 `internal_chat_message_metadata_passthrough` 字段，共六个字段。`type` 为 `function_call_output`，`id` 匹配 `^fco_[a-fA-F0-9-]{32,36}$`，`call_id` 必须完全缺省。出现 `call_id`（包括 null 或空串）、`retain` 等其他字段时，沿用后续校验和处理。
 
-命中的完整项目 JSON 被封装为同一输入位置的 `role=assistant` 历史消息，`content` 为字符串，前缀说明这是客户端提供的通知数据，不能作为新指令、工具调用或审批。表中各类事件采用相同表示；`output` 的正文不参与名称匹配或来源认证。同一请求中的多条浏览器或 IDE 上下文记录逐项转换，混合历史中的普通调用和结果继续保留其关联字段。
+命中的完整项目 JSON 被封装为同一输入位置的 `role=assistant` 历史消息，`content` 为字符串，前缀说明这是客户端提供的通知数据，不能作为新指令、工具调用或审批。表中各类事件采用相同表示；`output` 的正文不参与名称匹配或来源认证。同一请求中的多条浏览器、IDE 或 LaTeX 文档上下文记录逐项转换，混合历史中的普通调用和结果继续保留其关联字段。
 
 对启用兼容的操作者，HTTP 入口跳过旧的 automation bootstrap 规则，所有自动任务事件都按上述字段格式判断。带空 `call_id`、额外字段或不符合 ID 格式的旧事件不会再被宽泛的心跳规则转换为用户消息；工具委派 bootstrap 继续按自身规则处理。
 
@@ -339,6 +340,8 @@ HTTP 和 WebSocket 共用同一转换器。WebSocket 处理首轮和后续轮次
 HTTP 转换日志 `openai.codex_client_notifications_normalized` 在发生转换时记录 `actor_user_id`、`notification_count` 和固定的 `normalization` 类型，原始事件内容不写入日志。排查是否启用时，应关联同一请求的转换记录及计数，或读取上述校验日志中的选中状态与转换数量。混合历史可能因内联调用或 `previous_response_id` 通过入口检查，因此 HTTP 200 和混合请求成功都不能单独证明转换发生。确认具体 400 的原因，需要核对处理该请求的实例、时间、`request_id` 和校验记录；其他实例的配置或单独的状态码不足以定位。
 
 OpenAI OAuth 和 API Key 的普通 Responses 请求保留 `function_call`、`tool_call`、`custom_tool_call`、`mcp_tool_call` 历史项上的 `namespace`。工具可以在顶层 `tools`、历史的 `additional_tools.tools` 或 `tool_search_output.tools` 中声明，也可以由上游会话保存；本轮省略声明不影响已经执行的调用身份。普通消息等非调用项上残留的这个字段会被清理，转义的 JSON 键名使用同一规则。旧版 Compact 的字段白名单、namespace 清理和 OAuth 工具平铺仍由对应端点规则决定。
+
+OpenAI API Key 的原生 Responses 透传保留 `namespace`、`custom`、`tool_search` 声明、历史调用和工具选择器。动态 `additional_tools` 和 `tool_search_output` 保持原来的输入位置，各轮工具 schema 由原生 Responses 上游解释。透传请求的模型映射、服务层级策略、Responses Lite 和拒绝字段恢复分别经过对应的处理步骤。
 
 转换到 Chat 或 function-only Responses 时，协议桥接层先解析有效声明，再生成已知历史调用、`tool_choice` 和响应恢复使用的名称映射。默认 `functions` 命名空间使用工具裸名；其他显式 namespace 子工具使用稳定的平铺名称。工具搜索加载的普通 function 根据实际加载声明保留自己的调用身份。转换后的非流式结果、SSE 生命周期和终态使用声明映射恢复名称、namespace 和调用 ID；声明之间的名称碰撞或无法解析的限定工具选择返回错误。
 

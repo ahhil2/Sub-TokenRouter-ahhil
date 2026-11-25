@@ -307,13 +307,6 @@
               <span class="font-medium text-green-600 dark:text-green-400">{{
                 formatDetailedBalance(row.actual_cost)
               }}</span>
-              <!-- L identifies applied long-context billing; the recorded multiplier determines its charge rather than a fixed doubling. -->
-              <span
-                v-if="row.long_context_billing_applied"
-                data-testid="long-context-billing-marker"
-                class="inline-flex items-center rounded-compact px-1 py-px text-xs font-semibold leading-tight bg-amber-100 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/20 dark:text-amber-300 dark:ring-amber-500/30"
-                >L</span
-              >
               <!-- Cost details -->
               <div
                 class="group relative"
@@ -331,6 +324,14 @@
                 </div>
               </div>
             </div>
+            <!-- The recorded billing flag controls this notice because context thresholds and surcharge factors depend on the applied model pricing. -->
+            <span
+              v-if="row.long_context_billing_applied"
+              data-testid="long-context-billing-marker"
+              :title="t('usage.longContextSurchargeHint')"
+              class="mt-1 inline-flex items-center whitespace-nowrap rounded-compact px-1 py-px text-xs font-semibold leading-tight bg-amber-100 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/20 dark:text-amber-300 dark:ring-amber-500/30"
+              >{{ t('usage.longContextSurcharge') }}</span
+            >
             <div
               v-if="showProviderBilling && row.provider_rate_multiplier != null"
               class="mt-0.5 text-xs text-orange-500 dark:text-orange-400"
@@ -1136,7 +1137,8 @@ import type { Column } from '@/components/common/table/types'
 // UsageTable.vue renders usage rows with request identity, billing, tokens, cache
 // rates, and optional diagnostics for administrator and user pages. Parent-selected
 // columns and visibility flags determine which details are exposed; user billing
-// and provider charges use their own amount formatters.
+// and provider charges use their own amount formatters. Recorded billing flags
+// identify applied long-context surcharges beside the charged amounts.
 //
 // Floating cost, token, and timing panels render outside table cells to escape
 // scrolling-container clipping. Their row identities are checked after Vue updates before

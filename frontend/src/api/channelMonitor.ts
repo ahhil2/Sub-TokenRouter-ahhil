@@ -52,6 +52,11 @@ export async function getChannelMonitorConfig(
   ).data.groups
 }
 
+/**
+ * saveChannelMonitorConfig replaces monitor settings in the supplied display order.
+ * Callers send the selected groups; an empty array hides every channel. The server
+ * uses this order for subsequent configuration reads and public snapshots.
+ */
 export async function saveChannelMonitorConfig(groups: ChannelMonitorGroupConfig[]): Promise<void> {
   await apiClient.put('/admin/channel-monitors/config', { groups })
 }

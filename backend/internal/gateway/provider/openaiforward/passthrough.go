@@ -22,7 +22,10 @@ import (
 // passthrough.go prepares and forwards Responses payloads with provider policy
 // and bounded recovery before output.
 // Responses passthrough can retain unknown payload fields while still applying
-// selected-provider model, OAuth identity, client-tool, and image policy.
+// selected-provider model, OAuth identity, service-tier, and image policy.
+// Native API Key tool declarations retain their input positions, allowing the
+// Responses upstream to interpret schemas that change across conversation
+// history.
 // Initial model replacement changes the image-intent evidence, and the retained
 // canonical body lets later image checks distinguish prelude intent from the
 // prepared request. Codex preparation rereads stream mode after its OAuth
@@ -63,9 +66,9 @@ type ImageBilling struct {
 
 // RunPassthrough prepares raw Responses bytes and reads the selected provider's
 // passthrough output. Provider model mapping uses a byte patch, Codex input
-// follows identity and instruction rules, and client-tool lowering retains
-// response restoration state. For Codex preparation, stream mode is reread
-// after OAuth normalization.
+// follows identity and instruction rules, and API Key tools keep their native
+// declarations, history, and selectors. For Codex preparation, stream mode is
+// reread after OAuth normalization.
 //
 // Rejected-field, agent-task, and Compact recovery use separate state after
 // captured HTTP bodies are closed. An adopted reader Compact repair closes its
@@ -194,20 +197,9 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		}
 	}
 
-	// Lower client tools for non-Compact API Key passthrough before exchange,
-	// retaining request-local mappings so response wrappers can restore the
-	// caller's tool representation.
-	if profile.OpenAI && profile.APIKey &&
-		!p.CompactPath() && p.NeedsClientTools(body) {
-		adaptedBody, adaptErr := p.AdaptClientTools(body)
-		if adaptErr != nil {
-			return nil, adaptErr
-		}
-		body = adaptedBody
-	}
-
-	// Clean empty base64 image placeholders after client-tool preparation so late
-	// byte cleanup does not bypass model mapping or response restoration state.
+	// Clean empty base64 image placeholders after credential-specific preparation
+	// so image sanitization cannot bypass model mapping or required compatibility
+	// policies.
 	sanitizedBody, sanitized, err := openai.SanitizeEmptyBase64InputImagesInOpenAIBody(body)
 	if err != nil {
 		return nil, err
@@ -387,7 +379,6 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 			return nil, p.ErrorResponsePass(ctx, resp, body, probeBody)
 		}
 
-		p.WrapResponseBody(resp)
 		// Publish turn-state source from successful response headers before body
 		// reading; this header observation is separate from confirmed client delivery
 		// and final response-owner binding.

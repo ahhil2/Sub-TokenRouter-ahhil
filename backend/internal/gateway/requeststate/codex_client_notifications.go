@@ -13,7 +13,7 @@ import (
 
 // codex_client_notifications.go adapts named client notifications into Responses
 // assistant history messages before ordinary tool-result handling.
-// Some clients encode automation, goal, page, browser, and IDE context records as
+// Some clients encode automation, goal, page, browser, IDE, and LaTeX records as
 // function_call_output items with item IDs but no originating call. Tool-result
 // validation cannot associate these items with a model invocation. Their complete
 // event records therefore travel as client-provided text, at the same input positions.
@@ -125,7 +125,7 @@ func NormalizeCodexClientNotifications(body []byte, maxBytes int64) ([]byte, int
 }
 
 // isCodexClientNotification recognizes supported client event names using exact
-// namespace/name pairs, including browser tabs and IDE context records.
+// namespace/name pairs, including browser, IDE, and LaTeX document context.
 // Each item has string type, id, namespace, name, and output fields, with an
 // fco_ identifier matching the supported format. Optional native metadata remains
 // event data. Any other field, including a null or blank call_id, declines conversion.
@@ -158,7 +158,7 @@ func isCodexClientNotification(item gjson.Result) bool {
 	case "agent":
 		switch fields["name"].Str {
 		case "goal_objective", "codex_apps_open_page", "codex_apps_selected_page_part_1_of_1",
-			"browser_tabs", "ide_context":
+			"browser_tabs", "ide_context", "latex_document":
 			return true
 		}
 	}

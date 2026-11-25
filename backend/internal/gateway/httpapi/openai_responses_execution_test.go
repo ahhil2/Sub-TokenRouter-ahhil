@@ -7115,15 +7115,101 @@ func TestOpenAIGatewayService_APIKeyPreservesAllCallNamespaceKinds(t *testing.T)
 	require.False(t, gjson.GetBytes(upstream.bodies[0], "input.4.namespace").Exists())
 }
 
-// TestOpenAIGatewayService_APIKeyPassthroughRestoresDiscoveredFunction carries
-// a plain discovered function through request lowering and streamed response
-// restoration. Added, done, and terminal items keep its client namespace and
-// the same call ID while the upstream declaration and history stay bare.
-func TestOpenAIGatewayService_APIKeyPassthroughRestoresDiscoveredFunction(t *testing.T) {
+// TestOpenAIGatewayService_APIKeyPassthroughPreservesVersionedNamespaceTools
+// sends historical and current schemas for one tool through Fast and Ultrafast
+// provider policies. Native declarations, replay identities, choices, and JSON
+// or SSE calls reach their recipients while the selected tier still applies.
+func TestOpenAIGatewayService_APIKeyPassthroughPreservesVersionedNamespaceTools(t *testing.T) {
+	for _, tc := range []struct {
+		name       string // selected provider scenario
+		groupID    int64  // request group identity
+		providerID int64  // selected provider identity
+		policy     string // group service tier policy
+		wantTier   string // expected outbound tier
+	}{
+		{"fast", 13, 25, routing.GroupOpenAIFastPolicyFollowRequest, "priority"},
+		{"fast_qing", 13, 80, routing.GroupOpenAIFastPolicyFollowRequest, "priority"},
+		{"ultrafast", 14, 26, routing.GroupOpenAIFastPolicyForceUltrafast, "ultrafast"},
+	} {
+		for _, namespace := range []string{"mcp__cua_repl", "functions"} {
+			for _, stream := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/stream=%t", tc.name, namespace, stream), func(t *testing.T) {
+					body := []byte(fmt.Sprintf(`{
+						"model":"gpt-6.2-sol","stream":%t,"service_tier":"priority",
+						"tools":[
+							{"type":"custom","name":"apply_patch","format":{"type":"text"}},
+							{"type":"tool_search","execution":"client"},
+							{"type":"namespace","name":%q,"tools":[{"type":"function","name":"js","parameters":{"type":"object","properties":{"code":{"type":"string"},"timeout_ms":{"type":"integer"}}}}]}
+						],
+						"input":[
+							{"type":"additional_tools","role":"developer","tools":[{"type":"namespace","name":%q,"tools":[{"type":"function","name":"js","parameters":{"type":"object","properties":{"code":{"type":"string"}}}}]}]},
+							{"type":"function_call","namespace":%q,"name":"js","call_id":"call_previous","arguments":"{\"code\":\"1 + 1\"}"},
+							{"type":"function_call_output","call_id":"call_previous","output":"2"},
+							{"type":"message","role":"user","content":"continue"}
+						],
+						"tool_choice":{"type":"function","namespace":%q,"name":"js"}
+					}`, stream, namespace, namespace, namespace, namespace))
+					item := fmt.Sprintf(`{"type":"function_call","id":"fc_next","call_id":"call_next","namespace":%q,"name":"js","arguments":"{}","status":"completed"}`, namespace)
+					response := fmt.Sprintf(`{"id":"resp_native_tools","object":"response","model":"gpt-6.2-sol","status":"completed","output":[%s],"usage":{"input_tokens":1,"output_tokens":1}}`, item)
+					contentType := "application/json"
+					if stream {
+						contentType = "text/event-stream"
+						response = "data: " + fmt.Sprintf(`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":%s}`, item) + "\n\n" +
+							"data: " + fmt.Sprintf(`{"type":"response.output_item.done","sequence_number":1,"output_index":0,"item":%s}`, item) + "\n\n" +
+							"data: " + fmt.Sprintf(`{"type":"response.completed","sequence_number":2,"response":%s}`, response) + "\n\n"
+					}
+					upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{contentType}},
+						Body:       io.NopCloser(strings.NewReader(response)),
+					}}
+					provider := newOpenAIRejectedFieldTestProvider()
+					provider.Record.ID = tc.providerID
+					provider.Record.Extra["openai_passthrough"] = true
+					group := &routing.Group{
+						ID: tc.groupID, Status: billingcore.StatusActive, Hydrated: true,
+						OpenAIFastPolicy: tc.policy,
+					}
+					ctx := requeststate.WithGroup(t.Context(), group)
+					recorder := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(recorder)
+					c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/responses", bytes.NewReader(body))
+					c.Request.Header.Set("Content-Type", "application/json")
+					c.Set("api_key", &apikey.APIKey{Group: group})
+
+					result, err := newOpenAIRejectedFieldTestService(upstream).Forward(ctx, c, provider, body)
+
+					require.NoError(t, err)
+					require.NotNil(t, result)
+					require.Len(t, upstream.bodies, 1)
+					require.Equal(t, http.StatusOK, recorder.Code)
+					for _, field := range []string{"tools", "input", "tool_choice"} {
+						require.JSONEq(t, gjson.GetBytes(body, field).Raw, gjson.GetBytes(upstream.lastBody, field).Raw, field)
+					}
+					require.Equal(t, tc.wantTier, gjson.GetBytes(upstream.lastBody, "service_tier").String())
+					_, converted := OpenAIResponsesClientToolMapping(c)
+					require.False(t, converted)
+					if stream {
+						require.Contains(t, recorder.Body.String(), `"namespace":`+strconv.Quote(namespace))
+						require.Contains(t, recorder.Body.String(), `"type":"response.completed"`)
+					} else {
+						require.JSONEq(t, item, gjson.Get(recorder.Body.String(), "output.0").Raw)
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestOpenAIGatewayService_APIKeyPassthroughPreservesDiscoveredFunction carries
+// native client discovery history and streamed function calls through the
+// Responses executor. Declarations, history, and response events keep their
+// namespace and call identity across passthrough delivery.
+func TestOpenAIGatewayService_APIKeyPassthroughPreservesDiscoveredFunction(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-sol","stream":true,"tools":[{"type":"tool_search","execution":"client"}],"input":[{"type":"tool_search_call","call_id":"search_1","arguments":{"query":"js"},"execution":"client"},{"type":"tool_search_output","call_id":"search_1","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]},{"type":"function_call","name":"js","namespace":"js","call_id":"call_1","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`)
-	sse := "data: {\"type\":\"response.output_item.added\",\"sequence_number\":0,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"js\",\"arguments\":\"{}\"}}\n\n" +
-		"data: {\"type\":\"response.output_item.done\",\"sequence_number\":1,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"js\",\"arguments\":\"{}\",\"status\":\"completed\"}}\n\n" +
-		"data: {\"type\":\"response.completed\",\"sequence_number\":2,\"response\":{\"id\":\"resp_2\",\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"js\",\"arguments\":\"{}\",\"status\":\"completed\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+	sse := "data: {\"type\":\"response.output_item.added\",\"sequence_number\":0,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"namespace\":\"js\",\"name\":\"js\",\"arguments\":\"{}\"}}\n\n" +
+		"data: {\"type\":\"response.output_item.done\",\"sequence_number\":1,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"namespace\":\"js\",\"name\":\"js\",\"arguments\":\"{}\",\"status\":\"completed\"}}\n\n" +
+		"data: {\"type\":\"response.completed\",\"sequence_number\":2,\"response\":{\"id\":\"resp_2\",\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"namespace\":\"js\",\"name\":\"js\",\"arguments\":\"{}\",\"status\":\"completed\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
@@ -7139,9 +7225,8 @@ func TestOpenAIGatewayService_APIKeyPassthroughRestoresDiscoveredFunction(t *tes
 	_, err := newOpenAIRejectedFieldTestService(upstream).Forward(context.Background(), c, provider, body)
 	require.NoError(t, err)
 	require.Len(t, upstream.bodies, 1)
-	require.Equal(t, "js", gjson.GetBytes(upstream.bodies[0], "tools.1.name").String())
-	require.Equal(t, "js", gjson.GetBytes(upstream.bodies[0], "input.2.name").String())
-	require.False(t, gjson.GetBytes(upstream.bodies[0], "input.2.namespace").Exists())
+	require.JSONEq(t, gjson.GetBytes(body, "tools").Raw, gjson.GetBytes(upstream.bodies[0], "tools").Raw)
+	require.JSONEq(t, gjson.GetBytes(body, "input").Raw, gjson.GetBytes(upstream.bodies[0], "input").Raw)
 	restored := 0
 	for line := range strings.SplitSeq(recorder.Body.String(), "\n") {
 		if !strings.HasPrefix(line, "data: ") {

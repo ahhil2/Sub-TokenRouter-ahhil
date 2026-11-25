@@ -43,6 +43,9 @@ import UsageTable from '../UsageTable.vue'
 const messages: Record<string, string> = {
   'admin.usage.userDeletedBadge': 'Deleted',
   'usage.costDetails': 'Cost Breakdown',
+  'usage.longContextSurcharge': 'Long context surcharge',
+  'usage.longContextSurchargeHint':
+    "Long context pricing increased this request's cost. The displayed amount includes the surcharge.",
   'admin.usage.inputCost': 'Input Cost',
   'admin.usage.outputCost': 'Output Cost',
   'admin.usage.cacheCreationCost': 'Cache Creation Cost',
@@ -117,7 +120,7 @@ const DataTableStub = {
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <div class="cache-rate-cell"><slot name="cell-cache_rate" :row="row" /></div>
-        <slot name="cell-cost" :row="row" />
+        <div class="cost-cell"><slot name="cell-cost" :row="row" /></div>
         <slot name="cell-latency" :row="row" />
         <div class="tps-cell"><slot name="cell-tps" :row="row" /></div>
         <slot name="cell-request_id" :row="row" />
@@ -563,21 +566,32 @@ describe('admin UsageTable tooltip', () => {
     } as DOMRect)
   })
 
-  // Only one fixture row reports that long-context billing was applied. The test protects
-  // rendering the long-context marker on that row alone within the table.
-  it('marks only usage rows that actually applied long-context billing', () => {
+  // Recorded usage includes an applied surcharge, an inactive flag, and a historical
+  // row with no flag. The cost column explains the surcharge for the applied row,
+  // while large token counts alone do not create a notice.
+  it('explains applied long-context surcharges in the cost column', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [
           {
             ...baseImageRow,
             request_id: 'req-long-context-enabled',
+            billing_mode: 'token',
+            input_tokens: 300000,
             long_context_billing_applied: true,
           },
           {
             ...baseImageRow,
             request_id: 'req-long-context-disabled',
+            billing_mode: 'token',
+            input_tokens: 300000,
             long_context_billing_applied: false,
+          },
+          {
+            ...baseImageRow,
+            request_id: 'req-long-context-unrecorded',
+            billing_mode: 'token',
+            input_tokens: 300000,
           },
         ],
         loading: false,
@@ -594,7 +608,12 @@ describe('admin UsageTable tooltip', () => {
     })
 
     expect(wrapper.findAll('[data-testid="long-context-billing-marker"]')).toHaveLength(1)
-    expect(wrapper.get('[data-testid="long-context-billing-marker"]').text()).toBe('L')
+    const cells = wrapper.findAll('.cost-cell')
+    const marker = cells[0].get('[data-testid="long-context-billing-marker"]')
+    expect(marker.text()).toBe(messages['usage.longContextSurcharge'])
+    expect(marker.attributes('title')).toBe(messages['usage.longContextSurchargeHint'])
+    expect(cells[1].find('[data-testid="long-context-billing-marker"]').exists()).toBe(false)
+    expect(cells[2].find('[data-testid="long-context-billing-marker"]').exists()).toBe(false)
   })
 
   // A usage record contains service tier, user costs, and provider pricing. The test

@@ -17,7 +17,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -28,6 +27,8 @@ import (
 // to HTTP policy, recovery and response state.
 // Passthrough preparation applies required model, credential and compatibility
 // policy while retaining raw request bytes for the selected provider.
+// API Key tools and dynamic declarations retain their native representation
+// for the upstream Responses endpoint to interpret.
 // Request-local alias and fingerprint state follows the body adopted by the
 // runner, and synchronous HTTP output uses the same provider and error
 // observations.
@@ -191,26 +192,6 @@ func (p *openAIPassthroughExecutionAdapter) ReservedToolNames(body []byte) ([]by
 // Codex tool state.
 func (p *openAIPassthroughExecutionAdapter) MergeToolNames(value map[string]string) {
 	MergeCodexToolNameReverse(p.c, value)
-}
-
-// NeedsClientTools reports whether raw Responses input contains tools
-// requiring client adaptation.
-func (p *openAIPassthroughExecutionAdapter) NeedsClientTools(body []byte) bool {
-	return protocolbridge.NeedsOpenAIResponsesClientToolAdaptation(body)
-}
-
-// AdaptClientTools lowers client tool nodes and publishes their restoration
-// mapping on success. An error leaves current mapping state unchanged; callers
-// clear prior attempt mappings before preparation to keep the later response
-// associated with adopted bytes.
-func (p *openAIPassthroughExecutionAdapter) AdaptClientTools(body []byte) ([]byte, error) {
-	updated, mapping, err := protocolbridge.AdaptOpenAIResponsesClientTools(body)
-	// Bind reverse names only after successful lowering; the response mapping
-	// must describe the prepared tool body the passthrough runner actually adopts.
-	if err == nil {
-		SetOpenAIResponsesClientToolMapping(p.c, mapping)
-	}
-	return updated, err
 }
 
 // NormalizeLite delegates provider-specific Responses Lite request
@@ -423,22 +404,6 @@ func (p *openAIPassthroughExecutionAdapter) FailoverError(ctx context.Context, r
 // interprets the returned error before further attempts.
 func (p *openAIPassthroughExecutionAdapter) ErrorResponsePass(ctx context.Context, r *http.Response, body, payload []byte) error {
 	return p.s.Output.PassthroughError(ctx, r, p.c, p.provider, body, payload)
-}
-
-// WrapResponseBody installs client-tool SSE restoration when this request has
-// a mapping and the upstream declares event-stream. A positive MaxLineSize is
-// used regardless of Configured; otherwise the default applies, and response
-// closure follows the wrapper's underlying body.
-func (p *openAIPassthroughExecutionAdapter) WrapResponseBody(r *http.Response) {
-	if mapping, ok := OpenAIResponsesClientToolMapping(p.c); ok && openai.IsEventStreamResponse(r.Header) {
-		limit := OpenAIResponseDefaultMaxLineSize
-		if p.s.Output.Options.MaxLineSize > 0 {
-			limit = p.s.Output.Options.MaxLineSize
-		}
-		// Restore lowered client-tool nodes while the reader consumes this same
-		// response; the wrapper retains closure of the original body through Close.
-		r.Body = upstream.NewResponsesClientToolStreamBody(r.Body, mapping, limit)
-	}
 }
 
 // ObserveProvenance records this provider as the source of a nonblank

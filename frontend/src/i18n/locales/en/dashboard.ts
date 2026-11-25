@@ -455,6 +455,9 @@ export default {
     title: 'Usage Records',
     description: 'View and analyze your API usage history',
     costDetails: 'Cost Breakdown',
+    longContextSurcharge: 'Long context surcharge',
+    longContextSurchargeHint:
+      "Long context pricing increased this request's cost. The displayed amount includes the surcharge.",
     tokenDetails: 'Token Breakdown',
     cacheTtlOverriddenHint: 'Cache TTL Override enabled',
     cacheTtlOverriddenLabel: 'TTL Override',

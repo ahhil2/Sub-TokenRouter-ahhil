@@ -12,11 +12,12 @@ import (
 
 // passthrough_ports.go defines the callbacks for Responses passthrough
 // preparation, transport, recovery, and output observations.
-// Responses passthrough prepares body bytes with provider credentials, client
-// tools, fingerprints, and image controls while retaining the client's output
-// protocol. Request-bound callbacks supply platform policy and response
-// observations; the runner decides when to replay rejected fields, recover
-// agent tasks, or adopt a Compact model repair before final client output.
+// Responses passthrough prepares body bytes with provider credentials,
+// fingerprints, and image controls while retaining native tool declarations
+// and the client's output protocol. Request-bound callbacks supply platform
+// policy and response observations; the runner decides when to replay rejected
+// fields, recover agent tasks, or adopt a Compact model repair before final
+// client output.
 
 // PassthroughPorts binds request byte preparation, recovery policy, and output for one attempt.
 type PassthroughPorts interface {
@@ -117,12 +118,6 @@ type PassthroughPorts interface {
 	// publishes a copied map. Keep supplied entries stable during copying; later
 	// restoration reads the newly published map for this request.
 	MergeToolNames(value map[string]string)
-	// NeedsClientTools reports whether raw input has client tools requiring
-	// request lowering.
-	NeedsClientTools(body []byte) bool
-	// AdaptClientTools lowers API Key client-tool shapes and records the output
-	// restoration mapping.
-	AdaptClientTools(body []byte) ([]byte, error)
 	// NormalizeLite reapplies raw Lite rules after earlier OAuth or API Key
 	// preparation. Its changed result replaces outgoing bytes so late
 	// compatibility cleanup cannot lose the Lite-required controls.
@@ -208,10 +203,6 @@ type PassthroughPorts interface {
 	// ErrorResponsePass writes final passthrough failure using the current body
 	// and captured payload.
 	ErrorResponsePass(ctx context.Context, r *http.Response, body, payload []byte) error
-	// WrapResponseBody installs response restoration when the request lowered
-	// client tools. Its wrapper retains closure of the underlying response body
-	// for the runner after successful reading or failure handling.
-	WrapResponseBody(r *http.Response)
 	// ObserveProvenance records returned turn-state source after successful HTTP
 	// headers and before client reading. That publication does not wait for
 	// confirmed client delivery; the later response reader owns output commitment

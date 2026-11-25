@@ -36,6 +36,13 @@ import (
 // frame omits model while continuing the first response. Ordinary paired tool
 // history and complete notification metadata remain available in mixed turns.
 func TestClientNotifications_ConsecutiveTransportTurns(t *testing.T) {
+	// Distinct document updates make the bridge append new context when it
+	// reconstructs history, since a repeated prefix represents already submitted input.
+	latexDocument := strings.Replace(wsNotificationEvent, "goal_objective", "latex_document", 1)
+	updatedLatexDocument := strings.NewReplacer(
+		"fco_00000000000000000000000000000000", "fco_00000000000000000000000000000001",
+		"Receipt GOAL-fixture", "Updated document",
+	).Replace(latexDocument)
 	for _, notices := range []struct {
 		name   string // notification sequence scenario
 		first  string // complete initial event record
@@ -67,6 +74,17 @@ func TestClientNotifications_ConsecutiveTransportTurns(t *testing.T) {
 			name:   "IDE context then browser tabs with tool history",
 			first:  strings.Replace(wsNotificationEvent, "goal_objective", "ide_context", 1),
 			second: strings.Replace(wsNotificationEvent, "goal_objective", "browser_tabs", 1),
+			mixed:  true,
+		},
+		{
+			name:   "LaTeX document on consecutive turns",
+			first:  latexDocument,
+			second: updatedLatexDocument,
+		},
+		{
+			name:   "LaTeX document with tool history",
+			first:  latexDocument,
+			second: updatedLatexDocument,
 			mixed:  true,
 		},
 	} {
