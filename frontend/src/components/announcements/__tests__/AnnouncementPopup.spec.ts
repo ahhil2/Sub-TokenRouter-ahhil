@@ -75,6 +75,7 @@ describe('AnnouncementPopup', () => {
     }
 
     const wrapper = mount(AnnouncementPopup)
+    await vi.dynamicImportSettled()
     await wrapper.vm.$nextTick()
 
     const content = document.body.querySelector('.markdown-body')
@@ -113,6 +114,7 @@ describe('AnnouncementPopup', () => {
       },
     })
 
+    await vi.dynamicImportSettled()
     const dialog = document.body.querySelector('[role="dialog"]')
     expect(dialog?.classList).toContain('modal-content')
     expect(dialog?.classList).toContain('max-w-[640px]')
@@ -145,6 +147,7 @@ describe('AnnouncementPopup', () => {
     store.currentPopup = announcement
     const dismissPopup = vi.spyOn(store, 'dismissPopup').mockResolvedValue()
     const wrapper = mount(AnnouncementPopup)
+    await vi.dynamicImportSettled()
 
     const acknowledge = document.body.querySelector<HTMLButtonElement>(
       '[data-testid="announcement-popup-dismiss"]',

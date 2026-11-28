@@ -64,6 +64,30 @@ describe('useSubscriptionStore', () => {
   })
 
   describe('fetchActiveSubscriptions', () => {
+    // The polling timer fires while the tab is hidden, then visibility returns.
+    // Only stale visible data triggers a request, and stopped polling releases both triggers.
+    it('skips hidden polling and refreshes once when stale data becomes visible', async () => {
+      const store = useSubscriptionStore()
+      const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+      mockGetActiveSubscriptions.mockResolvedValue([])
+      try {
+        store.startPolling()
+        await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+        expect(mockGetActiveSubscriptions).not.toHaveBeenCalled()
+        hidden.mockReturnValue(false)
+        document.dispatchEvent(new Event('visibilitychange'))
+        await vi.advanceTimersByTimeAsync(0)
+        document.dispatchEvent(new Event('visibilitychange'))
+        expect(mockGetActiveSubscriptions).toHaveBeenCalledTimes(1)
+        store.stopPolling()
+        await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+        document.dispatchEvent(new Event('visibilitychange'))
+        expect(mockGetActiveSubscriptions).toHaveBeenCalledTimes(1)
+      } finally {
+        store.stopPolling()
+        hidden.mockRestore()
+      }
+    })
     // The subscription endpoint returns active records for the account. Fetch publishes
     // those records, returns the response data, and clears loading after the request
     // completes.

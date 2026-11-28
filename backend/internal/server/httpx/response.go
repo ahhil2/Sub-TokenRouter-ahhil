@@ -191,17 +191,22 @@ func InternalError(c *gin.Context, message string) {
 // least one page; items, total, page, and size pass through, with floating-point
 // precision limits applying to very large counts.
 func Paginated(c *gin.Context, items any, total int64, page, pageSize int) {
+	c.JSON(http.StatusOK, PaginatedBody(items, total, page, pageSize))
+}
+
+// PaginatedBody constructs the same envelope for handlers that need its encoded bytes.
+func PaginatedBody(items any, total int64, page, pageSize int) Response {
 	// Floating-point ceiling division counts partially filled pages. The minimum
 	// keeps navigation usable for empty results instead of exposing a zero-page collection.
 	pages := max(int(math.Ceil(float64(total)/float64(pageSize))), 1)
 
-	Success(c, PaginatedData{
+	return Response{Code: 0, Message: "success", Data: PaginatedData{
 		Items:    items,
 		Total:    total,
 		Page:     page,
 		PageSize: pageSize,
 		Pages:    pages,
-	})
+	}}
 }
 
 // PaginatedWithResult writes items with the supplied navigation counts.

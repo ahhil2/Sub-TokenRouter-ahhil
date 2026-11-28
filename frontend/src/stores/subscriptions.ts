@@ -96,22 +96,30 @@ export const useSubscriptionStore = defineStore('subscriptions', () => {
   }
 
   // startPolling starts one five-minute subscription refresh interval when none is
-  // active. Each tick forces a refresh and logs failures; the authentication owner calls
+  // active. Visible tabs refresh stale data; the authentication owner calls
   // stopPolling or clear to release it.
   function startPolling() {
     if (pollerInterval) return
 
-    pollerInterval = setInterval(
-      () => {
-        fetchActiveSubscriptions(true).catch((error) => {
-          console.error('Subscription polling failed:', error)
-        })
-      },
-      5 * 60 * 1000,
-    )
+    document.addEventListener('visibilitychange', refreshVisibleSubscriptions)
+    pollerInterval = setInterval(refreshVisibleSubscriptions, 5 * 60 * 1000)
   }
 
-  // stopPolling releases the subscription refresh interval and clears its handle.
+  // refreshVisibleSubscriptions refreshes stale data when the tab is visible.
+  // Ordinary reads retain the cache window and share a pending request, including
+  // when the interval and visibility event arrive close together.
+  function refreshVisibleSubscriptions() {
+    if (document.hidden) return
+    // Polling has no waiting caller to report failures; retain the cached list
+    // and leave the next visible refresh free to retry through ordinary fetching.
+    void fetchActiveSubscriptions().catch((error) => {
+      console.error('Subscription polling failed:', error)
+    })
+  }
+
+  // stopPolling releases the refresh interval and its visibility listener. Callers
+  // can start polling again after cleanup without retaining another session's
+  // event listener or periodic timer.
   // Repeated calls after cleanup do nothing. Cached records remain available, and
   // requests already in flight continue under their existing publication generation.
   function stopPolling() {
@@ -119,6 +127,7 @@ export const useSubscriptionStore = defineStore('subscriptions', () => {
       // Release the polling timer before clearing its handle, allowing a later
       // authenticated session to establish a fresh interval.
       clearInterval(pollerInterval)
+      document.removeEventListener('visibilitychange', refreshVisibleSubscriptions)
       pollerInterval = null
     }
   }

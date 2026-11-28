@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { announcementsAPI } from '@/api'
+import announcementsAPI from '@/api/announcements'
 import type { UserAnnouncement } from '@/api/announcements.types'
 
 // announcements.ts keeps the visible announcement list and sequences unread popup
@@ -13,7 +13,7 @@ import type { UserAnnouncement } from '@/api/announcements.types'
 // Dismissal clears the active popup before marking it read; the component's close
 // callback normally continues playback after its exit lifecycle. Fetch admission can
 // also start playback whenever currentPopup is empty, including during exit. Reset
-// clears local state but does not cancel an already running request.
+// invalidates publication by requests admitted under the previous session.
 
 // Announcement admission uses a twenty-minute ordinary-fetch window and considers at
 // most twenty server-ordered records when building popup candidates.
@@ -28,7 +28,12 @@ export const useAnnouncementStore = defineStore('announcements', () => {
   // Announcement refs retain the visible list, request state, admission timestamp,
   // queued popups, and active popup for shared application consumers.
   const announcements = ref<UserAnnouncement[]>([])
+  // These counters belong to the current session. Reset detaches older work,
+  // while latestFetch prevents an older forced response from replacing a newer list.
+  let pendingOperations = 0
   const loading = ref(false)
+  let session = 0
+  let latestFetch = 0
   const lastFetchTime = ref(0)
   const popupQueue = ref<UserAnnouncement[]>([])
   const currentPopup = ref<UserAnnouncement | null>(null)
@@ -45,7 +50,9 @@ export const useAnnouncementStore = defineStore('announcements', () => {
   // API cache controls. Admission records its timestamp before awaiting the request so
   // ordinary concurrent calls return early. Success updates existing queued records by
   // identifier before admitting candidates. Failure resets the timestamp for retry and
-  // is logged; overlapping forced calls are not ordered by generation.
+  // is logged. Only the latest admitted list request may publish its result.
+  // Session ownership also guards loading cleanup so an old account's completion
+  // cannot clear activity belonging to the newly authenticated account.
   async function fetchAnnouncements(force = false) {
     const now = Date.now()
     if (!force && lastFetchTime.value > 0 && now - lastFetchTime.value < THROTTLE_MS) {
@@ -54,10 +61,16 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     // Record admission before awaiting the API so another ordinary call during the
     // request observes the throttle window and returns early.
     lastFetchTime.value = now
+    const owner = session
+    const request = ++latestFetch
+    pendingOperations++
+    loading.value = true
 
     try {
-      loading.value = true
       const all = await announcementsAPI.list(false, force)
+      // A reset or newer fetch transfers publication ownership; discard this
+      // response before it can restore another account's list or popup state.
+      if (owner !== session || request !== latestFetch) return
       announcements.value = all
       if (currentPopup.value)
         currentPopup.value = all.find((item) => item.id === currentPopup.value?.id) || null
@@ -69,10 +82,11 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     } catch (err: any) {
       // Reset failed admission so a subsequent ordinary call can retry immediately
       // instead of waiting for the twenty-minute throttle window.
+      if (owner !== session || request !== latestFetch) return
       lastFetchTime.value = 0
       console.error('Failed to fetch announcements:', err)
     } finally {
-      loading.value = false
+      if (owner === session) loading.value = --pendingOperations > 0
     }
   }
 
@@ -142,11 +156,7 @@ export const useAnnouncementStore = defineStore('announcements', () => {
   // timestamp available to consumers.
   async function markAsRead(id: number) {
     try {
-      await announcementsAPI.markRead(id)
-      const ann = announcements.value.find((a) => a.id === id)
-      if (ann) {
-        ann.read_at = new Date().toISOString()
-      }
+      await persistRead(id, session)
     } catch (err: any) {
       // Keep the existing local read timestamp when persistence fails; popup dismissal
       // can still complete and the next fetch can reconcile server state.
@@ -154,43 +164,58 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     }
   }
 
-  // markAllAsRead submits read requests for the currently unread visible records
-  // together. Local timestamps change after every request succeeds, so an error from one
-  // request leaves local read state unchanged even if other requests already succeeded
-  // remotely. The failure is logged and propagated for caller handling. Loading is
-  // cleared when the batch settles; records are read again from current reactive state
-  // when applying successful timestamps.
+  // persistRead acknowledges one announcement and publishes its successful timestamp.
+  // The captured session must still own the store after persistence finishes;
+  // otherwise the response belongs to an account whose visible state was cleared.
+  async function persistRead(id: number, owner: number) {
+    await announcementsAPI.markRead(id)
+    if (owner !== session) return
+    const record = announcements.value.find((item) => item.id === id)
+    if (record && !record.read_at) record.read_at = new Date().toISOString()
+  }
+
+  // markAllAsRead acknowledges the currently unread list in groups of four requests.
+  // Successful timestamps publish individually, so one failed request does not
+  // hide successful persistence for other announcements. The first failure is
+  // propagated after the remaining groups finish. A session reset stops admission
+  // of further groups and prevents pending acknowledgments from changing the
+  // replacement account's list; already dispatched requests retain their transport.
+  // Loading counts only work admitted under the current session.
   async function markAllAsRead() {
     const unread = announcements.value.filter((a) => !a.read_at)
     if (unread.length === 0) return
 
+    const owner = session
+    let failure: PromiseRejectedResult | undefined
+    pendingOperations++
+    loading.value = true
     try {
-      loading.value = true
-      // Wait for every server update before applying local timestamps; partial server
-      // success can therefore remain unreflected when another request rejects.
-      await Promise.all(unread.map((a) => announcementsAPI.markRead(a.id)))
-      announcements.value.forEach((a) => {
-        if (!a.read_at) {
-          a.read_at = new Date().toISOString()
-        }
-      })
-    } catch (err: any) {
-      console.error('Failed to mark all as read:', err)
-      throw err
+      for (let index = 0; index < unread.length; index += 4) {
+        // Check ownership before each group so logout cannot admit queued updates
+        // under credentials belonging to a newly authenticated account.
+        if (owner !== session) return
+        const results = await Promise.allSettled(
+          unread.slice(index, index + 4).map((item) => persistRead(item.id, owner)),
+        )
+        failure ??= results.find((result) => result.status === 'rejected')
+      }
+      if (owner === session && failure) throw failure.reason
     } finally {
-      loading.value = false
+      if (owner === session) loading.value = --pendingOperations > 0
     }
   }
 
   // reset clears visible announcements, popup playback, throttling, and session
   // deduplication state. It does not cancel in-flight fetches or mark-read requests,
-  // whose completions can still update the store.
+  // whose completions are ignored after the session changes.
   function reset() {
+    session++
     announcements.value = []
     lastFetchTime.value = 0
     shownPopupIds = new Set()
     popupQueue.value = []
     currentPopup.value = null
+    pendingOperations = 0
     loading.value = false
   }
 

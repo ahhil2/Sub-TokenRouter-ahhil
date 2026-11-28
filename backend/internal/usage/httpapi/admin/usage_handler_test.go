@@ -735,6 +735,18 @@ func TestAdminUsageListInvalidStream(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestAdminUsageCursorRejectsInvalidBoundaries supplies unsupported sorts and
+// malformed or overflowing identifiers. Each request must fail with a bad-request
+// response before a usage selection can execute.
+func TestAdminUsageCursorRejectsInvalidBoundaries(t *testing.T) {
+	router := newAdminUsageRequestTypeTestRouter(&adminUsageRepoCapture{})
+	for _, query := range []string{"sort_by=model&cursor=1", "cursor=5", "sort_by=id&cursor=-1", "sort_by=id&cursor=9223372036854775808"} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/usage?"+query, nil))
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+	}
+}
+
 // TestAdminUsageListExactTotalTrue requests an exact pagination total. It
 // requires a successful HTTP response and true ExactTotal in the selectors
 // captured by the repository fixture.
@@ -954,8 +966,8 @@ func TestAdminUsageStatsIntervalDates(t *testing.T) {
 			require.Contains(t, envelope.Data, "average_rpm")
 			require.Contains(t, envelope.Data, "average_tpm")
 			require.Equal(t, 1, repo.recentCalls)
-			require.Equal(t, asOf.Add(-time.Minute), *repo.recentFilters.StartTime)
-			require.Equal(t, asOf, *repo.recentFilters.EndTime)
+			require.True(t, asOf.Add(-time.Minute).Equal(*repo.recentFilters.StartTime))
+			require.True(t, asOf.Equal(*repo.recentFilters.EndTime))
 			require.Equal(t, 2760.0, envelope.Data["average_rpm"])
 			require.Equal(t, 8280.0, envelope.Data["average_tpm"])
 			if tc.unbounded {

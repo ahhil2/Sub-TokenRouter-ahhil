@@ -289,6 +289,7 @@ import { getConfiguredTablePageSizeOptions } from '@/utils/tablePreferences'
 import { formatReasoningEffort } from '@/utils/format'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import { calculateUsageTps } from '@/utils/usageTps'
+import { createUsagePageCursor, usagePageCursor } from '@/utils/usagePageCursor'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
@@ -672,6 +673,9 @@ const buildUsageListParams = (
   }
 }
 
+// pageCursor owns the continuation associated with this view's last displayed page.
+const pageCursor = createUsagePageCursor()
+
 // loadLogs replaces the usage page using the current filters and sort order. Starting a new
 // load aborts the previous controller before installing a new owner for the loading flag.
 //
@@ -687,11 +691,13 @@ const loadLogs = async () => {
   abortController = c
   loading.value = true
   try {
+    const query = buildUsageListParams(pagination.page, pagination.page_size, true)
     const res = await adminAPI.usage.list(
-      buildUsageListParams(pagination.page, pagination.page_size, true),
+      { ...query, cursor: pageCursor.next(query) },
       { signal: c.signal },
     )
     if (!c.signal.aborted) {
+      pageCursor.remember(query, res.items)
       usageLogs.value = res.items
       pagination.total = res.total
     }
@@ -1042,6 +1048,8 @@ const exportToExcel = async () => {
     let p = 1
     let total = pagination.total
     let exportedCount = 0
+    const selection = buildUsageListParams(1, 100, true)
+    let cursor: string | undefined
     const XLSX = await import('xlsx')
     const headers = [
       t('usage.time'),
@@ -1084,7 +1092,10 @@ const exportToExcel = async () => {
     const ws = XLSX.utils.aoa_to_sheet([headers])
     const tpsColumn = headers.indexOf(t('usage.tpsExport'))
     while (true) {
-      const res = await adminUsageAPI.list(buildUsageListParams(p, 100, true), { signal: c.signal })
+      const res = await adminUsageAPI.list(
+        { ...selection, page: p, cursor, exact_total: !cursor },
+        { signal: c.signal },
+      )
       if (c.signal.aborted) break
       if (p === 1) {
         total = res.total
@@ -1151,6 +1162,7 @@ const exportToExcel = async () => {
       exportProgress.progress =
         total > 0 ? Math.min(100, Math.round((exportedCount / total) * 100)) : 0
       if (exportedCount >= total || res.items.length < 100) break
+      cursor = usagePageCursor(selection.sort_by, res.items[res.items.length - 1])
       p++
     }
     if (!c.signal.aborted) {

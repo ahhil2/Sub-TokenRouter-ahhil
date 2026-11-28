@@ -16,7 +16,8 @@ const mockLogin = vi.fn() // test-controlled mock login fixture
 const mockLogin2FA = vi.fn() // test-controlled mock login2fa fixture
 const mockPush = vi.fn() // test-controlled mock push fixture
 
-vi.mock('@/api', () => ({
+vi.mock('@/api/auth', () => ({
+  getPublicSettings: vi.fn().mockResolvedValue({}),
   authAPI: {
     // login forwards submitted password credentials to the configured
     // authentication mock.
@@ -36,10 +37,6 @@ vi.mock('@/api', () => ({
 
 vi.mock('@/api/admin/system', () => ({
   checkUpdates: vi.fn(),
-}))
-
-vi.mock('@/api/auth', () => ({
-  getPublicSettings: vi.fn().mockResolvedValue({}),
 }))
 
 // LoginFormTestComponent reproduces a minimal login form around the real auth

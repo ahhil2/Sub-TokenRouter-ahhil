@@ -53,10 +53,9 @@
 
 <script setup lang="ts">
 import MotionTransition from '@/components/common/MotionTransition.vue'
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAnnouncementStore } from '@/stores/announcements'
-import AnnouncementArticle from '@/components/announcements/AnnouncementArticle.vue'
 import type { DisplayedAnnouncement } from '@/components/announcements/announcementDisplay'
 import Icon from '@/components/icons/Icon.vue'
 
@@ -72,6 +71,9 @@ import Icon from '@/components/icons/Icon.vue'
 // while content is visible. Previews restore scrolling when their content clears,
 // queued announcements leave that to the header announcement list, and every
 // instance releases the lock during unmount.
+
+// AnnouncementArticle loads the sanitized article renderer when popup content is needed.
+const AnnouncementArticle = defineAsyncComponent(() => import('./AnnouncementArticle.vue'))
 
 // props chooses controlled preview content or the store queue.
 const props = withDefaults(

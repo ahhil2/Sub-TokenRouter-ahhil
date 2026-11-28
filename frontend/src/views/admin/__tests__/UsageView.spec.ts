@@ -779,7 +779,14 @@ describe('admin UsageView 路由筛选', () => {
     const row = { model: 'test', output_tokens: 100, duration_ms: 5000, ttft_ms: 1000, tps: 25 }
     exportMocks.list
       .mockReset()
-      .mockResolvedValueOnce({ total: 104, items: Array.from({ length: 100 }, () => row) })
+      .mockResolvedValueOnce({
+        total: 104,
+        items: Array.from({ length: 100 }, (_, index) => ({
+          ...row,
+          id: 200 - index,
+          created_at: '2026-11-27T01:02:03.123456Z',
+        })),
+      })
       .mockResolvedValueOnce({
         total: 104,
         items: [
@@ -802,6 +809,10 @@ describe('admin UsageView 路由筛选', () => {
     const column = headers.indexOf('TPS (tok/s)')
     expect(column).toBe(headers.indexOf('usage.duration') + 1)
     expect(exportMocks.list.mock.calls.map((call) => call[0].page)).toEqual([1, 2])
+    expect(exportMocks.list.mock.calls[1][0]).toMatchObject({
+      cursor: '2026-11-27T01:02:03.123456Z|101',
+      exact_total: false,
+    })
     expect(exportMocks.rows).toHaveBeenCalledTimes(2)
     const sheet = exportMocks.rows.mock.calls[1][0]
     const workbook = utils.book_new()

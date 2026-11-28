@@ -435,6 +435,19 @@ func (h *UsageHandler) List(c *gin.Context) {
 		SortOrder: c.DefaultQuery("sort_order", "desc"),
 	}
 
+	cursor, err := usage.ParseLogCursor(c.Query("cursor"), params.SortBy)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	parsed.Filters.Cursor = cursor
+	if cursor != nil {
+		parsed.Filters.ExactTotal, err = strconv.ParseBool(c.DefaultQuery("exact_total", "true"))
+		if err != nil {
+			response.BadRequest(c, "Invalid exact_total value, use true or false")
+			return
+		}
+	}
 	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, parsed.Filters)
 	if err != nil {
 		response.ErrorFrom(c, err)

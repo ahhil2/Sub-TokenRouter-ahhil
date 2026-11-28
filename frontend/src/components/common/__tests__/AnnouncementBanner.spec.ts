@@ -12,7 +12,7 @@ import { useAnnouncementStore } from '@/stores/announcements'
  */
 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
-vi.mock('@/api', () => ({ announcementsAPI: { list: vi.fn(), markRead: vi.fn() } }))
+vi.mock('@/api/announcements', () => ({ default: { list: vi.fn(), markRead: vi.fn() } }))
 enableAutoUnmount(afterEach)
 
 describe('AnnouncementBanner', () => {

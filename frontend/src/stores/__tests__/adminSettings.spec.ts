@@ -44,7 +44,7 @@ describe('管理员设置共享状态', () => {
     const second = store.fetch().then(() => {
       secondFinished = true
     })
-    await Promise.resolve()
+    await vi.waitFor(() => expect(api.settings).toHaveBeenCalledOnce())
     expect(secondFinished).toBe(false)
     expect(api.settings).toHaveBeenCalledOnce()
     resolve({ ops_monitoring_enabled: false })
@@ -82,6 +82,7 @@ describe('管理员设置共享状态', () => {
     localStorage.setItem('auth_token', 'user-a')
     const store = useAdminSettingsStore()
     const old = store.fetch()
+    await vi.waitFor(() => expect(api.settings).toHaveBeenCalledOnce())
     localStorage.setItem('auth_token', 'user-b')
     api.settings.mockResolvedValueOnce({ ops_monitoring_enabled: false })
     await store.fetch()

@@ -208,6 +208,7 @@ describe('UserDashboardAnnouncements', () => {
     const readItem = wrapper.find('[data-announcement-id="2"]')
 
     await unreadItem.trigger('click')
+    await vi.dynamicImportSettled()
     await flushPromises()
 
     expect(markAsRead).toHaveBeenCalledTimes(1)

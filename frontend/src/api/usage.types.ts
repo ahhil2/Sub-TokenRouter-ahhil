@@ -323,6 +323,8 @@ export interface UserErrorListParams {
 // UsageQueryParams selects usage records by ownership, request attributes, and reporting
 // period.
 export interface UsageQueryParams {
+  cursor?: string // Exclusive boundary for sequential ID or creation-time pagination.
+  exact_total?: boolean // Count the entire selection when continuing from a cursor.
   request_id?: string // Canonical request identifier.
   page?: number // Current page number.
   page_size?: number // Records per page.

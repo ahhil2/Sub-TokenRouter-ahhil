@@ -79,6 +79,7 @@ func TestProviderHandlerListLiteUsesCompactDTOAndETag(t *testing.T) {
 	req304.Header.Set("If-None-Match", rec.Header().Get("ETag"))
 	router.ServeHTTP(rec304, req304)
 	require.Equal(t, http.StatusNotModified, rec304.Code)
+	require.Empty(t, rec304.Body.Bytes())
 
 	// Lite participates in tag construction, while the handler returns the same
 	// DTO shape. This request checks loaded relationships when the flag is absent.
@@ -86,6 +87,8 @@ func TestProviderHandlerListLiteUsesCompactDTOAndETag(t *testing.T) {
 	reqFull := httptest.NewRequest(http.MethodGet, "/api/v1/admin/providers?page=1&page_size=20", nil)
 	router.ServeHTTP(recFull, reqFull)
 	require.Equal(t, http.StatusOK, recFull.Code)
+	require.NotEqual(t, rec.Header().Get("ETag"), recFull.Header().Get("ETag"))
+	require.Equal(t, rec.Body.Bytes(), recFull.Body.Bytes())
 	var fullPayload struct {
 		Data struct { // decoded paginated response object
 			Items []map[string]any `json:"items"` // returned provider page items

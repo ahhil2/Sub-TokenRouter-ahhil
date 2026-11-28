@@ -24,9 +24,9 @@ import { updateFavicon } from '@/utils/branding'
 // Authentication changes start subscription polling and announcement reads, while logout
 // clears their local state and removes the visibility listener. A restored session reads
 // announcements immediately; a fresh login schedules a delayed forced read. The delay is
-// not cancelled by this component. Mounting checks installation status before loading
-// public settings, and unmounting removes the window and document listeners installed by
-// this shell.
+// cancelled when its session changes or the shell unmounts. Mounting checks installation
+// status before loading public settings, and unmounting removes the window and document
+// listeners installed by this shell.
 
 // The root shell shares router and store instances across page changes so global
 // branding, notifications, and session-driven refreshes follow application state.
@@ -101,19 +101,24 @@ function onVisibilityChange() {
 }
 
 watch(
-  () => authStore.isAuthenticated,
-  (isAuthenticated, oldValue) => {
-    if (isAuthenticated) {
+  () => (authStore.isAuthenticated ? (authStore.user?.id ?? true) : false),
+  (session, previousSession, onCleanup) => {
+    if (session) {
+      if (previousSession && previousSession !== session) {
+        subscriptionStore.clear()
+        announcementStore.reset()
+      }
       // Authentication starts subscription loading and polling; a failed initial read is
       // logged while the periodic poller can perform later refreshes.
       subscriptionStore.fetchActiveSubscriptions().catch((error) => {
         console.error('Failed to preload subscriptions:', error)
       })
       subscriptionStore.startPolling()
-      if (oldValue === false) {
+      if (previousSession !== undefined) {
         // A fresh sign-in delays forced announcement loading by three seconds; restored
         // sessions use the ordinary fetch path immediately during shell setup.
-        setTimeout(() => announcementStore.fetchAnnouncements(true), 3000)
+        const timer = setTimeout(() => announcementStore.fetchAnnouncements(true), 3000)
+        onCleanup(() => clearTimeout(timer))
       } else {
         announcementStore.fetchAnnouncements()
       }

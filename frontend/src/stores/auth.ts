@@ -1,7 +1,8 @@
 import { getLocale, setLocale } from '@/i18n'
 import { defineStore } from 'pinia'
 import { ref, computed, readonly } from 'vue'
-import { authAPI, isTotp2FARequired, passkeyAPI, type LoginResponse } from '@/api'
+import { authAPI, isTotp2FARequired, type LoginResponse } from '@/api/auth'
+import { passkeyAPI } from '@/api/passkey'
 import type { User } from '@/api/identity.types'
 import type {
   LoginRequest,

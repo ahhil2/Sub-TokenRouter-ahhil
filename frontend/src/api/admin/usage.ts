@@ -118,7 +118,6 @@ export interface CreateUsageCleanupTaskRequest {
 export interface AdminUsageQueryParams extends UsageQueryParams {
   user_id?: number // Owning user identifier.
   team_id?: number // Team record identifier.
-  exact_total?: boolean // Requested exact total.
   billing_mode?: string // Selected billing calculation.
   sort_by?: string // Requested sort column.
   sort_order?: 'asc' | 'desc' // Requested ordering direction.

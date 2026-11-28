@@ -247,6 +247,12 @@ func (h *UsageHandler) List(c *gin.Context) {
 		ExactTotal:         exactTotal,
 	}
 
+	cursor, err := usage.ParseLogCursor(c.Query("cursor"), params.SortBy)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	filters.Cursor = cursor
 	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, filters)
 	if err != nil {
 		response.ErrorFrom(c, err)

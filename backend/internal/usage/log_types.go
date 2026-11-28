@@ -309,6 +309,9 @@ type PlatformDashboardStats struct {
 // UsageLogFilters selects record visibility, reporting dimensions and
 // optional time bounds for usage reads.
 type UsageLogFilters struct {
+	// Cursor seeks past an already displayed record within these filters. Nil
+	// retains offset pagination, and the repository still applies every visibility predicate.
+	Cursor *LogCursor `json:"-"`
 	// EndpointSource selects inbound, upstream or path breakdowns in
 	// GetStatsWithFilters. Empty text requests each available endpoint chart for
 	// the same filtered totals; internal "none" queries request counters alone.
@@ -352,8 +355,8 @@ type UsageLogFilters struct {
 	StartTime *time.Time // optional inclusive start instant
 	EndTime   *time.Time // optional exclusive end instant
 	// ExactTotal requests a complete count for pagination. False permits the
-	// repository's faster total strategy only when its user, key, provider and
-	// team scope conditions allow it.
+	// repository's bounded probe for cursor continuations. Offset requests also
+	// apply their user, key, provider, and team counting rules.
 	ExactTotal bool // exact pagination total request flag
 }
 

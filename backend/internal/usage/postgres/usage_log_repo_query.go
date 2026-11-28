@@ -166,9 +166,9 @@ func (r *Store) Delete(ctx context.Context, id int64) error {
 // gives request type precedence over stream.
 //
 // Owned-team inclusion resolves current ownership and keeps actor and team
-// branches disjoint. ExactTotal or a user/key/provider/team selector requests a
-// count; other broad filters can return a total derived from the requested
-// offset and observed rows. Hydration shares loaded associations among rows
+// branches disjoint. Cursor continuations count the full selection when ExactTotal
+// is set and otherwise probe for another page. Offset requests count when ExactTotal
+// or a user/key/provider/team selector is set. Hydration shares associations among rows
 // carrying their IDs, so consumers treat those pointers as read-only.
 func (r *Store) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters UsageLogFilters) ([]usage.UsageLog, *pagination.PaginationResult, error) {
 	conditions := make([]string, 0, 9)
@@ -227,9 +227,11 @@ func (r *Store) ListWithFilters(ctx context.Context, params pagination.Paginatio
 		page    *pagination.PaginationResult
 		listErr error
 	)
-	// Broad filters can use the extra-row probe; narrow identity scopes and
-	// ExactTotal use a separate count before listing their selected page.
-	if shouldUseFastUsageLogTotal(filters) {
+	// Cursor continuations keep the existing visibility predicates while seeking past
+	// the previous row. Offset requests retain their identity-based counting rules.
+	if filters.Cursor != nil {
+		logs, page, listErr = r.listUsageLogsAfter(ctx, source, conditions, args, params, filters)
+	} else if shouldUseFastUsageLogTotal(filters) {
 		logs, page, listErr = r.listUsageLogsWithFastPaginationFrom(ctx, source, whereClause, args, params)
 	} else {
 		logs, page, listErr = r.listUsageLogsWithPaginationFrom(ctx, source, whereClause, args, params)
@@ -242,6 +244,56 @@ func (r *Store) ListWithFilters(ctx context.Context, params pagination.Paginatio
 		return nil, nil, err
 	}
 	return logs, page, nil
+}
+
+// listUsageLogsAfter seeks from the last displayed row. Exact totals cover the entire
+// filtered result, including rows preceding the cursor. Exports can use a bounded probe.
+// Callers supply the original authorization predicates and a cursor matching the
+// selected ID or creation-time ordering. The seek comparison uses the same direction
+// and ID tie-break as the final ordering, so equal timestamps remain traversable.
+// Page retains its ordinal meaning for progress totals, while the SQL query omits
+// OFFSET and uses the cursor to choose the first eligible row.
+func (r *Store) listUsageLogsAfter(ctx context.Context, source string, conditions []string, args []any, params pagination.PaginationParams, filters UsageLogFilters) ([]usage.UsageLog, *pagination.PaginationResult, error) {
+	var total int64
+	limit := params.Limit()
+	if filters.ExactTotal {
+		// Count before adding the seek predicate so navigation describes the complete
+		// authorized selection rather than only records following this boundary.
+		if err := scanSingleRow(ctx, r.sql, "SELECT COUNT(*) FROM "+source+" "+buildWhere(conditions), args, &total); err != nil {
+			return nil, nil, err
+		}
+	} else {
+		// One extra row proves whether another page exists without repeating the
+		// complete count on each batch of a sequential export.
+		limit++
+	}
+	op := "<"
+	if params.NormalizedSortOrder(pagination.SortOrderDesc) == pagination.SortOrderAsc {
+		op = ">"
+	}
+	pos := len(args) + 1
+	switch params.SortBy {
+	case "created_at":
+		conditions = append(conditions, fmt.Sprintf("(created_at, id) %s ($%d, $%d)", op, pos, pos+1))
+		args = append(args, filters.Cursor.CreatedAt, filters.Cursor.ID)
+	case "id":
+		conditions = append(conditions, fmt.Sprintf("id %s $%d", op, pos))
+		args = append(args, filters.Cursor.ID)
+	default:
+		return nil, nil, fmt.Errorf("unsupported usage cursor sort %q", params.SortBy)
+	}
+	query := fmt.Sprintf("SELECT %s FROM %s %s ORDER BY %s LIMIT $%d", usageLogSelectColumns, source, buildWhere(conditions), usageLogOrderBy(params), len(args)+1)
+	logs, err := r.queryUsageLogs(ctx, query, append(args, limit)...)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !filters.ExactTotal {
+		total = int64(params.Offset()) + int64(len(logs))
+		if len(logs) > params.Limit() {
+			logs = logs[:params.Limit()]
+		}
+	}
+	return logs, paginationResultFromTotal(total, params), nil
 }
 
 // usageRequestIDCondition returns request-lookup SQL for a trusted column prefix

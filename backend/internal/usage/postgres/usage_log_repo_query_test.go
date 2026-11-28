@@ -33,6 +33,35 @@ type usageLogScannerStub struct {
 	values []any
 }
 
+// TestUsageCursorQuery continues a provider's creation-time selection in both
+// counting modes. The query must retain provider scope, seek without OFFSET,
+// and count the original selection only when an exact total is requested.
+func TestUsageCursorQuery(t *testing.T) {
+	stamp := time.Now().UTC().Truncate(time.Microsecond)
+	for _, exact := range []bool{true, false} {
+		db, mock := newSQLMock(t)
+		repo := &Store{sql: db}
+		params := pagination.PaginationParams{Page: 201, PageSize: 50, SortBy: "created_at", SortOrder: "desc"}
+		filters := UsageLogFilters{ProviderID: 6, ExactTotal: exact, Cursor: &usage.LogCursor{ID: 901, CreatedAt: stamp}}
+		if exact {
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM usage_logs WHERE provider_id = $1")).WithArgs(6).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(10005))
+		}
+		limit := 51
+		if exact {
+			limit = 50
+		}
+		mock.ExpectQuery("SELECT .*"+regexp.QuoteMeta(" FROM usage_logs WHERE provider_id = $1 AND (created_at, id) < ($2, $3) ORDER BY created_at DESC, id DESC LIMIT $4")+"$").WithArgs(6, stamp, 901, limit).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		_, page, err := repo.ListWithFilters(t.Context(), params, filters)
+		require.NoError(t, err)
+		if exact {
+			require.EqualValues(t, 10005, page.Total)
+		} else {
+			require.EqualValues(t, 10000, page.Total)
+		}
+		require.NoError(t, mock.ExpectationsWereMet())
+	}
+}
+
 // TestCoalesceTrimmedString supplies null, whitespace-only, and populated
 // display strings. It checks missing/blank text uses the fallback and a valid
 // populated value reaches the result.

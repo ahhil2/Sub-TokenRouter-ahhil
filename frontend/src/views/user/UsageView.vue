@@ -384,6 +384,7 @@ import {
 } from '@/utils/billingMode'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import { calculateUsageTps } from '@/utils/usageTps'
+import { createUsagePageCursor, usagePageCursor } from '@/utils/usagePageCursor'
 import type {
   EndpointStat,
   GroupStat,
@@ -745,6 +746,9 @@ const buildUsageListParams = (page: number, pageSize: number): UsageQueryParams 
   sort_order: sortState.sort_order,
 })
 
+// pageCursor owns the continuation associated with this view's last displayed page.
+const pageCursor = createUsagePageCursor()
+
 // loadLogs replaces the usage page using the current filters and sort order. Starting a new
 // load aborts the previous controller before installing a new owner for the loading flag.
 //
@@ -760,10 +764,15 @@ const loadLogs = async () => {
   abortController = controller
   loading.value = true
   try {
-    const res = await usageAPI.query(buildUsageListParams(pagination.page, pagination.page_size), {
-      signal: controller.signal,
-    })
+    const query = buildUsageListParams(pagination.page, pagination.page_size)
+    const res = await usageAPI.query(
+      { ...query, cursor: pageCursor.next(query) },
+      {
+        signal: controller.signal,
+      },
+    )
     if (!controller.signal.aborted) {
+      pageCursor.remember(query, res.items)
       usageLogs.value = res.items
       pagination.total = res.total
     }
@@ -1054,9 +1063,18 @@ const exportToCSV = async () => {
     const pageSize = 100
     // Round upward to include a final partially filled export page.
     const totalPages = Math.ceil(pagination.total / pageSize)
+    const selection = buildUsageListParams(1, pageSize)
+    let cursor: string | undefined
     for (let page = 1; page <= totalPages; page++) {
-      const response = await usageAPI.query(buildUsageListParams(page, pageSize))
+      const response = await usageAPI.query({
+        ...selection,
+        page,
+        cursor,
+        exact_total: cursor ? false : undefined,
+      })
       allLogs.push(...response.items)
+      if (response.items.length < pageSize) break
+      cursor = usagePageCursor(selection.sort_by, response.items[response.items.length - 1])
     }
     if (allLogs.length === 0) {
       appStore.showWarning(t('usage.noDataToExport'))

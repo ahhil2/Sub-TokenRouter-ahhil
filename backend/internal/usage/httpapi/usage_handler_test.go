@@ -416,6 +416,23 @@ func newUserUsageRequestTypeTestRouter(repo *userUsageRepoCapture) *gin.Engine {
 	return router
 }
 
+// TestUserUsageCursorRetainsActorScope continues ID and creation-time listings
+// under an authenticated actor. Cursor parsing must preserve that actor's user
+// and owned-team visibility while respecting the requested counting mode.
+func TestUserUsageCursorRetainsActorScope(t *testing.T) {
+	repo := &userUsageRepoCapture{}
+	router := newUserUsageRequestTypeTestRouter(repo)
+	for _, query := range []string{"sort_by=id&cursor=123", "cursor=2026-11-27T00:00:00.123456Z%7C123&exact_total=false"} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage?"+query, nil))
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.EqualValues(t, 123, repo.listFilters.Cursor.ID)
+		require.EqualValues(t, 42, repo.listFilters.UserID)
+		require.True(t, repo.listFilters.IncludeOwnedTeam)
+		require.Equal(t, query == "sort_by=id&cursor=123", repo.listFilters.ExactTotal)
+	}
+}
+
 // TestUserUsageListRequestTypePriority sends WS v2 beside malformed stream
 // text. It checks authenticated actor and owned-team scope, nonpersonal
 // selection, captured category and absent legacy stream.

@@ -1,7 +1,5 @@
 import { defineStore } from 'pinia'
 import { onScopeDispose, ref } from 'vue'
-import { getSettings } from '@/api/admin/settings'
-import { adminPaymentAPI } from '@/api/admin/payment'
 import { getLocale } from '@/i18n'
 import type { CustomMenuItem } from '@/api/settings.types'
 
@@ -17,8 +15,8 @@ import type { CustomMenuItem } from '@/api/settings.types'
  * older completions cannot publish into either replacement. Local setters update
  * navigation immediately and attempt storage persistence. The store also owns an
  * operations-disabled listener, removed with pending publication ownership when
- * the Pinia scope is disposed. Direct settings and payment imports keep other
- * administrator clients outside the shared navigation store's dependency graph.
+ * the Pinia scope is disposed. Settings and payment clients load when fetch is
+ * admitted, keeping them outside the initial navigation store dependency graph.
  */
 /**
  * useAdminSettingsStore exposes navigation switches and custom menus through Pinia.
@@ -108,8 +106,13 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
     loading.value = true
     const request = {
       scope,
-      promise: Promise.all([getSettings(force), adminPaymentAPI.getConfig()])
-        .then(([settings, paymentConfigResp]) => {
+      promise: Promise.all([import('@/api/admin/settings'), import('@/api/admin/payment')])
+        .then(async ([{ getSettings }, { adminPaymentAPI }]) => {
+          if (pending !== request || requestScope() !== scope) return
+          const [settings, paymentConfigResp] = await Promise.all([
+            getSettings(force),
+            adminPaymentAPI.getConfig(),
+          ])
           if (pending !== request || requestScope() !== scope) return
           opsMonitoringEnabled.value = settings.ops_monitoring_enabled ?? true
           writeCachedBool('ops_monitoring_enabled_cached', opsMonitoringEnabled.value)
