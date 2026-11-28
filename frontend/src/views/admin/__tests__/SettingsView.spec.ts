@@ -22,6 +22,8 @@ import LocalizedEditor from '@/components/common/LocalizedEditor.vue'
 // distinguish saved bulk fields from pending search drafts, and fake intervals
 // exercise polling cleanup while normal animation timers continue to run. Each
 // mounted page is unmounted after its scenario to release component resources.
+// Clean-state assertions check for an active save bar because its inert exit frame
+// can disappear before asynchronous refreshes finish.
 
 // flushPromises waits for requests, first-visit panel imports, and their Vue updates.
 // Tests call it after navigation or dialog actions so assertions observe controls
@@ -1122,7 +1124,7 @@ describe('admin SettingsView payment visible method controls', () => {
       updatePanelRateLimitSettings.mock.invocationCallOrder[0]!,
     )
     expect(showSuccess).toHaveBeenCalledWith('admin.settings.settingsSaved')
-    expect(wrapper.get('[data-testid="settings-save-bar"]').attributes('inert')).toBeDefined()
+    expect(wrapper.find('[data-testid="settings-save-bar"]:not([inert])').exists()).toBe(false)
   })
 
   // Bulk persistence can succeed while the separate search request fails.
@@ -1159,7 +1161,7 @@ describe('admin SettingsView payment visible method controls', () => {
     // Returning search to its loaded value isolates the bulk snapshot: a dirty
     // bulk snapshot would keep the save bar active after this reversal.
     await wrapper.get('input#web-search-emulation-enabled').setValue(false)
-    expect(wrapper.get('[data-testid="settings-save-bar"]').attributes('inert')).toBeDefined()
+    expect(wrapper.find('[data-testid="settings-save-bar"]:not([inert])').exists()).toBe(false)
     await wrapper.get('input#web-search-emulation-enabled').setValue(true)
     await saveFromSaveBar(wrapper)
     expect(updateSettings).toHaveBeenCalledTimes(2)
@@ -1169,7 +1171,7 @@ describe('admin SettingsView payment visible method controls', () => {
     )
     expect(updateWebSearchEmulationConfig).toHaveBeenCalledTimes(2)
     expect(showSuccess).toHaveBeenCalledWith('admin.settings.settingsSaved')
-    expect(wrapper.get('[data-testid="settings-save-bar"]').attributes('inert')).toBeDefined()
+    expect(wrapper.find('[data-testid="settings-save-bar"]:not([inert])').exists()).toBe(false)
   })
 
   // A failed bulk target and an edited panel rate limit share one submission.
@@ -1204,7 +1206,7 @@ describe('admin SettingsView payment visible method controls', () => {
     expect(updateSettings).toHaveBeenCalledTimes(2)
     expect(updatePanelRateLimitSettings).toHaveBeenCalledTimes(1)
     expect(showSuccess).toHaveBeenCalledWith('admin.settings.settingsSaved')
-    expect(wrapper.get('[data-testid="settings-save-bar"]').attributes('inert')).toBeDefined()
+    expect(wrapper.find('[data-testid="settings-save-bar"]:not([inert])').exists()).toBe(false)
   })
 
   // Pressing Enter can submit a settings form whose snapshots are already clean.

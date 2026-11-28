@@ -18,11 +18,12 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
-// Direct model lookup remains unavailable when a calculator has no catalog
-// data, while configured cards can still supply complete prices. These fixture
-// scenarios isolate full-name identity, explicit zero buckets, aggregate cache
-// limits and price modifiers, then compare selected unit amounts with token,
-// media and operation charges.
+// calculator_external_test.go verifies configured and catalog prices through the
+// public calculator APIs. Direct model lookup remains unavailable when a
+// calculator has no catalog data, while configured cards can still supply
+// complete prices. These fixture scenarios isolate full-name identity, explicit
+// zero buckets, aggregate cache limits and price modifiers, then compare selected
+// unit amounts with token, media and operation charges.
 
 const (
 	// gpt56LadderCatalogJSON supplies standard, priority and above-threshold
@@ -559,8 +560,9 @@ func TestApplyLongContextDisplayMultipliersScalesAllCachePrices(t *testing.T) {
 
 // TestCalculateCostUnified_ExplicitIntervalsDoNotReapplyLongContextMultiplier
 // uses manual short/long rates with the default fixture base, which has no
-// built-in ladder. Calculation checks the chosen manual buckets and false
-// surcharge marker; display checks their grouped long amounts.
+// built-in ladder. Calculation checks the chosen manual buckets without an
+// additional catalog multiplier. The more expensive configured interval sets
+// the surcharge marker, while display uses the grouped manual long amounts.
 func TestCalculateCostUnified_ExplicitIntervalsDoNotReapplyLongContextMultiplier(t *testing.T) {
 	svc := newTestCalculator()
 	resolver := testkit.PriceResolver(nil, svc)
@@ -616,7 +618,9 @@ func TestCalculateCostUnified_ExplicitIntervalsDoNotReapplyLongContextMultiplier
 	})
 
 	require.NoError(t, err)
-	require.False(t, cost.LongContextBillingApplied)
+	// The configured long interval costs more than its short counterpart, which
+	// sets the marker even though built-in catalog multipliers are suppressed.
+	require.True(t, cost.LongContextBillingApplied)
 	// Allow float multiplication residue in these scaled component comparisons.
 	require.InDelta(t, float64(tokens.InputTokens)*longInput, cost.InputCost, 1e-10)
 	require.InDelta(t, float64(tokens.OutputTokens)*longOutput, cost.OutputCost, 1e-10)
